@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { VList } from "virtua";
 import { Copy, GitBranch } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -246,45 +245,34 @@ export function HistoryView() {
         className="flex min-h-0 flex-1"
       >
         <Panel defaultSize={60} minSize={30} className="flex min-w-0 flex-col">
-          <div className="min-h-0 flex-1">
+          {/* Native scroll container so long commit subjects can be read by
+              scrolling horizontally (virtua clips cross-axis overflow). */}
+          <div className="min-h-0 flex-1 overflow-auto">
             {commits.length > 0 ? (
-              <VList
-                style={{ height: "100%", overflowX: "auto" }}
-                count={commits.length + (showLoadMore ? 1 : 0)}
-              >
-                {(i) => {
-                  // The "Load more" row is the last item, so it only appears
-                  // once the user scrolls to the bottom of the list.
-                  if (i >= commits.length) {
-                    return (
-                      <div
-                        key="load-more"
-                        className="flex min-w-full justify-center border-t p-2"
-                      >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={logQuery.isFetching}
-                          onClick={() => setLimit((l) => l + PAGE)}
-                        >
-                          {logQuery.isFetching ? "Loading…" : "Load more"}
-                        </Button>
-                      </div>
-                    );
-                  }
-                  const c = commits[i];
-                  return (
-                    <div key={c.sha} className="pl-2">
-                      <CommitListRow
-                        commit={c}
-                        width={width}
-                        selected={c.sha === selectedSha}
-                        onSelect={() => setSelectedSha(c.sha)}
-                      />
-                    </div>
-                  );
-                }}
-              </VList>
+              <div className="w-max min-w-full">
+                {commits.map((c) => (
+                  <div key={c.sha} className="pl-2">
+                    <CommitListRow
+                      commit={c}
+                      width={width}
+                      selected={c.sha === selectedSha}
+                      onSelect={() => setSelectedSha(c.sha)}
+                    />
+                  </div>
+                ))}
+                {showLoadMore && (
+                  <div className="sticky left-0 flex min-w-full justify-center border-t p-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={logQuery.isFetching}
+                      onClick={() => setLimit((l) => l + PAGE)}
+                    >
+                      {logQuery.isFetching ? "Loading…" : "Load more"}
+                    </Button>
+                  </div>
+                )}
+              </div>
             ) : (
               <p className="p-4 text-sm text-[var(--color-muted-foreground)]">
                 {logQuery.isLoading ? "Loading history…" : "No commits."}
