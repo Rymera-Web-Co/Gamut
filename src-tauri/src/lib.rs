@@ -32,6 +32,7 @@ pub fn run() {
             commands::system::ping,
             commands::system::db_health,
             commands::repo::list_repos,
+            commands::repo::repo_statuses,
             commands::repo::register_repo,
             commands::repo::remove_repo,
             commands::repo::touch_repo,

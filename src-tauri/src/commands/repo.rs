@@ -146,6 +146,63 @@ pub fn touch_repo(state: State<AppState>, id: i64) -> AppResult<()> {
 }
 
 #[derive(Serialize)]
+pub struct RepoStatus {
+    pub id: i64,
+    pub branch: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+/// Per-repo current branch and ahead/behind vs its upstream (local-only; the
+/// behind count reflects the last fetch — "new commits available" after fetching).
+#[tauri::command]
+pub fn repo_statuses(state: State<AppState>) -> AppResult<Vec<RepoStatus>> {
+    let rows: Vec<(i64, String)> = {
+        let conn = lock(&state)?;
+        let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
+        let r = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        r
+    };
+
+    let mut out = Vec::with_capacity(rows.len());
+    for (id, path) in rows {
+        let mut status = RepoStatus {
+            id,
+            branch: None,
+            ahead: 0,
+            behind: 0,
+        };
+        if let Ok(repo) = git::open(std::path::Path::new(&path)) {
+            if let Ok(head) = repo.head() {
+                status.branch = head.shorthand().map(|s| s.to_string());
+                if head.is_branch() {
+                    if let Some(b) = &status.branch {
+                        if let Ok(local) = repo.find_branch(b, BranchType::Local) {
+                            if let Ok(up) = local.upstream() {
+                                if let (Some(l), Some(u)) =
+                                    (local.get().target(), up.get().target())
+                                {
+                                    if let Ok((a, behind)) = repo.graph_ahead_behind(l, u) {
+                                        status.ahead = a;
+                                        status.behind = behind;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.push(status);
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
 pub struct BranchInfo {
     pub name: String,
     pub is_head: bool,

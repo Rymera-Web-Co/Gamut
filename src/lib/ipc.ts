@@ -37,6 +37,13 @@ export interface BranchInfo {
   is_remote: boolean;
 }
 
+export interface RepoStatus {
+  id: number;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+}
+
 export interface Tag {
   id: number;
   name: string;
@@ -183,6 +190,7 @@ export const ipc = {
 
   // repos
   listRepos: () => invoke<Repo[]>("list_repos"),
+  repoStatuses: () => invoke<RepoStatus[]>("repo_statuses"),
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),

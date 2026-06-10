@@ -24,6 +24,14 @@ export function useGroups() {
   return useQuery({ queryKey: keys.groups, queryFn: ipc.listGroups });
 }
 
+export function useRepoStatuses() {
+  return useQuery({
+    queryKey: ["repo-statuses"],
+    queryFn: ipc.repoStatuses,
+    staleTime: 30_000,
+  });
+}
+
 /** Invalidate everything the sidebar tree depends on. */
 function useInvalidateTree() {
   const qc = useQueryClient();

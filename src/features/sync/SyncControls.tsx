@@ -22,6 +22,7 @@ export function SyncControls({ repoId }: { repoId: number }) {
     qc.invalidateQueries({ queryKey: ["branches", repoId] });
     qc.invalidateQueries({ queryKey: ["log", repoId] });
     qc.invalidateQueries({ queryKey: ["review-files", repoId] });
+    qc.invalidateQueries({ queryKey: ["repo-statuses"] });
   }
 
   // Errors surface via the global mutation-cache toast handler.

@@ -91,6 +91,7 @@ export function useCheckoutPr(repoId: number) {
       qc.invalidateQueries({ queryKey: ["log", repoId] });
       qc.invalidateQueries({ queryKey: ["review-files", repoId] });
       qc.invalidateQueries({ queryKey: ["sync-status", repoId] });
+      qc.invalidateQueries({ queryKey: ["repo-statuses"] });
     },
   });
 }

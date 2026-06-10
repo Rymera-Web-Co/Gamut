@@ -1,15 +1,24 @@
 import { useState } from "react";
-import { FolderGit2, GripVertical, Plus, FolderSearch, Settings2, Tag as TagIcon } from "lucide-react";
+import {
+  FolderGit2,
+  GitBranch,
+  GripVertical,
+  Plus,
+  FolderSearch,
+  Settings2,
+  Tag as TagIcon,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
-import { ipc, pickDirectory, type Repo, type Tag } from "@/lib/ipc";
+import { ipc, pickDirectory, type Repo, type RepoStatus, type Tag } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import {
   useGroups,
   useRegisterRepo,
   useReorderRepos,
+  useRepoStatuses,
   useRepos,
   useSetRepoGroups,
   useTags,
@@ -21,11 +30,13 @@ import { EditRepoDialog } from "./EditRepoDialog";
 function RepoRow({
   repo,
   tags,
+  status,
   onEdit,
   onReorder,
 }: {
   repo: Repo;
   tags: Tag[];
+  status?: RepoStatus;
   onEdit: (repo: Repo) => void;
   onReorder: (srcId: number, targetId: number) => void;
 }) {
@@ -85,7 +96,31 @@ function RepoRow({
           active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
         )}
       />
-      <span className="min-w-0 flex-1 truncate">{repo.name}</span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate leading-tight">{repo.name}</span>
+        {status?.branch && (
+          <span className="flex items-center gap-1 text-[11px] leading-tight text-[var(--color-muted-foreground)]">
+            <GitBranch className="size-3 shrink-0" />
+            <span className="truncate">{status.branch}</span>
+            {status.behind > 0 && (
+              <span
+                className="shrink-0 font-medium text-[#d97706]"
+                title={`${status.behind} new commit${status.behind === 1 ? "" : "s"} on the remote — fetch to update`}
+              >
+                ↓{status.behind}
+              </span>
+            )}
+            {status.ahead > 0 && (
+              <span
+                className="shrink-0 text-[var(--color-muted-foreground)]"
+                title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} to push`}
+              >
+                ↑{status.ahead}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
       <div className="flex shrink-0 items-center gap-1">
         {repoTags.map((t) => (
           <span
@@ -117,7 +152,10 @@ export function RepoSidebar() {
   const registerRepo = useRegisterRepo();
   const setRepoGroups = useSetRepoGroups();
   const reorderRepos = useReorderRepos();
+  const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+
+  const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [newTagOpen, setNewTagOpen] = useState(false);
@@ -202,6 +240,7 @@ export function RepoSidebar() {
               key={r.id}
               repo={r}
               tags={allTags}
+              status={statusById.get(r.id)}
               onEdit={setEditing}
               onReorder={reorder}
             />

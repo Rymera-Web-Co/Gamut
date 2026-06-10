@@ -39,6 +39,7 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
       qc.invalidateQueries({ queryKey: ["log", repoId] });
       qc.invalidateQueries({ queryKey: ["review-files", repoId] });
       qc.invalidateQueries({ queryKey: ["repos"] });
+      qc.invalidateQueries({ queryKey: ["repo-statuses"] });
       setOpen(false);
       setFilter("");
     },
