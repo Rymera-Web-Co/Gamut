@@ -131,6 +131,15 @@ export interface AuthStatus {
   login: string | null;
 }
 
+export interface DeviceCode {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string | null;
+  interval: number;
+  expires_in: number;
+}
+
 export interface PrSummary {
   number: number;
   title: string;
@@ -233,6 +242,14 @@ export const ipc = {
     invoke<AuthStatus>("github_set_token", { token }),
   githubAuthStatus: () => invoke<AuthStatus>("github_auth_status"),
   githubLogout: () => invoke<void>("github_logout"),
+  githubOauthAvailable: () => invoke<boolean>("github_oauth_available"),
+  githubDeviceStart: () => invoke<DeviceCode>("github_device_start"),
+  githubDevicePoll: (deviceCode: string, interval: number, expiresIn: number) =>
+    invoke<AuthStatus>("github_device_poll", {
+      deviceCode,
+      interval,
+      expiresIn,
+    }),
   githubListPrs: (repoId: number) =>
     invoke<PrSummary[]>("github_list_prs", { repoId }),
   githubPrDiff: (repoId: number, number: number) =>

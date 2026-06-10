@@ -6,6 +6,7 @@ import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
+import { GitHubConnect } from "@/features/github/GitHubConnect";
 import { useGroups, useReorderGroups, useSetRepoGroups } from "./api";
 import { GroupDialog } from "./GroupDialog";
 
@@ -156,6 +157,10 @@ export function GroupRail() {
       >
         <Plus className="size-5" />
       </button>
+
+      <div className="mt-auto">
+        <GitHubConnect />
+      </div>
 
       <GroupDialog
         group={editing}

@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use tokio::time::sleep;
 
 use crate::commands::history::open_repo;
 use crate::error::{AppError, AppResult};
@@ -32,6 +35,37 @@ fn http() -> AppResult<reqwest::Client> {
 
 fn require_token() -> AppResult<String> {
     read_token()?.ok_or_else(|| AppError::Other("not signed in to GitHub".into()))
+}
+
+/// OAuth App client ID for the device flow. Configured at runtime via
+/// GAMUT_GITHUB_CLIENT_ID, or baked in at build time. Empty = not configured.
+fn client_id() -> Option<String> {
+    if let Ok(v) = std::env::var("GAMUT_GITHUB_CLIENT_ID") {
+        if !v.is_empty() {
+            return Some(v);
+        }
+    }
+    option_env!("GAMUT_GITHUB_CLIENT_ID")
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Validate a token against /user, returning the login.
+async fn validate_token(client: &reqwest::Client, token: &str) -> AppResult<String> {
+    let resp = client
+        .get(format!("{API}/user"))
+        .bearer_auth(token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "token rejected by GitHub ({})",
+            resp.status()
+        )));
+    }
+    let user: GhUser = resp.json().await?;
+    Ok(user.login)
 }
 
 // ---- Remote parsing ----
@@ -72,6 +106,131 @@ fn owner_repo(state: &State<AppState>, repo_id: i64) -> AppResult<(String, Strin
 pub struct AuthStatus {
     pub logged_in: bool,
     pub login: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct DeviceCode {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+/// Whether OAuth (device flow) is available — i.e. a client ID is configured.
+#[tauri::command]
+pub fn github_oauth_available() -> bool {
+    client_id().is_some()
+}
+
+#[derive(Deserialize)]
+struct DeviceCodeResp {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    verification_uri_complete: Option<String>,
+    interval: u64,
+    expires_in: u64,
+}
+
+#[derive(Deserialize)]
+struct TokenResp {
+    access_token: Option<String>,
+    error: Option<String>,
+}
+
+/// Begin the GitHub OAuth device flow: returns a user code + verification URL
+/// to show the user. Follow with `github_device_poll`.
+#[tauri::command]
+pub async fn github_device_start() -> AppResult<DeviceCode> {
+    let cid = client_id().ok_or_else(|| {
+        AppError::Other(
+            "GitHub OAuth is not configured (set GAMUT_GITHUB_CLIENT_ID). Use a token instead."
+                .into(),
+        )
+    })?;
+    let client = http()?;
+    let resp = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .form(&[("client_id", cid.as_str()), ("scope", "repo")])
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "GitHub device-code request failed ({})",
+            resp.status()
+        )));
+    }
+    let d: DeviceCodeResp = resp.json().await?;
+    Ok(DeviceCode {
+        device_code: d.device_code,
+        user_code: d.user_code,
+        verification_uri: d.verification_uri,
+        verification_uri_complete: d.verification_uri_complete,
+        interval: d.interval,
+        expires_in: d.expires_in,
+    })
+}
+
+/// Poll for the device-flow token until the user authorizes (or it expires).
+/// On success the token is stored in the keychain.
+#[tauri::command]
+pub async fn github_device_poll(
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+) -> AppResult<AuthStatus> {
+    let cid = client_id().ok_or_else(|| AppError::Other("GitHub OAuth is not configured".into()))?;
+    let client = http()?;
+    let mut wait = interval.max(5);
+    let mut elapsed = 0u64;
+
+    loop {
+        sleep(Duration::from_secs(wait)).await;
+        elapsed += wait;
+        if elapsed > expires_in {
+            return Err(AppError::Other("authorization timed out — please try again".into()));
+        }
+
+        let resp = client
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .form(&[
+                ("client_id", cid.as_str()),
+                ("device_code", device_code.as_str()),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .await?;
+        let body: TokenResp = resp.json().await?;
+
+        if let Some(token) = body.access_token {
+            let login = validate_token(&client, &token).await?;
+            token_entry()?.set_password(&token)?;
+            return Ok(AuthStatus {
+                logged_in: true,
+                login: Some(login),
+            });
+        }
+
+        match body.error.as_deref() {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                wait += 5;
+                continue;
+            }
+            Some("expired_token") => {
+                return Err(AppError::Other("the code expired — please try again".into()))
+            }
+            Some("access_denied") => {
+                return Err(AppError::Other("authorization was denied".into()))
+            }
+            Some(other) => return Err(AppError::Other(format!("GitHub: {other}"))),
+            None => continue,
+        }
+    }
 }
 
 #[derive(Serialize)]
