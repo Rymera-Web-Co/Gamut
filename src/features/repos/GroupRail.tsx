@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
@@ -14,14 +14,12 @@ function GroupButton({
   group,
   active,
   onSelect,
-  onEdit,
   onRepoDrop,
   onGroupReorder,
 }: {
   group: Group;
   active: boolean;
   onSelect: () => void;
-  onEdit: () => void;
   onRepoDrop: (repoId: number) => void;
   onGroupReorder: (srcId: number, targetId: number) => void;
 }) {
@@ -29,63 +27,51 @@ function GroupButton({
   const [dropOver, setDropOver] = useState(false);
 
   return (
-    <div className="group relative">
-      <button
-        title={group.name}
-        draggable={!group.is_default}
-        onDragStart={(e) => {
-          setDrag({ kind: "group", id: group.id });
-          e.dataTransfer.setData("text/plain", group.name);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragEnd={() => {
-          clearDrag();
-          setDropOver(false);
-        }}
-        onDragOver={(e) => {
-          const d = getDrag();
-          const acceptGroup = d?.kind === "group" && !group.is_default && d.id !== group.id;
-          if (d?.kind === "repo" || acceptGroup) {
-            e.preventDefault();
-            setDropOver(true);
-          }
-        }}
-        onDragLeave={() => setDropOver(false)}
-        onDrop={(e) => {
-          setDropOver(false);
-          const d = getDrag();
-          if (d?.kind === "repo") {
-            e.preventDefault();
-            onRepoDrop(d.id);
-          } else if (d?.kind === "group" && !group.is_default) {
-            e.preventDefault();
-            onGroupReorder(d.id, group.id);
-          }
-          clearDrag();
-        }}
-        onClick={onSelect}
-        className={cn(
-          "flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
-          dropOver
-            ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]"
-            : active
-              ? "border-[var(--color-primary)] bg-[var(--color-accent)] text-[var(--color-foreground)]"
-              : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
-        )}
-      >
-        {Icon ? <Icon className="size-5" /> : groupInitials(group.name)}
-      </button>
-      <button
-        aria-label={`Edit ${group.name}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onEdit();
-        }}
-        className="absolute -right-0.5 -top-0.5 hidden rounded-full border bg-[var(--color-background)] p-0.5 group-hover:block"
-      >
-        <Pencil className="size-2.5" />
-      </button>
-    </div>
+    <button
+      title={group.name}
+      draggable={!group.is_default}
+      onDragStart={(e) => {
+        setDrag({ kind: "group", id: group.id });
+        e.dataTransfer.setData("text/plain", group.name);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => {
+        clearDrag();
+        setDropOver(false);
+      }}
+      onDragOver={(e) => {
+        const d = getDrag();
+        const acceptGroup = d?.kind === "group" && !group.is_default && d.id !== group.id;
+        if (d?.kind === "repo" || acceptGroup) {
+          e.preventDefault();
+          setDropOver(true);
+        }
+      }}
+      onDragLeave={() => setDropOver(false)}
+      onDrop={(e) => {
+        setDropOver(false);
+        const d = getDrag();
+        if (d?.kind === "repo") {
+          e.preventDefault();
+          onRepoDrop(d.id);
+        } else if (d?.kind === "group" && !group.is_default) {
+          e.preventDefault();
+          onGroupReorder(d.id, group.id);
+        }
+        clearDrag();
+      }}
+      onClick={onSelect}
+      className={cn(
+        "flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
+        dropOver
+          ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]"
+          : active
+            ? "border-[var(--color-primary)] bg-[var(--color-accent)] text-[var(--color-foreground)]"
+            : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+      )}
+    >
+      {Icon ? <Icon className="size-5" /> : groupInitials(group.name)}
+    </button>
   );
 }
 
@@ -137,10 +123,6 @@ export function GroupRail() {
           group={g}
           active={g.id === activeGroupId}
           onSelect={() => setActiveGroup(g.id)}
-          onEdit={() => {
-            setEditing(g);
-            setDialogOpen(true);
-          }}
           onRepoDrop={(repoId) => handleRepoDrop(g, repoId)}
           onGroupReorder={handleGroupReorder}
         />

@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   FolderGit2,
   GripVertical,
+  Pencil,
   Plus,
   FolderSearch,
   Trash2,
@@ -31,6 +32,7 @@ import {
   useSetRepoGroups,
 } from "./api";
 import { DiscoverDialog } from "./DiscoverDialog";
+import { GroupDialog } from "./GroupDialog";
 
 function RepoRow({
   repo,
@@ -140,15 +142,18 @@ export function RepoSidebar() {
   const reorderRepos = useReorderRepos();
   const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
 
   const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [editGroupOpen, setEditGroupOpen] = useState(false);
   const [removing, setRemoving] = useState<Repo | null>(null);
 
   const allRepos = repos.data ?? [];
   const allGroups = groups.data ?? [];
   const activeGroup = allGroups.find((g) => g.id === activeGroupId);
+  const defaultGroup = allGroups.find((g) => g.is_default) ?? allGroups[0];
 
   // Default group = repos with no explicit group; others = repos assigned to it.
   const visible = activeGroup?.is_default
@@ -180,12 +185,24 @@ export function RepoSidebar() {
       style={{ background: "var(--color-sidebar)" }}
     >
       <header className="flex items-center justify-between gap-1 border-b px-3 py-2">
-        <span
-          className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-          title={activeGroup?.name}
-        >
-          {activeGroup?.name ?? "Repositories"}
-        </span>
+        <div className="group flex min-w-0 items-center gap-1">
+          <span
+            className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
+            title={activeGroup?.name}
+          >
+            {activeGroup?.name ?? "Repositories"}
+          </span>
+          {activeGroup && (
+            <button
+              aria-label={`Edit ${activeGroup.name}`}
+              title="Edit group"
+              onClick={() => setEditGroupOpen(true)}
+              className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
+            >
+              <Pencil className="size-3 text-[var(--color-muted-foreground)]" />
+            </button>
+          )}
+        </div>
         <div className="flex shrink-0 items-center">
           <Button size="icon" variant="ghost" className="size-7" title="Add repository" onClick={addRepo}>
             <Plus />
@@ -223,6 +240,13 @@ export function RepoSidebar() {
       </div>
 
       <DiscoverDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
+
+      <GroupDialog
+        group={activeGroup ?? null}
+        open={editGroupOpen}
+        onOpenChange={setEditGroupOpen}
+        onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
+      />
 
       <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
         <DialogContent className="max-w-sm">
