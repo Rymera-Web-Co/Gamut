@@ -44,11 +44,11 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
       <button
         onClick={() => setOpen(true)}
         title="Switch branch"
-        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        className="flex items-center gap-1.5 rounded-md bg-[#2563eb] px-2.5 py-1 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1d4ed8]"
       >
         <GitBranch className="size-3.5" />
-        <span className="max-w-40 truncate font-medium">{current}</span>
-        <ChevronDown className="size-3" />
+        <span className="max-w-40 truncate">{current}</span>
+        <ChevronDown className="size-3 opacity-80" />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>

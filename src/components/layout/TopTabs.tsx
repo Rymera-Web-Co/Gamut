@@ -20,6 +20,11 @@ export function TopTabs() {
 
   return (
     <div className="flex h-10 shrink-0 items-stretch border-b">
+      {activeRepoId != null && (
+        <div className="flex items-center px-2">
+          <BranchSwitcher repoId={activeRepoId} />
+        </div>
+      )}
       {TABS.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
@@ -35,11 +40,6 @@ export function TopTabs() {
           {label}
         </button>
       ))}
-      {activeRepoId != null && (
-        <div className="flex items-center pl-3">
-          <BranchSwitcher repoId={activeRepoId} />
-        </div>
-      )}
 
       <div className="ml-auto flex items-center pr-2">
         <Button
