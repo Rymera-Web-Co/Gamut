@@ -69,11 +69,11 @@ export function BranchSwitcher({
       <button
         onClick={() => setOpen(true)}
         title="Switch branch or tag"
-        className="flex items-center gap-1 rounded bg-[#2563eb] px-1.5 py-0.5 text-[11px] font-medium text-white shadow-sm transition-colors hover:bg-[#1d4ed8]"
+        className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]"
       >
-        <GitBranch className="size-3" />
+        <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
         <span className="max-w-28 truncate">{current}</span>
-        <ChevronDown className="size-2.5 opacity-80" />
+        <ChevronDown className="size-2.5 opacity-60" />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
