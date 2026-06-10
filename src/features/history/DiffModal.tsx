@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
+import { GITHUB_DARK } from "@/lib/monaco";
 import { useBlame, useFileDiff } from "./api";
 
 /** Build a per-line lookup of which blame hunk owns each (1-based) line. */
@@ -121,7 +122,7 @@ export function DiffModal({
           ) : mode === "diff" ? (
             <DiffEditor
               height="100%"
-              theme={isDark ? "vs-dark" : "light"}
+              theme={isDark ? GITHUB_DARK : "light"}
               language={languageFor(path)}
               original={diff.data?.old_text ?? ""}
               modified={diff.data?.new_text ?? ""}

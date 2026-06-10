@@ -5,6 +5,7 @@ import { FileCheck2, Loader2 } from "lucide-react";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
+import { GITHUB_DARK } from "@/lib/monaco";
 import { cn } from "@/lib/utils";
 import { useReviewFileDiff, useReviewFiles } from "./api";
 
@@ -149,7 +150,7 @@ export function LocalReview({
         ) : (
           <DiffEditor
             height="100%"
-            theme={isDarkTheme() ? "vs-dark" : "light"}
+            theme={isDarkTheme() ? GITHUB_DARK : "light"}
             language={languageFor(selected.path)}
             original={diff.data.old_text ?? ""}
             modified={diff.data.new_text ?? ""}
