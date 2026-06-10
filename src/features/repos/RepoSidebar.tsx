@@ -33,6 +33,7 @@ function RepoRow({
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const repoTags = tags.filter((t) => repo.tag_ids.includes(t.id));
   const [dropOver, setDropOver] = useState(false);
+  const active = activeRepoId === repo.id;
 
   return (
     <div
@@ -70,15 +71,20 @@ function RepoRow({
         ipc.touchRepo(repo.id);
       }}
       className={cn(
-        "group flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-1.5 text-sm",
-        dropOver && "border-t-2 border-[var(--color-primary)]",
-        activeRepoId === repo.id
-          ? "bg-[var(--color-accent)]"
-          : "hover:bg-[var(--color-accent)]",
+        "group flex cursor-pointer items-center gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
+        dropOver && "border-t-2 border-t-[var(--color-primary)]",
+        active
+          ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
+          : "border-l-transparent hover:bg-[var(--color-accent)]",
       )}
     >
       <GripVertical className="size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
-      <FolderGit2 className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
+      <FolderGit2
+        className={cn(
+          "size-4 shrink-0",
+          active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+        )}
+      />
       <span className="min-w-0 flex-1 truncate">{repo.name}</span>
       <div className="flex shrink-0 items-center gap-1">
         {repoTags.map((t) => (
