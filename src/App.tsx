@@ -2,9 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 
 import { RepoSidebar } from "@/features/repos/RepoSidebar";
 import { TopTabs } from "@/components/layout/TopTabs";
+import { Toaster } from "@/components/ui/toaster";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { ipc } from "@/lib/ipc";
+import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
 
 function StatusBar() {
@@ -33,6 +35,7 @@ function StatusBar() {
 
 export default function App() {
   const view = useUiStore((s) => s.view);
+  useKeyboardShortcuts();
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -47,6 +50,7 @@ export default function App() {
         </main>
       </div>
       <StatusBar />
+      <Toaster />
     </div>
   );
 }

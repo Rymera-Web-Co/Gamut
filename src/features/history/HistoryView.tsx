@@ -3,6 +3,7 @@ import { VList } from "virtua";
 import { GitBranch } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { CommitRow, FileChange, RefLabel } from "@/lib/ipc";
 import { formatDate, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -163,6 +164,7 @@ export function HistoryView() {
   const repos = useRepos();
   const [limit, setLimit] = useState(PAGE);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const logQuery = useLog(repoId, limit);
   const repo = repos.data?.find((r) => r.id === repoId);
@@ -180,24 +182,43 @@ export function HistoryView() {
 
   const page = logQuery.data;
   const width = page?.width ?? 1;
+  const q = query.trim().toLowerCase();
+  const commits = q
+    ? (page?.commits ?? []).filter(
+        (c) =>
+          c.subject.toLowerCase().includes(q) ||
+          c.author_name.toLowerCase().includes(q) ||
+          c.sha.startsWith(q),
+      )
+    : (page?.commits ?? []);
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <h1 className="text-sm font-semibold">{repo?.name ?? "History"}</h1>
         <BranchSwitcher repoId={repoId} />
-        <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
-          {page ? `${page.commits.length} commits` : "loading…"}
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by message, author, or sha…"
+          className="ml-2 h-7 max-w-xs"
+        />
+        <span className="ml-auto shrink-0 text-xs text-[var(--color-muted-foreground)]">
+          {page
+            ? q
+              ? `${commits.length} / ${page.commits.length}`
+              : `${page.commits.length} commits`
+            : "loading…"}
         </span>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-[3] flex-col border-r">
           <div className="min-h-0 flex-1">
-            {page && page.commits.length > 0 ? (
-              <VList style={{ height: "100%" }} count={page.commits.length}>
+            {commits.length > 0 ? (
+              <VList style={{ height: "100%" }} count={commits.length}>
                 {(i) => {
-                  const c = page.commits[i];
+                  const c = commits[i];
                   return (
                     <div key={c.sha} className="pl-2">
                       <CommitListRow

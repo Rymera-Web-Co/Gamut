@@ -1,5 +1,7 @@
-import { GitBranch, GitPullRequestArrow } from "lucide-react";
+import { GitBranch, GitPullRequestArrow, Moon, Sun } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
 
@@ -11,6 +13,8 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 export function TopTabs() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+  const theme = useTheme((s) => s.theme);
+  const toggleTheme = useTheme((s) => s.toggle);
 
   return (
     <div className="flex h-10 shrink-0 items-stretch border-b">
@@ -29,6 +33,17 @@ export function TopTabs() {
           {label}
         </button>
       ))}
+      <div className="ml-auto flex items-center pr-2">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          title="Toggle theme (⌘J)"
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? <Sun /> : <Moon />}
+        </Button>
+      </div>
     </div>
   );
 }

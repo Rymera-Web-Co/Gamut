@@ -31,6 +31,16 @@ cd src-tauri && cargo build   # compile the Rust backend
 The SQLite database is created at the platform app-data dir on first run
 (e.g. `~/Library/Application Support/com.rymera.gamut/gamut.db` on macOS).
 
+## Build a release
+
+```bash
+pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/release/bundle/
+```
+
+## Keyboard shortcuts
+
+- `⌘/Ctrl+1` History · `⌘/Ctrl+2` Review · `⌘/Ctrl+J` toggle theme
+
 ## Status
 
-Milestones: **M0 scaffold** ✅ · M1 repos · M2 history · M3 review · M4 polish.
+Milestones: **M0 scaffold** ✅ · **M1 repos** ✅ · **M2 history** ✅ · **M3 review** ✅ · **M4 polish** ✅
