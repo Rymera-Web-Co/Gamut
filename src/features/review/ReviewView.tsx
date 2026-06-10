@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GitCompare, GitPullRequestArrow } from "lucide-react";
 
@@ -5,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore, type ReviewMode } from "@/store/ui";
-import { useGithubAuth, useGithubPrs } from "./api";
+import { useGithubAuth, useGithubPrs, useReviewFiles } from "./api";
 import { LocalReview } from "./LocalReview";
 
 const MODES: { mode: ReviewMode; label: string }[] = [
@@ -27,6 +28,24 @@ export function ReviewView() {
     queryFn: () => ipc.listBranches(repoId!),
     enabled: repoId != null,
   });
+
+  // Peek at both sources so we can auto-pick the one with changes (these share
+  // the same query cache as the LocalReview below, so no extra fetches).
+  const working = useReviewFiles(repoId, "working");
+  const branchDiff = useReviewFiles(repoId, "branch");
+
+  // Once per repo: if the working tree is clean but the branch has changes,
+  // default to "Branch vs base" — saves a click. Doesn't override the user
+  // afterwards (decided per repo).
+  const [decidedFor, setDecidedFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (repoId == null || decidedFor === repoId) return;
+    if (!working.data || !branchDiff.data) return;
+    if (working.data.files.length === 0 && branchDiff.data.files.length > 0) {
+      setMode("branch");
+    }
+    setDecidedFor(repoId);
+  }, [repoId, working.data, branchDiff.data, decidedFor, setMode]);
 
   if (repoId == null) {
     return (
