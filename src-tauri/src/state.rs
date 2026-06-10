@@ -6,4 +6,7 @@ use rusqlite::Connection;
 pub struct AppState {
     /// SQLite connection. `rusqlite::Connection` is not `Sync`, so guard it with a `Mutex`.
     pub db: Mutex<Connection>,
+    /// In-memory cache of the GitHub token so the OS keychain is read at most
+    /// once per process run (avoids repeated keychain prompts).
+    pub gh_token: Mutex<Option<String>>,
 }

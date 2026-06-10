@@ -12,6 +12,9 @@ use crate::state::AppState;
 const KEYRING_SERVICE: &str = "com.rymera.gamut";
 const KEYRING_USER: &str = "github-token";
 const API: &str = "https://api.github.com";
+/// Settings key for the connected GitHub login (non-secret) — lets the UI know
+/// you're signed in without touching the keychain at startup.
+const SETTING_LOGIN: &str = "github_login";
 
 // ---- Token storage (OS keychain) ----
 
@@ -33,8 +36,66 @@ fn http() -> AppResult<reqwest::Client> {
         .build()?)
 }
 
-fn require_token() -> AppResult<String> {
-    read_token()?.ok_or_else(|| AppError::Other("not signed in to GitHub".into()))
+/// Get the token, reading the OS keychain at most once per run (cached in state).
+fn require_token(state: &AppState) -> AppResult<String> {
+    if let Some(t) = state
+        .gh_token
+        .lock()
+        .map_err(|e| AppError::Other(format!("token lock poisoned: {e}")))?
+        .clone()
+    {
+        return Ok(t);
+    }
+    let token = read_token()?.ok_or_else(|| AppError::Other("not signed in to GitHub".into()))?;
+    cache_token(state, Some(token.clone()))?;
+    Ok(token)
+}
+
+fn cache_token(state: &AppState, token: Option<String>) -> AppResult<()> {
+    *state
+        .gh_token
+        .lock()
+        .map_err(|e| AppError::Other(format!("token lock poisoned: {e}")))? = token;
+    Ok(())
+}
+
+// ---- Non-secret connected-login flag (SQLite settings) ----
+
+fn set_login(state: &AppState, login: &str) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![SETTING_LOGIN, login],
+    )?;
+    Ok(())
+}
+
+fn get_login(state: &AppState) -> AppResult<Option<String>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    let login = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTING_LOGIN],
+            |r| r.get::<_, String>(0),
+        )
+        .ok();
+    Ok(login)
+}
+
+fn clear_login(state: &AppState) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [SETTING_LOGIN])?;
+    Ok(())
 }
 
 /// OAuth App client ID for the device flow. The client ID is public (not a
@@ -208,6 +269,7 @@ pub async fn github_device_start() -> AppResult<DeviceCode> {
 /// On success the token is stored in the keychain.
 #[tauri::command]
 pub async fn github_device_poll(
+    state: State<'_, AppState>,
     device_code: String,
     interval: u64,
     expires_in: u64,
@@ -239,6 +301,8 @@ pub async fn github_device_poll(
         if let Some(token) = body.access_token {
             let login = validate_token(&client, &token).await?;
             token_entry()?.set_password(&token)?;
+            cache_token(&state, Some(token))?;
+            set_login(&state, &login)?;
             return Ok(AuthStatus {
                 logged_in: true,
                 login: Some(login),
@@ -350,59 +414,36 @@ struct GhReview {
 
 /// Validate and store a GitHub personal-access token in the OS keychain.
 #[tauri::command]
-pub async fn github_set_token(token: String) -> AppResult<AuthStatus> {
+pub async fn github_set_token(
+    state: State<'_, AppState>,
+    token: String,
+) -> AppResult<AuthStatus> {
     let client = http()?;
-    let resp = client
-        .get(format!("{API}/user"))
-        .bearer_auth(&token)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "token rejected by GitHub ({})",
-            resp.status()
-        )));
-    }
-    let user: GhUser = resp.json().await?;
+    let login = validate_token(&client, &token).await?;
     token_entry()?.set_password(&token)?;
+    cache_token(&state, Some(token))?;
+    set_login(&state, &login)?;
     Ok(AuthStatus {
         logged_in: true,
-        login: Some(user.login),
+        login: Some(login),
+    })
+}
+
+/// Connected status — read from the stored (non-secret) login, so this does NOT
+/// touch the keychain (no prompt on startup).
+#[tauri::command]
+pub fn github_auth_status(state: State<AppState>) -> AppResult<AuthStatus> {
+    let login = get_login(&state)?;
+    Ok(AuthStatus {
+        logged_in: login.is_some(),
+        login,
     })
 }
 
 #[tauri::command]
-pub async fn github_auth_status() -> AppResult<AuthStatus> {
-    let Some(token) = read_token()? else {
-        return Ok(AuthStatus {
-            logged_in: false,
-            login: None,
-        });
-    };
-    let client = http()?;
-    let resp = client
-        .get(format!("{API}/user"))
-        .bearer_auth(&token)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        return Ok(AuthStatus {
-            logged_in: false,
-            login: None,
-        });
-    }
-    let user: GhUser = resp.json().await?;
-    Ok(AuthStatus {
-        logged_in: true,
-        login: Some(user.login),
-    })
-}
-
-#[tauri::command]
-pub fn github_logout() -> AppResult<()> {
+pub fn github_logout(state: State<AppState>) -> AppResult<()> {
+    clear_login(&state)?;
+    cache_token(&state, None)?;
     match token_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
@@ -416,7 +457,7 @@ pub async fn github_list_prs(
     repo_id: i64,
 ) -> AppResult<Vec<PrSummary>> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
-    let token = require_token()?;
+    let token = require_token(&state)?;
     let client = http()?;
     let resp = client
         .get(format!("{API}/repos/{owner}/{repo}/pulls"))
@@ -454,7 +495,7 @@ pub async fn github_pr_diff(
     number: u64,
 ) -> AppResult<String> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
-    let token = require_token()?;
+    let token = require_token(&state)?;
     let client = http()?;
     let resp = client
         .get(format!("{API}/repos/{owner}/{repo}/pulls/{number}"))
@@ -477,7 +518,7 @@ pub async fn github_pr_thread(
     number: u64,
 ) -> AppResult<PrThread> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
-    let token = require_token()?;
+    let token = require_token(&state)?;
     let client = http()?;
     let base = format!("{API}/repos/{owner}/{repo}");
 
@@ -574,7 +615,7 @@ pub async fn github_submit_review(
     body: String,
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
-    let token = require_token()?;
+    let token = require_token(&state)?;
     let client = http()?;
     let resp = client
         .post(format!("{API}/repos/{owner}/{repo}/pulls/{number}/reviews"))

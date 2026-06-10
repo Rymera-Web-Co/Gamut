@@ -25,6 +25,7 @@ pub fn run() {
             let conn = db::open(&db_path)?;
             app.manage(AppState {
                 db: Mutex::new(conn),
+                gh_token: Mutex::new(None),
             });
             Ok(())
         })
