@@ -11,14 +11,57 @@ use crate::state::AppState;
 const API: &str = "https://api.github.com";
 const SETTING_LOGIN: &str = "github_login";
 const SETTING_TOKEN: &str = "github_token";
+const KEYRING_SERVICE: &str = "com.rymera.gamut";
+const KEYRING_USER: &str = "github-token";
 
-// ---- Token / login storage (local SQLite settings) ----
+// ---- Token storage ----
 //
-// We store the token in the app's SQLite DB rather than the OS keychain.
-// The keychain is more secure, but on macOS an *unsigned* dev binary triggers
-// an access prompt on every keychain read/write (and "Always Allow" doesn't
-// persist across rebuilds since it binds to the code signature). DB storage
-// avoids that entirely; the token sits in the app-data dir in plaintext.
+// Release builds store the token in the OS keychain (encrypted). Dev builds
+// store it in the app's SQLite settings instead: an *unsigned* dev binary makes
+// macOS prompt on every keychain access and "Always Allow" doesn't persist
+// across rebuilds (it binds to the code signature). The non-secret login name
+// always lives in settings so startup never touches the keychain.
+
+/// Use the OS keychain for the token only in release builds.
+fn use_keychain() -> bool {
+    !cfg!(debug_assertions)
+}
+
+fn token_entry() -> AppResult<keyring::Entry> {
+    Ok(keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?)
+}
+
+fn read_token_store(state: &AppState) -> AppResult<Option<String>> {
+    if use_keychain() {
+        match token_entry()?.get_password() {
+            Ok(t) => Ok(Some(t)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    } else {
+        get_setting(state, SETTING_TOKEN)
+    }
+}
+
+fn write_token_store(state: &AppState, token: &str) -> AppResult<()> {
+    if use_keychain() {
+        token_entry()?.set_password(token)?;
+        Ok(())
+    } else {
+        set_setting(state, SETTING_TOKEN, token)
+    }
+}
+
+fn delete_token_store(state: &AppState) -> AppResult<()> {
+    if use_keychain() {
+        match token_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    } else {
+        del_setting(state, SETTING_TOKEN)
+    }
+}
 
 fn http() -> AppResult<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -70,7 +113,7 @@ fn require_token(state: &AppState) -> AppResult<String> {
     {
         return Ok(t);
     }
-    let token = get_setting(state, SETTING_TOKEN)?
+    let token = read_token_store(state)?
         .ok_or_else(|| AppError::Other("not signed in to GitHub".into()))?;
     cache_token(state, Some(token.clone()))?;
     Ok(token)
@@ -85,7 +128,7 @@ fn cache_token(state: &AppState, token: Option<String>) -> AppResult<()> {
 }
 
 fn store_credentials(state: &AppState, token: &str, login: &str) -> AppResult<()> {
-    set_setting(state, SETTING_TOKEN, token)?;
+    write_token_store(state, token)?;
     set_setting(state, SETTING_LOGIN, login)?;
     cache_token(state, Some(token.to_string()))
 }
@@ -430,7 +473,7 @@ pub fn github_auth_status(state: State<AppState>) -> AppResult<AuthStatus> {
 
 #[tauri::command]
 pub fn github_logout(state: State<AppState>) -> AppResult<()> {
-    del_setting(&state, SETTING_TOKEN)?;
+    delete_token_store(&state)?;
     del_setting(&state, SETTING_LOGIN)?;
     cache_token(&state, None)
 }
