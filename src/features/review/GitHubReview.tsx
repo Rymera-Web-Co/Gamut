@@ -13,6 +13,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useUiStore } from "@/store/ui";
 import {
   useCheckoutPr,
   useGithubAuth,
@@ -246,11 +247,14 @@ function PrList({
 export function GitHubReview({ repoId }: { repoId: number }) {
   const auth = useGithubAuth();
   const logout = useLogout();
-  const [selected, setSelected] = useState<number | null>(null);
+  const selected = useUiStore((s) => s.selectedPrNumber);
+  const setSelected = useUiStore((s) => s.setSelectedPr);
   const prs = useGithubPrs(repoId, auth.data?.logged_in ?? false);
   const thread = usePrThread(repoId, selected);
   const checkout = useCheckoutPr(repoId);
   const selectedPr = prs.data?.find((p) => p.number === selected) ?? null;
+  const setView = useUiStore((s) => s.setView);
+  const setReviewMode = useUiStore((s) => s.setReviewMode);
 
   if (auth.isLoading) {
     return (
@@ -328,10 +332,18 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                     disabled={checkout.isPending}
                     title="Check out this PR's branch"
                     onClick={() =>
-                      checkout.mutate({
-                        number: selectedPr.number,
-                        headRef: selectedPr.head_ref,
-                      })
+                      checkout.mutate(
+                        {
+                          number: selectedPr.number,
+                          headRef: selectedPr.head_ref,
+                        },
+                        {
+                          onSuccess: () => {
+                            setReviewMode("branch");
+                            setView("review");
+                          },
+                        },
+                      )
                     }
                   >
                     {checkout.isPending ? (

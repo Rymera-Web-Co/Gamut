@@ -1,20 +1,32 @@
-import { useState } from "react";
-import { GitCompare } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { GitCompare, GitPullRequestArrow } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { useUiStore } from "@/store/ui";
+import { useUiStore, type ReviewMode } from "@/store/ui";
+import { useGithubAuth, useGithubPrs } from "./api";
 import { LocalReview } from "./LocalReview";
 
-type Mode = "working" | "branch";
-
-const MODES: { mode: Mode; label: string }[] = [
+const MODES: { mode: ReviewMode; label: string }[] = [
   { mode: "working", label: "Working tree" },
   { mode: "branch", label: "Branch vs base" },
 ];
 
 export function ReviewView() {
   const repoId = useUiStore((s) => s.activeRepoId);
-  const [mode, setMode] = useState<Mode>("working");
+  const mode = useUiStore((s) => s.reviewMode);
+  const setMode = useUiStore((s) => s.setReviewMode);
+  const setView = useUiStore((s) => s.setView);
+  const setSelectedPr = useUiStore((s) => s.setSelectedPr);
+
+  const auth = useGithubAuth();
+  const prs = useGithubPrs(repoId, auth.data?.logged_in ?? false);
+  const branches = useQuery({
+    queryKey: ["branches", repoId],
+    queryFn: () => ipc.listBranches(repoId!),
+    enabled: repoId != null,
+  });
 
   if (repoId == null) {
     return (
@@ -26,6 +38,12 @@ export function ReviewView() {
       </div>
     );
   }
+
+  const currentBranch = branches.data?.find((b) => b.is_head)?.name;
+  const matchingPr =
+    currentBranch != null
+      ? prs.data?.find((p) => p.head_ref === currentBranch)
+      : undefined;
 
   return (
     <div className="flex h-full flex-col">
@@ -44,6 +62,22 @@ export function ReviewView() {
             {label}
           </button>
         ))}
+
+        {mode === "branch" && matchingPr && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            title={`Open pull request #${matchingPr.number}`}
+            onClick={() => {
+              setSelectedPr(matchingPr.number);
+              setView("pulls");
+            }}
+          >
+            <GitPullRequestArrow />
+            View PR #{matchingPr.number}
+          </Button>
+        )}
       </div>
 
       <div className="min-h-0 flex-1">
