@@ -87,5 +87,33 @@ pub async fn git_pull(state: State<'_, AppState>, repo_id: i64) -> AppResult<Str
 #[tauri::command]
 pub async fn git_push(state: State<'_, AppState>, repo_id: i64) -> AppResult<String> {
     let dir = repo_path(&state, repo_id)?;
-    run_git(&dir.to_string_lossy(), &["push"]).await
+
+    // Determine the current branch and whether it has an upstream. The git2
+    // Repository is scoped to this block so it's dropped before the await.
+    let (branch, has_upstream) = {
+        let repo = open_repo(&state, repo_id)?;
+        let head = repo.head().ok();
+        let branch = head
+            .as_ref()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand().map(|s| s.to_string()));
+        let has_upstream = match &branch {
+            Some(b) => repo
+                .find_branch(b, BranchType::Local)
+                .ok()
+                .and_then(|br| br.upstream().ok())
+                .is_some(),
+            None => false,
+        };
+        (branch, has_upstream)
+    };
+
+    let dir = dir.to_string_lossy().to_string();
+    match (has_upstream, branch) {
+        // No upstream yet — set it on first push (git push -u origin <branch>).
+        (false, Some(branch)) => {
+            run_git(&dir, &["push", "--set-upstream", "origin", &branch]).await
+        }
+        _ => run_git(&dir, &["push"]).await,
+    }
 }
