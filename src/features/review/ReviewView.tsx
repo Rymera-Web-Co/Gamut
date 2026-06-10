@@ -7,6 +7,7 @@ import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore, type ReviewMode } from "@/store/ui";
 import { useGithubAuth, useGithubPrs, useReviewFiles } from "./api";
+import { ReviewPopover } from "./GitHubReview";
 import { LocalReview } from "./LocalReview";
 
 const MODES: { mode: ReviewMode; label: string }[] = [
@@ -83,24 +84,39 @@ export function ReviewView() {
         ))}
 
         {mode === "branch" && matchingPr && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="ml-auto"
-            title={`Open pull request #${matchingPr.number}`}
-            onClick={() => {
-              setSelectedPr(matchingPr.number);
-              setView("pulls");
-            }}
-          >
-            <GitPullRequestArrow />
-            View PR #{matchingPr.number}
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              title={`Open pull request #${matchingPr.number}`}
+              onClick={() => {
+                setSelectedPr(matchingPr.number);
+                setView("pulls");
+              }}
+            >
+              <GitPullRequestArrow />
+              View PR #{matchingPr.number}
+            </Button>
+            <ReviewPopover
+              repoId={repoId}
+              number={matchingPr.number}
+              headSha={matchingPr.head_sha}
+            />
+          </div>
         )}
       </div>
 
       <div className="min-h-0 flex-1">
-        <LocalReview key={`${repoId}-${mode}`} repoId={repoId} source={mode} />
+        <LocalReview
+          key={`${repoId}-${mode}`}
+          repoId={repoId}
+          source={mode}
+          pr={
+            mode === "branch" && matchingPr
+              ? { number: matchingPr.number, headSha: matchingPr.head_sha }
+              : undefined
+          }
+        />
       </div>
     </div>
   );

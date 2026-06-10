@@ -155,8 +155,19 @@ export interface PrSummary {
   draft: boolean;
   base_ref: string;
   head_ref: string;
+  head_sha: string;
   url: string;
   updated_at: string;
+}
+
+/** An inline review comment anchored to a line (or range) of the diff. */
+export interface DraftComment {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  start_line?: number;
+  start_side?: "LEFT" | "RIGHT";
+  body: string;
 }
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
@@ -292,7 +303,24 @@ export const ipc = {
     number: number,
     event: ReviewEvent,
     body: string,
-  ) => invoke<void>("github_submit_review", { repoId, number, event, body }),
+    commitId?: string | null,
+    comments?: DraftComment[],
+  ) =>
+    invoke<void>("github_submit_review", {
+      repoId,
+      number,
+      event,
+      body,
+      commitId: commitId ?? null,
+      comments: comments ?? null,
+    }),
+  githubPrComment: (
+    repoId: number,
+    number: number,
+    commitId: string,
+    comment: DraftComment,
+  ) =>
+    invoke<void>("github_pr_comment", { repoId, number, commitId, comment }),
   githubUpdateBody: (
     repoId: number,
     number: number,

@@ -18,6 +18,7 @@ import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
+import { useDraftsFor, useReviewDrafts } from "@/store/reviewDrafts";
 import {
   useCheckoutPr,
   useGithubAuth,
@@ -177,16 +178,28 @@ const REVIEW_OPTIONS: {
   },
 ];
 
-function ReviewPopover({ repoId, number }: { repoId: number; number: number }) {
+export function ReviewPopover({
+  repoId,
+  number,
+  headSha,
+}: {
+  repoId: number;
+  number: number;
+  headSha?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const submit = useSubmitReview(repoId);
   const mentionables = useMentionables(repoId, open);
+  const drafts = useDraftsFor(repoId, number);
+  const clearDrafts = useReviewDrafts((s) => s.clear);
 
-  // Approve can be submitted with no comment; the others need one.
+  // Approve needs no comment; otherwise require a body or pending inline drafts.
   const needsBody = event !== "APPROVE";
-  const canSubmit = !submit.isPending && (!needsBody || body.trim().length > 0);
+  const canSubmit =
+    !submit.isPending &&
+    (!needsBody || body.trim().length > 0 || drafts.length > 0);
 
   function onOpenChange(next: boolean) {
     setOpen(next);
@@ -199,15 +212,28 @@ function ReviewPopover({ repoId, number }: { repoId: number; number: number }) {
 
   function send() {
     submit.mutate(
-      { number, event, body },
-      { onSuccess: () => onOpenChange(false) },
+      {
+        number,
+        event,
+        body,
+        commitId: headSha,
+        comments: drafts.length ? drafts : undefined,
+      },
+      {
+        onSuccess: () => {
+          clearDrafts(repoId, number);
+          onOpenChange(false);
+        },
+      },
     );
   }
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <Button size="sm">Submit review</Button>
+        <Button size="sm">
+          Submit review{drafts.length > 0 ? ` (${drafts.length})` : ""}
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -216,6 +242,13 @@ function ReviewPopover({ repoId, number }: { repoId: number; number: number }) {
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <div className="text-sm font-semibold">Finish your review</div>
+
+        {drafts.length > 0 && (
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            {drafts.length} pending inline comment
+            {drafts.length === 1 ? "" : "s"} will be included.
+          </p>
+        )}
 
         <MarkdownEditor
           value={body}
@@ -416,7 +449,11 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                     Checkout
                   </Button>
                 )}
-                <ReviewPopover repoId={repoId} number={selected} />
+                <ReviewPopover
+                  repoId={repoId}
+                  number={selected}
+                  headSha={selectedPr?.head_sha}
+                />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {thread.isLoading || thread.data == null ? (

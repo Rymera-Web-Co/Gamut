@@ -369,6 +369,7 @@ pub struct PrSummary {
     pub draft: bool,
     pub base_ref: String,
     pub head_ref: String,
+    pub head_sha: String,
     pub url: String,
     pub updated_at: String,
 }
@@ -404,6 +405,7 @@ struct GhUser {
 struct GhRef {
     #[serde(rename = "ref")]
     ref_name: String,
+    sha: String,
 }
 
 #[derive(Deserialize)]
@@ -512,6 +514,7 @@ pub async fn github_list_prs(
             draft: p.draft,
             base_ref: p.base.ref_name,
             head_ref: p.head.ref_name,
+            head_sha: p.head.sha,
             url: p.html_url,
             updated_at: p.updated_at,
         })
@@ -638,7 +641,35 @@ pub async fn github_pr_thread(
     })
 }
 
-/// Submit a review on a pull request. `event` is APPROVE | REQUEST_CHANGES | COMMENT.
+/// An inline review comment anchored to a line (or line range) of the diff.
+#[derive(Deserialize)]
+pub struct DraftComment {
+    pub path: String,
+    pub line: u64,
+    pub side: String, // "LEFT" | "RIGHT"
+    pub start_line: Option<u64>,
+    pub start_side: Option<String>,
+    pub body: String,
+}
+
+fn comment_json(c: &DraftComment) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    m.insert("path".into(), serde_json::json!(c.path));
+    m.insert("line".into(), serde_json::json!(c.line));
+    m.insert("side".into(), serde_json::json!(c.side));
+    m.insert("body".into(), serde_json::json!(c.body));
+    if let Some(sl) = c.start_line {
+        m.insert("start_line".into(), serde_json::json!(sl));
+    }
+    if let Some(ss) = &c.start_side {
+        m.insert("start_side".into(), serde_json::json!(ss));
+    }
+    serde_json::Value::Object(m)
+}
+
+/// Submit a review on a pull request. `event` is APPROVE | REQUEST_CHANGES |
+/// COMMENT. Any `comments` are submitted as inline review comments in the same
+/// call (the pending-draft batch), anchored to `commit_id` when provided.
 #[tauri::command]
 pub async fn github_submit_review(
     state: State<'_, AppState>,
@@ -646,19 +677,67 @@ pub async fn github_submit_review(
     number: u64,
     event: String,
     body: String,
+    commit_id: Option<String>,
+    comments: Option<Vec<DraftComment>>,
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
     let client = http()?;
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("event".into(), serde_json::json!(event));
+    payload.insert("body".into(), serde_json::json!(body));
+    if let Some(cid) = commit_id {
+        payload.insert("commit_id".into(), serde_json::json!(cid));
+    }
+    if let Some(comments) = comments {
+        if !comments.is_empty() {
+            let arr: Vec<_> = comments.iter().map(comment_json).collect();
+            payload.insert("comments".into(), serde_json::json!(arr));
+        }
+    }
+
     let resp = client
         .post(format!("{API}/repos/{owner}/{repo}/pulls/{number}/reviews"))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
-        .json(&serde_json::json!({ "event": event, "body": body }))
+        .json(&serde_json::Value::Object(payload))
         .send()
         .await?;
     if !resp.status().is_success() {
         return Err(api_error("submitting the review", resp).await);
+    }
+    Ok(())
+}
+
+/// Post a single inline review comment immediately (the "Comment" action),
+/// anchored to a line/range of `commit_id`'s diff.
+#[tauri::command]
+pub async fn github_pr_comment(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    commit_id: String,
+    comment: DraftComment,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+
+    let mut payload = comment_json(&comment);
+    if let serde_json::Value::Object(ref mut m) = payload {
+        m.insert("commit_id".into(), serde_json::json!(commit_id));
+    }
+
+    let resp = client
+        .post(format!("{API}/repos/{owner}/{repo}/pulls/{number}/comments"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&payload)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("posting the comment", resp).await);
     }
     Ok(())
 }

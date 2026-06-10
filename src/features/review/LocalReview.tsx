@@ -1,20 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 import { FileCheck2, Loader2 } from "lucide-react";
 
 import { FileTree } from "@/components/FileTree";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
-import type { FileChange, ReviewSource } from "@/lib/ipc";
+import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
-import { useReviewFileDiff, useReviewFiles } from "./api";
+import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
+import { useMentionables, usePrComment, useReviewFileDiff, useReviewFiles } from "./api";
+import { InlineCommentBox } from "./InlineCommentBox";
+
+/** Context needed to attach PR review comments to the diff. */
+type PrContext = { number: number; headSha: string };
+
+type Composer = { startLine: number; endLine: number };
 
 export function LocalReview({
   repoId,
   source,
+  pr,
 }: {
   repoId: number;
   source: ReviewSource;
+  /** When set (branch mode + matching PR), lines become commentable. */
+  pr?: PrContext;
 }) {
   const review = useReviewFiles(repoId, source);
   const [selected, setSelected] = useState<FileChange | null>(null);
@@ -30,6 +41,144 @@ export function LocalReview({
     selected?.path ?? null,
     selected?.old_path,
   );
+
+  // ---- Inline PR comments (only meaningful when a PR matches) ----
+  const mentionables = useMentionables(repoId, !!pr);
+  const postComment = usePrComment(repoId);
+  const addDraft = useReviewDrafts((s) => s.add);
+  const drafts = useDraftsFor(repoId, pr?.number ?? -1);
+
+  const modifiedRef = useRef<Monaco.editor.ICodeEditor | null>(null);
+  const decorationsRef =
+    useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  // Latest values for use inside Monaco event callbacks (avoid stale closures).
+  const prRef = useRef<PrContext | undefined>(pr);
+  prRef.current = pr;
+  const pathRef = useRef<string | undefined>(selected?.path);
+  pathRef.current = selected?.path;
+
+  const [composer, setComposer] = useState<Composer | null>(null);
+  const composerRef = useRef<Composer | null>(null);
+  composerRef.current = composer;
+  // Viewport-relative Y (px) where the composer overlay is pinned.
+  const [overlayTop, setOverlayTop] = useState(0);
+
+  function updateOverlayTop() {
+    const modified = modifiedRef.current;
+    const c = composerRef.current;
+    if (!modified || !c) return;
+    setOverlayTop(
+      modified.getTopForLineNumber(c.endLine + 1) - modified.getScrollTop(),
+    );
+  }
+
+  function openComposer(startLine: number, endLine: number) {
+    const modified = modifiedRef.current;
+    if (!modified) return;
+    setComposer({ startLine, endLine });
+    composerRef.current = { startLine, endLine };
+    // Center the line so there's room for the overlay, then pin under it.
+    modified.revealLineInCenter(endLine);
+    requestAnimationFrame(updateOverlayTop);
+  }
+
+  function closeComposer() {
+    composerRef.current = null;
+    setComposer(null);
+  }
+
+  // Tear down the composer when the open file changes.
+  useEffect(() => {
+    closeComposer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.path, source]);
+
+  function handleMount(
+    editor: Monaco.editor.IStandaloneDiffEditor,
+    monaco: typeof Monaco,
+  ) {
+    const modified = editor.getModifiedEditor();
+    modifiedRef.current = modified;
+    decorationsRef.current = modified.createDecorationsCollection();
+
+    // Keep the overlay pinned to its line as the diff scrolls.
+    modified.onDidScrollChange(() => {
+      if (composerRef.current) updateOverlayTop();
+    });
+
+    // Show a "+" in the glyph margin on the hovered line.
+    modified.onMouseMove((e) => {
+      const line = e.target.position?.lineNumber;
+      if (!prRef.current || line == null) {
+        decorationsRef.current?.clear();
+        return;
+      }
+      decorationsRef.current?.set([
+        {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            glyphMarginClassName: "comment-add-glyph",
+            glyphMarginHoverMessage: { value: "Add a review comment" },
+          },
+        },
+      ]);
+    });
+    modified.onMouseLeave(() => decorationsRef.current?.clear());
+
+    // Click the "+" to open the composer (covering the current selection if any).
+    modified.onMouseDown((e) => {
+      if (
+        e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        !prRef.current ||
+        !pathRef.current
+      ) {
+        return;
+      }
+      const clicked = e.target.position?.lineNumber;
+      if (clicked == null) return;
+      const sel = modified.getSelection();
+      if (
+        sel &&
+        !sel.isEmpty() &&
+        clicked >= sel.startLineNumber &&
+        clicked <= sel.endLineNumber
+      ) {
+        openComposer(sel.startLineNumber, sel.endLineNumber);
+      } else {
+        openComposer(clicked, clicked);
+      }
+    });
+  }
+
+  function draftFor(body: string): DraftComment | null {
+    const path = pathRef.current;
+    if (!composer || !path) return null;
+    const multi = composer.startLine !== composer.endLine;
+    return {
+      path,
+      line: composer.endLine,
+      side: "RIGHT",
+      start_line: multi ? composer.startLine : undefined,
+      start_side: multi ? "RIGHT" : undefined,
+      body,
+    };
+  }
+
+  function submitComment(body: string) {
+    const comment = draftFor(body);
+    if (!comment || !pr) return;
+    postComment.mutate(
+      { number: pr.number, commitId: pr.headSha, comment },
+      { onSuccess: closeComposer },
+    );
+  }
+
+  function stashDraft(body: string) {
+    const comment = draftFor(body);
+    if (!comment || !pr) return;
+    addDraft(repoId, pr.number, comment);
+    closeComposer();
+  }
 
   if (review.isLoading) {
     return (
@@ -59,6 +208,12 @@ export function LocalReview({
       </div>
     );
   }
+
+  const lineLabel = composer
+    ? composer.startLine !== composer.endLine
+      ? `R${composer.startLine}–R${composer.endLine}`
+      : `R${composer.endLine}`
+    : "";
 
   return (
     <PanelGroup
@@ -97,20 +252,40 @@ export function LocalReview({
             Binary file — diff not shown.
           </div>
         ) : (
-          <DiffEditor
-            height="100%"
-            theme={isDarkTheme() ? GITHUB_DARK : "light"}
-            language={languageFor(selected.path)}
-            original={diff.data.old_text ?? ""}
-            modified={diff.data.new_text ?? ""}
-            options={{
-              readOnly: true,
-              renderSideBySide: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              fontSize: 12,
-            }}
-          />
+          <div className="relative h-full overflow-hidden">
+            <DiffEditor
+              height="100%"
+              theme={isDarkTheme() ? GITHUB_DARK : "light"}
+              language={languageFor(selected.path)}
+              original={diff.data.old_text ?? ""}
+              modified={diff.data.new_text ?? ""}
+              onMount={handleMount}
+              options={{
+                readOnly: true,
+                renderSideBySide: true,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                glyphMargin: !!pr,
+                fontSize: 12,
+              }}
+            />
+            {composer && (
+              <div
+                className="absolute inset-x-2 z-20"
+                style={{ top: Math.max(0, overlayTop) }}
+              >
+                <InlineCommentBox
+                  lineLabel={lineLabel}
+                  mentions={mentionables.data ?? []}
+                  hasDrafts={drafts.length > 0}
+                  posting={postComment.isPending}
+                  onCancel={closeComposer}
+                  onComment={submitComment}
+                  onAddDraft={stashDraft}
+                />
+              </div>
+            )}
+          </div>
         )}
       </Panel>
     </PanelGroup>

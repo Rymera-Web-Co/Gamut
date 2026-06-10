@@ -142,6 +142,26 @@
   cursor: pointer;
 }
 
+/* Monaco glyph-margin affordance for adding a review comment on a line. */
+.comment-add-glyph {
+  cursor: pointer;
+}
+.comment-add-glyph::before {
+  content: "+";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05em;
+  height: 1.05em;
+  margin-top: 0.1em;
+  border-radius: 3px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
 /* Collapsible <details>/<summary> (raw HTML via rehype-raw). */
 .prose details {
   border: 1px solid var(--color-border);

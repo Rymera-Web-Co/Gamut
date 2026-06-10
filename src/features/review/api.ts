@@ -7,6 +7,7 @@ import {
 import {
   ipc,
   type BodyTarget,
+  type DraftComment,
   type PrThread,
   type ReviewEvent,
   type ReviewSource,
@@ -120,13 +121,36 @@ export function useSubmitReview(repoId: number) {
       number,
       event,
       body,
+      commitId,
+      comments,
     }: {
       number: number;
       event: ReviewEvent;
       body: string;
-    }) => ipc.githubSubmitReview(repoId, number, event, body),
+      commitId?: string | null;
+      comments?: DraftComment[];
+    }) => ipc.githubSubmitReview(repoId, number, event, body, commitId, comments),
     onSuccess: (_data, { number }) => {
       qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+      qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+    },
+  });
+}
+
+/** Post a single inline review comment immediately (the "Comment" action). */
+export function usePrComment(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      number,
+      commitId,
+      comment,
+    }: {
+      number: number;
+      commitId: string;
+      comment: DraftComment;
+    }) => ipc.githubPrComment(repoId, number, commitId, comment),
+    onSuccess: (_data, { number }) => {
       qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
     },
   });
