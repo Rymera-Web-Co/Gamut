@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type View = "history" | "review";
+export type View = "history" | "review" | "pulls";
 
 interface UiState {
   view: View;

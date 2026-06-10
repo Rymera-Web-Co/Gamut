@@ -1,17 +1,15 @@
 import { useState } from "react";
-import { GitPullRequestArrow } from "lucide-react";
+import { GitCompare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
-import { GitHubReview } from "./GitHubReview";
 import { LocalReview } from "./LocalReview";
 
-type Mode = "working" | "branch" | "github";
+type Mode = "working" | "branch";
 
 const MODES: { mode: Mode; label: string }[] = [
   { mode: "working", label: "Working tree" },
   { mode: "branch", label: "Branch vs base" },
-  { mode: "github", label: "GitHub PRs" },
 ];
 
 export function ReviewView() {
@@ -21,9 +19,9 @@ export function ReviewView() {
   if (repoId == null) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <GitPullRequestArrow className="size-8 text-[var(--color-muted-foreground)]" />
+        <GitCompare className="size-8 text-[var(--color-muted-foreground)]" />
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Select a repository from the left to review changes.
+          Select a repository from the left to review local changes.
         </p>
       </div>
     );
@@ -49,11 +47,7 @@ export function ReviewView() {
       </div>
 
       <div className="min-h-0 flex-1">
-        {mode === "github" ? (
-          <GitHubReview key={repoId} repoId={repoId} />
-        ) : (
-          <LocalReview key={`${repoId}-${mode}`} repoId={repoId} source={mode} />
-        )}
+        <LocalReview key={`${repoId}-${mode}`} repoId={repoId} source={mode} />
       </div>
     </div>
   );

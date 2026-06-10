@@ -1,4 +1,4 @@
-import { GitBranch, GitPullRequestArrow, Moon, Sun } from "lucide-react";
+import { GitBranch, GitCompare, GitPullRequestArrow, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
@@ -9,7 +9,8 @@ import { useUiStore, type View } from "@/store/ui";
 
 const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
   { view: "history", label: "History", icon: GitBranch },
-  { view: "review", label: "Review", icon: GitPullRequestArrow },
+  { view: "review", label: "Review", icon: GitCompare },
+  { view: "pulls", label: "Pull Requests", icon: GitPullRequestArrow },
 ];
 
 export function TopTabs() {

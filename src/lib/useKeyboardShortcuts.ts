@@ -23,6 +23,10 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           setView("review");
           break;
+        case "3":
+          e.preventDefault();
+          setView("pulls");
+          break;
         case "j":
           e.preventDefault();
           toggleTheme();

@@ -50,6 +50,36 @@ fn client_id() -> Option<String> {
     Some(DEFAULT_CLIENT_ID.to_string())
 }
 
+/// Build a descriptive error from a failed GitHub response: include GitHub's
+/// own `message`, and surface the SSO header when org SAML authorization is
+/// required (GitHub returns 403 with `x-github-sso` in that case).
+async fn api_error(context: &str, resp: reqwest::Response) -> AppError {
+    let status = resp.status();
+    let sso = resp
+        .headers()
+        .get("x-github-sso")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body = resp.text().await.unwrap_or_default();
+    let detail = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| status.to_string());
+
+    let mut msg = format!("GitHub {status} {context}: {detail}");
+    if let Some(sso) = sso {
+        msg.push_str(&format!(
+            " — your token needs SAML SSO authorization for this org ({sso})"
+        ));
+    }
+    AppError::Other(msg)
+}
+
 /// Validate a token against /user, returning the login.
 async fn validate_token(client: &reqwest::Client, token: &str) -> AppResult<String> {
     let resp = client
@@ -353,10 +383,7 @@ pub async fn github_list_prs(
         .await?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "GitHub returned {} listing pull requests",
-            resp.status()
-        )));
+        return Err(api_error("listing pull requests", resp).await);
     }
     let pulls: Vec<GhPull> = resp.json().await?;
     Ok(pulls
@@ -392,10 +419,7 @@ pub async fn github_pr_diff(
         .send()
         .await?;
     if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "GitHub returned {} fetching PR diff",
-            resp.status()
-        )));
+        return Err(api_error("fetching the PR diff", resp).await);
     }
     Ok(resp.text().await?)
 }
@@ -420,11 +444,7 @@ pub async fn github_submit_review(
         .send()
         .await?;
     if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(AppError::Other(format!(
-            "GitHub returned {status} submitting review: {text}"
-        )));
+        return Err(api_error("submitting the review", resp).await);
     }
     Ok(())
 }

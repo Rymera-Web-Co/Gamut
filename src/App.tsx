@@ -7,6 +7,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/toaster";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
+import { PullsView } from "@/features/review/PullsView";
 import { ipc } from "@/lib/ipc";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
@@ -58,6 +59,7 @@ export default function App() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 {view === "history" && <HistoryView />}
                 {view === "review" && <ReviewView />}
+                {view === "pulls" && <PullsView />}
               </div>
             </main>
           </Panel>
