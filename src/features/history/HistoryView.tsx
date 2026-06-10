@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { VList } from "virtua";
 import { Copy, GitBranch } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,10 +103,10 @@ function FileRow({ file, onOpen }: { file: FileChange; onOpen: () => void }) {
   return (
     <button
       onClick={onOpen}
-      className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-accent)]"
+      className="flex w-full items-center gap-3 border-b border-[var(--color-border)] px-3 py-2.5 text-left text-sm hover:bg-[var(--color-accent)]"
     >
       <span
-        className="w-3 shrink-0 text-center text-xs font-bold"
+        className="w-4 shrink-0 text-center text-xs font-bold"
         style={{ color: statusColor }}
         title={file.status}
       >
@@ -112,10 +114,14 @@ function FileRow({ file, onOpen }: { file: FileChange; onOpen: () => void }) {
       </span>
       <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
       {file.additions > 0 && (
-        <span className="shrink-0 text-xs text-[#16a34a]">+{file.additions}</span>
+        <span className="shrink-0 text-xs font-medium text-[#16a34a]">
+          +{file.additions}
+        </span>
       )}
       {file.deletions > 0 && (
-        <span className="shrink-0 text-xs text-[#dc2626]">−{file.deletions}</span>
+        <span className="shrink-0 text-xs font-medium text-[#dc2626]">
+          −{file.deletions}
+        </span>
       )}
     </button>
   );
@@ -141,8 +147,12 @@ function CommitDetailPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b p-4">
-        <p className="whitespace-pre-wrap text-sm font-medium">{d.message.trim()}</p>
-        <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">
+        <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:text-xs">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {d.message.trim()}
+          </ReactMarkdown>
+        </div>
+        <p className="mt-3 text-xs text-[var(--color-muted-foreground)]">
           {d.author_name} &lt;{d.author_email}&gt; · {formatDate(d.timestamp)}
         </p>
         <button
@@ -154,8 +164,8 @@ function CommitDetailPanel({
           <Copy className="size-3" />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-2">
-        <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+      <div className="min-h-0 flex-1 overflow-auto py-2">
+        <p className="border-b px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
           {d.files.length} file{d.files.length === 1 ? "" : "s"} changed
         </p>
         {d.files.map((f) => (

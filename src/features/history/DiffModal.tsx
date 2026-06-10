@@ -1,17 +1,16 @@
 import { useMemo, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { cn } from "@/lib/utils";
 import { useBlame, useFileDiff } from "./api";
 
 /** Build a per-line lookup of which blame hunk owns each (1-based) line. */
@@ -84,24 +83,31 @@ export function DiffModal({
   const isDark = isDarkTheme();
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[80vh] max-w-[90vw] flex-col gap-3">
-        <DialogHeader className="flex-row items-center justify-between gap-4 pr-8">
-          <DialogTitle className="truncate font-mono text-sm">{path}</DialogTitle>
-          <div className="flex gap-1">
+    <Drawer open onOpenChange={(o) => !o && onClose()}>
+      <DrawerContent className="h-[70vh] gap-2 px-3 pb-3">
+        <div className="flex items-center justify-between gap-4 px-1 pt-1">
+          <DrawerTitle className="min-w-0 flex-1 truncate font-mono text-sm">
+            {path}
+          </DrawerTitle>
+          <div className="flex items-center gap-1">
             {(["diff", "blame"] as const).map((m) => (
               <Button
                 key={m}
                 size="sm"
                 variant={mode === m ? "secondary" : "ghost"}
                 onClick={() => setMode(m)}
-                className={cn("capitalize")}
+                className="capitalize"
               >
                 {m}
               </Button>
             ))}
+            <DrawerClose asChild>
+              <Button size="icon" variant="ghost" className="size-8" aria-label="Close">
+                <X />
+              </Button>
+            </DrawerClose>
           </div>
-        </DialogHeader>
+        </div>
 
         <div className="min-h-0 flex-1 overflow-hidden rounded-md border">
           {diff.isLoading ? (
@@ -135,7 +141,7 @@ export function DiffModal({
             <BlameView text={diff.data?.new_text ?? ""} hunks={blame.data} />
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }
