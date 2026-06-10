@@ -9,11 +9,10 @@ import {
 } from "lucide-react";
 
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
 
@@ -65,91 +64,90 @@ export function BranchSwitcher({
   const empty = branchList.length === 0 && tagList.length === 0;
 
   return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        title="Switch branch or tag"
-        className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]"
-      >
-        <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
-        <span className="max-w-28 truncate">{current}</span>
-        <ChevronDown className="size-2.5 opacity-60" />
-      </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          title="Switch branch or tag"
+          className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)]"
+        >
+          <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
+          <span className="max-w-28 truncate">{current}</span>
+          <ChevronDown className="size-2.5 opacity-60" />
+        </button>
+      </PopoverTrigger>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md gap-2">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Switch branch or tag</DialogTitle>
-          </DialogHeader>
+      <PopoverContent className="w-72 p-0">
+        <div className="p-2">
           <Input
             autoFocus
             placeholder="Filter branches and tags…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            className="h-8"
           />
-          {checkout.isError && (
-            <p className="text-xs text-[var(--color-destructive)]">
-              {String(checkout.error)}
+        </div>
+        {checkout.isError && (
+          <p className="px-3 pb-2 text-xs text-[var(--color-destructive)]">
+            {String(checkout.error)}
+          </p>
+        )}
+        <div className="max-h-72 overflow-auto border-t">
+          {empty ? (
+            <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
+              No matching branches or tags.
             </p>
-          )}
-          <div className="max-h-80 overflow-auto rounded-md border">
-            {empty ? (
-              <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
-                No matching branches or tags.
-              </p>
-            ) : (
-              <>
-                {branchList.map((b) => (
-                  <button
-                    key={`${b.is_remote ? "r" : "l"}:${b.name}`}
-                    disabled={checkout.isPending}
-                    onClick={() => checkout.mutate(b.name)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
-                  >
-                    <span className="w-4 shrink-0">
-                      {b.is_head && <Check className="size-3.5" />}
+          ) : (
+            <>
+              {branchList.map((b) => (
+                <button
+                  key={`${b.is_remote ? "r" : "l"}:${b.name}`}
+                  disabled={checkout.isPending}
+                  onClick={() => checkout.mutate(b.name)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                >
+                  <span className="w-4 shrink-0">
+                    {b.is_head && <Check className="size-3.5" />}
+                  </span>
+                  <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                    {b.name}
+                  </span>
+                  {b.is_remote && (
+                    <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
+                      remote
                     </span>
-                    <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                      {b.name}
-                    </span>
-                    {b.is_remote && (
-                      <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
-                        remote
-                      </span>
-                    )}
-                  </button>
-                ))}
+                  )}
+                </button>
+              ))}
 
-                {tagList.length > 0 && (
-                  <div className="border-t bg-[var(--color-sidebar)] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                    Tags
-                  </div>
-                )}
-                {tagList.map((t) => (
-                  <button
-                    key={`t:${t}`}
-                    disabled={checkout.isPending}
-                    onClick={() => checkout.mutate(t)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
-                  >
-                    <span className="w-4 shrink-0" />
-                    <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                      {t}
-                    </span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-          {checkout.isPending && (
-            <div className="flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
-              <Loader2 className="size-3.5 animate-spin" /> Checking out…
-            </div>
+              {tagList.length > 0 && (
+                <div className="border-t bg-[var(--color-sidebar)] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                  Tags
+                </div>
+              )}
+              {tagList.map((t) => (
+                <button
+                  key={`t:${t}`}
+                  disabled={checkout.isPending}
+                  onClick={() => checkout.mutate(t)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                >
+                  <span className="w-4 shrink-0" />
+                  <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                    {t}
+                  </span>
+                </button>
+              ))}
+            </>
           )}
-        </DialogContent>
-      </Dialog>
-    </>
+        </div>
+        {checkout.isPending && (
+          <div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
+            <Loader2 className="size-3.5 animate-spin" /> Checking out…
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
