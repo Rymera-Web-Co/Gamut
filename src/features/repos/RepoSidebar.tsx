@@ -117,7 +117,7 @@ function RepoRow({
         </div>
         {/* Per-repo branch switcher + sync controls (manage without selecting). */}
         <div
-          className="flex items-center gap-0.5"
+          className="flex w-fit items-center gap-0.5"
           onClick={(e) => e.stopPropagation()}
           onDragStart={(e) => e.stopPropagation()}
         >
