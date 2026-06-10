@@ -18,7 +18,6 @@ import {
   useCheckoutPr,
   useGithubAuth,
   useGithubPrs,
-  useLogout,
   usePrThread,
   useSetToken,
   useSubmitReview,
@@ -246,7 +245,6 @@ function PrList({
 
 export function GitHubReview({ repoId }: { repoId: number }) {
   const auth = useGithubAuth();
-  const logout = useLogout();
   const selected = useUiStore((s) => s.selectedPrNumber);
   const setSelected = useUiStore((s) => s.setSelectedPr);
   const prs = useGithubPrs(repoId, auth.data?.logged_in ?? false);
@@ -270,15 +268,6 @@ export function GitHubReview({ repoId }: { repoId: number }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs">
-        <span className="text-[var(--color-muted-foreground)]">
-          Signed in as <span className="font-medium">{auth.data.login}</span>
-        </span>
-        <Button size="sm" variant="ghost" onClick={() => logout.mutate()}>
-          Sign out
-        </Button>
-      </div>
-
       <PanelGroup
         direction="horizontal"
         autoSaveId="gamut.layout.review-github"
