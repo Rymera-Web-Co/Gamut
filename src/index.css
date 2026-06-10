@@ -104,3 +104,54 @@
     height: 100%;
   }
 }
+
+/* Markdown (PR descriptions, comments, commit messages). These override the
+   zero-specificity defaults from @tailwindcss/typography. */
+.prose :not(pre) > code {
+  background-color: var(--color-accent);
+  color: var(--color-foreground);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  font-weight: 500;
+  font-size: 0.85em;
+  white-space: break-spaces;
+}
+/* Typography wraps inline code in literal backticks — drop them. */
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: none;
+}
+
+/* Task lists: no bullet/number, checkbox sits flush-left like GitHub. */
+.prose .contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+.prose .task-list-item {
+  list-style: none;
+  padding-left: 0;
+}
+.prose .task-list-item::marker {
+  content: "";
+}
+.prose .task-list-item > input[type="checkbox"] {
+  margin: 0 0.5em 0 0;
+  vertical-align: middle;
+}
+.prose .task-list-item > input[type="checkbox"]:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Collapsible <details>/<summary> (raw HTML via rehype-raw). */
+.prose details {
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  margin: 0.75em 0;
+}
+.prose summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: -0.25rem -0.75rem;
+  padding: 0.25rem 0.75rem;
+}

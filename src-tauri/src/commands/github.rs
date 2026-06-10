@@ -375,6 +375,7 @@ pub struct PrSummary {
 
 #[derive(Serialize)]
 pub struct PrComment {
+    pub id: u64,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -430,6 +431,7 @@ struct GhPullFull {
 
 #[derive(Deserialize)]
 struct GhIssueComment {
+    id: u64,
     user: GhUser,
     body: Option<String>,
     created_at: String,
@@ -437,6 +439,7 @@ struct GhIssueComment {
 
 #[derive(Deserialize)]
 struct GhReview {
+    id: u64,
     user: GhUser,
     body: Option<String>,
     state: String,
@@ -594,6 +597,7 @@ pub async fn github_pr_thread(
     let mut comments: Vec<PrComment> = Vec::new();
     for c in issue_comments {
         comments.push(PrComment {
+            id: c.id,
             author: c.user.login,
             body: c.body.unwrap_or_default(),
             created_at: c.created_at,
@@ -608,6 +612,7 @@ pub async fn github_pr_thread(
             continue;
         }
         comments.push(PrComment {
+            id: r.id,
             author: r.user.login,
             body,
             created_at: r.submitted_at.unwrap_or_default(),
@@ -656,6 +661,72 @@ pub async fn github_submit_review(
         return Err(api_error("submitting the review", resp).await);
     }
     Ok(())
+}
+
+/// Replace the body of the PR description, an issue comment, or a review.
+/// Used to persist task-list checkbox toggles. `target` is "pr" | "comment" |
+/// "review"; `id` is the comment/review id (ignored for "pr").
+#[tauri::command]
+pub async fn github_update_body(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    target: String,
+    id: Option<u64>,
+    body: String,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let base = format!("{API}/repos/{owner}/{repo}");
+
+    let req = match target.as_str() {
+        "pr" => client.patch(format!("{base}/pulls/{number}")),
+        "comment" => {
+            let id = id.ok_or_else(|| AppError::Other("comment id required".into()))?;
+            client.patch(format!("{base}/issues/comments/{id}"))
+        }
+        "review" => {
+            let id = id.ok_or_else(|| AppError::Other("review id required".into()))?;
+            client.put(format!("{base}/pulls/{number}/reviews/{id}"))
+        }
+        other => return Err(AppError::Other(format!("unknown update target: {other}"))),
+    };
+
+    let resp = req
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&serde_json::json!({ "body": body }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("updating the content", resp).await);
+    }
+    Ok(())
+}
+
+/// Logins that can be @-mentioned in the repo — its assignable users (the
+/// collaborators GitHub allows on issues/PRs). Available with read access.
+#[tauri::command]
+pub async fn github_mentionables(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<Vec<String>> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let resp = client
+        .get(format!("{API}/repos/{owner}/{repo}/assignees"))
+        .query(&[("per_page", "100")])
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("listing mentionable users", resp).await);
+    }
+    let users: Vec<GhUser> = resp.json().await?;
+    Ok(users.into_iter().map(|u| u.login).collect())
 }
 
 #[cfg(test)]

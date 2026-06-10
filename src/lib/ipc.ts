@@ -162,12 +162,16 @@ export interface PrSummary {
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
 export interface PrComment {
+  id: number;
   author: string;
   body: string;
   created_at: string;
   kind: "comment" | "review";
   state: string | null;
 }
+
+/** Where an editable body lives: the PR description, an issue comment, or a review. */
+export type BodyTarget = "pr" | "comment" | "review";
 
 export interface PrThread {
   title: string;
@@ -289,6 +293,16 @@ export const ipc = {
     event: ReviewEvent,
     body: string,
   ) => invoke<void>("github_submit_review", { repoId, number, event, body }),
+  githubUpdateBody: (
+    repoId: number,
+    number: number,
+    target: BodyTarget,
+    id: number | null,
+    body: string,
+  ) =>
+    invoke<void>("github_update_body", { repoId, number, target, id, body }),
+  githubMentionables: (repoId: number) =>
+    invoke<string[]>("github_mentionables", { repoId }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

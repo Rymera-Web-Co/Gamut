@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { VList } from "virtua";
 import { Copy, GitBranch } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
+import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { FileTree } from "@/components/FileTree";
 import { Input } from "@/components/ui/input";
@@ -112,11 +111,7 @@ function CommitDetailPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="max-h-[50%] shrink-0 overflow-auto border-b p-4">
-        <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:text-xs">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {d.message.trim()}
-          </ReactMarkdown>
-        </div>
+        <Markdown>{d.message.trim()}</Markdown>
         <p className="mt-3 text-xs text-[var(--color-muted-foreground)]">
           {d.author_name} &lt;{d.author_email}&gt; · {formatDate(d.timestamp)}
         </p>

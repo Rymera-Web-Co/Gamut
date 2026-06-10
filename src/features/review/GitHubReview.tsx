@@ -5,10 +5,14 @@ import {
   GitPullRequestArrow,
   Loader2,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
+import { Markdown, toggleTaskInMarkdown } from "@/components/Markdown";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
@@ -18,8 +22,10 @@ import {
   useCheckoutPr,
   useGithubAuth,
   useGithubPrs,
+  useMentionables,
   usePrThread,
   useSubmitReview,
+  useUpdateBody,
 } from "./api";
 
 function TokenGate() {
@@ -40,16 +46,6 @@ function TokenGate() {
   );
 }
 
-function Markdown({ children }: { children: string }) {
-  return (
-    <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:text-xs">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {children || "_No description provided._"}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
 function reviewBadge(state: string | null) {
   switch (state) {
     case "APPROVED":
@@ -63,7 +59,13 @@ function reviewBadge(state: string | null) {
   }
 }
 
-function CommentCard({ comment }: { comment: PrComment }) {
+function CommentCard({
+  comment,
+  onToggleTask,
+}: {
+  comment: PrComment;
+  onToggleTask: (index: number, checked: boolean) => void;
+}) {
   const badge = comment.kind === "review" ? reviewBadge(comment.state) : null;
   return (
     <div className="rounded-md border">
@@ -82,14 +84,24 @@ function CommentCard({ comment }: { comment: PrComment }) {
       </div>
       {comment.body && (
         <div className="px-3 py-2">
-          <Markdown>{comment.body}</Markdown>
+          <Markdown onToggleTask={onToggleTask}>{comment.body}</Markdown>
         </div>
       )}
     </div>
   );
 }
 
-function Conversation({ thread }: { thread: PrThread }) {
+function Conversation({
+  thread,
+  repoId,
+  number,
+}: {
+  thread: PrThread;
+  repoId: number;
+  number: number;
+}) {
+  const update = useUpdateBody(repoId);
+
   return (
     <div className="flex flex-col gap-3 p-3">
       {/* Description */}
@@ -104,12 +116,34 @@ function Conversation({ thread }: { thread: PrThread }) {
           </span>
         </div>
         <div className="px-3 py-2">
-          <Markdown>{thread.body}</Markdown>
+          <Markdown
+            onToggleTask={(index) =>
+              update.mutate({
+                number,
+                target: "pr",
+                id: null,
+                body: toggleTaskInMarkdown(thread.body, index),
+              })
+            }
+          >
+            {thread.body}
+          </Markdown>
         </div>
       </div>
 
-      {thread.comments.map((c, i) => (
-        <CommentCard key={i} comment={c} />
+      {thread.comments.map((c) => (
+        <CommentCard
+          key={c.id}
+          comment={c}
+          onToggleTask={(index) =>
+            update.mutate({
+              number,
+              target: c.kind === "review" ? "review" : "comment",
+              id: c.id,
+              body: toggleTaskInMarkdown(c.body, index),
+            })
+          }
+        />
       ))}
 
       {thread.comments.length === 0 && (
@@ -121,59 +155,117 @@ function Conversation({ thread }: { thread: PrThread }) {
   );
 }
 
-function ReviewBox({ repoId, number }: { repoId: number; number: number }) {
-  const [body, setBody] = useState("");
-  const submit = useSubmitReview(repoId);
+const REVIEW_OPTIONS: {
+  event: ReviewEvent;
+  label: string;
+  description: string;
+}[] = [
+  {
+    event: "COMMENT",
+    label: "Comment",
+    description: "Submit general feedback without explicit approval.",
+  },
+  {
+    event: "APPROVE",
+    label: "Approve",
+    description: "Submit feedback and approve merging these changes.",
+  },
+  {
+    event: "REQUEST_CHANGES",
+    label: "Request changes",
+    description: "Submit feedback suggesting changes.",
+  },
+];
 
-  function send(event: ReviewEvent) {
+function ReviewPopover({ repoId, number }: { repoId: number; number: number }) {
+  const [open, setOpen] = useState(false);
+  const [body, setBody] = useState("");
+  const [event, setEvent] = useState<ReviewEvent>("COMMENT");
+  const submit = useSubmitReview(repoId);
+  const mentionables = useMentionables(repoId, open);
+
+  // Approve can be submitted with no comment; the others need one.
+  const needsBody = event !== "APPROVE";
+  const canSubmit = !submit.isPending && (!needsBody || body.trim().length > 0);
+
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next) {
+      setBody("");
+      setEvent("COMMENT");
+      submit.reset();
+    }
+  }
+
+  function send() {
     submit.mutate(
       { number, event, body },
-      { onSuccess: () => setBody("") },
+      { onSuccess: () => onOpenChange(false) },
     );
   }
 
   return (
-    <div className="space-y-2 border-t p-3">
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        placeholder="Leave a review comment…"
-        className="h-20 w-full resize-none rounded-md border border-[var(--color-input)] bg-transparent p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-      />
-      <div className="flex items-center gap-2">
-        <Button size="sm" onClick={() => send("APPROVE")} disabled={submit.isPending}>
-          Approve
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => send("COMMENT")}
-          disabled={submit.isPending || !body}
-        >
-          Comment
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => send("REQUEST_CHANGES")}
-          disabled={submit.isPending || !body}
-          className="text-[var(--color-destructive)]"
-        >
-          Request changes
-        </Button>
-        {submit.isPending && (
-          <Loader2 className="size-4 animate-spin text-[var(--color-muted-foreground)]" />
-        )}
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button size="sm">Submit review</Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[30rem] space-y-3 p-3"
+        // Don't steal focus from the editor's autofocus.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <div className="text-sm font-semibold">Finish your review</div>
+
+        <MarkdownEditor
+          value={body}
+          onChange={setBody}
+          autoFocus
+          mentions={mentionables.data ?? []}
+        />
+
+        <div className="space-y-2">
+          {REVIEW_OPTIONS.map((opt) => (
+            <label
+              key={opt.event}
+              className="flex cursor-pointer items-start gap-2.5"
+            >
+              <input
+                type="radio"
+                name="review-event"
+                className="mt-0.5"
+                checked={event === opt.event}
+                onChange={() => setEvent(opt.event)}
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-medium leading-tight">
+                  {opt.label}
+                </span>
+                <span className="text-xs text-[var(--color-muted-foreground)]">
+                  {opt.description}
+                </span>
+              </div>
+            </label>
+          ))}
+        </div>
+
         {submit.isError && (
-          <span className="text-xs text-[var(--color-destructive)]">
+          <p className="text-xs text-[var(--color-destructive)]">
             {String(submit.error)}
-          </span>
+          </p>
         )}
-        {submit.isSuccess && (
-          <span className="text-xs text-[#16a34a]">Review submitted.</span>
-        )}
-      </div>
-    </div>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={send} disabled={!canSubmit}>
+            {submit.isPending && <Loader2 className="animate-spin" />}
+            Submit review
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -324,6 +416,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                     Checkout
                   </Button>
                 )}
+                <ReviewPopover repoId={repoId} number={selected} />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {thread.isLoading || thread.data == null ? (
@@ -332,11 +425,14 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                   </div>
                 ) : (
                   <div className="h-full overflow-auto">
-                    <Conversation thread={thread.data} />
+                    <Conversation
+                      thread={thread.data}
+                      repoId={repoId}
+                      number={selected}
+                    />
                   </div>
                 )}
               </div>
-              <ReviewBox repoId={repoId} number={selected} />
             </>
           )}
         </Panel>

@@ -4,7 +4,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { ipc, type ReviewEvent, type ReviewSource } from "@/lib/ipc";
+import {
+  ipc,
+  type BodyTarget,
+  type PrThread,
+  type ReviewEvent,
+  type ReviewSource,
+} from "@/lib/ipc";
 
 // ---- Local self-review ----
 
@@ -81,6 +87,17 @@ export function usePrThread(repoId: number | null, number: number | null) {
   });
 }
 
+/** Users that can be @-mentioned in this repo (its assignable collaborators). */
+export function useMentionables(repoId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["github-mentionables", repoId],
+    queryFn: () => ipc.githubMentionables(repoId),
+    enabled: enabled && repoId != null,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
 export function useCheckoutPr(repoId: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -108,6 +125,55 @@ export function useSubmitReview(repoId: number) {
       event: ReviewEvent;
       body: string;
     }) => ipc.githubSubmitReview(repoId, number, event, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["github-prs", repoId] }),
+    onSuccess: (_data, { number }) => {
+      qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+      qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+    },
+  });
+}
+
+/**
+ * Edit the body of the PR description, an issue comment, or a review — used to
+ * persist task-list checkbox toggles. Optimistically patches the cached thread
+ * so the checkbox flips instantly, reverting if GitHub rejects the edit.
+ */
+export function useUpdateBody(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      number,
+      target,
+      id,
+      body,
+    }: {
+      number: number;
+      target: BodyTarget;
+      id: number | null;
+      body: string;
+    }) => ipc.githubUpdateBody(repoId, number, target, id, body),
+    onMutate: async ({ number, target, id, body }) => {
+      const key = ["github-pr-thread", repoId, number];
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<PrThread>(key);
+      if (prev) {
+        qc.setQueryData<PrThread>(key, {
+          ...prev,
+          body: target === "pr" ? body : prev.body,
+          comments:
+            target === "pr"
+              ? prev.comments
+              : prev.comments.map((c) =>
+                  c.id === id ? { ...c, body } : c,
+                ),
+        });
+      }
+      return { key, prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
+    },
+    onSettled: (_data, _err, { number }) => {
+      qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+    },
   });
 }
