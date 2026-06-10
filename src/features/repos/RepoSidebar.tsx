@@ -83,17 +83,17 @@ function RepoRow({
         ipc.touchRepo(repo.id);
       }}
       className={cn(
-        "group flex cursor-pointer items-center gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
+        "group flex cursor-pointer items-start gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
         dropOver && "border-t-2 border-t-[var(--color-primary)]",
         active
           ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
           : "border-l-transparent hover:bg-[var(--color-accent)]",
       )}
     >
-      <GripVertical className="size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
+      <GripVertical className="mt-0.5 size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
       <FolderGit2
         className={cn(
-          "size-4 shrink-0",
+          "mt-0.5 size-4 shrink-0",
           active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
         )}
       />

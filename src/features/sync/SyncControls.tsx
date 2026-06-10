@@ -59,44 +59,44 @@ export function SyncControls({
       <Button
         size="sm"
         variant="ghost"
-        className="h-7 gap-1 px-2 text-xs"
+        className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
         title="Fetch all remotes"
         disabled={busy}
         onClick={() => fetch.mutate()}
       >
         {fetch.isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
+          <Loader2 className="size-3 animate-spin" />
         ) : (
-          <RefreshCw className="size-3.5" />
+          <RefreshCw className="size-3" />
         )}
       </Button>
       <Button
         size="sm"
         variant="ghost"
-        className="h-7 gap-1 px-2 text-xs"
+        className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
         title="Pull"
         disabled={busy}
         onClick={() => pull.mutate()}
       >
         {pull.isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
+          <Loader2 className="size-3 animate-spin" />
         ) : (
-          <ArrowDownToLine className="size-3.5" />
+          <ArrowDownToLine className="size-3" />
         )}
         {behind > 0 && <span>{behind}</span>}
       </Button>
       <Button
         size="sm"
         variant="ghost"
-        className="h-7 gap-1 px-2 text-xs"
+        className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
         title="Push"
         disabled={busy}
         onClick={() => push.mutate()}
       >
         {push.isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
+          <Loader2 className="size-3 animate-spin" />
         ) : (
-          <ArrowUpFromLine className="size-3.5" />
+          <ArrowUpFromLine className="size-3" />
         )}
         {ahead > 0 && <span>{ahead}</span>}
       </Button>
