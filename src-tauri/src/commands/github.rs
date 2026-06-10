@@ -37,17 +37,17 @@ fn require_token() -> AppResult<String> {
     read_token()?.ok_or_else(|| AppError::Other("not signed in to GitHub".into()))
 }
 
-/// OAuth App client ID for the device flow. Configured at runtime via
-/// GAMUT_GITHUB_CLIENT_ID, or baked in at build time. Empty = not configured.
+/// OAuth App client ID for the device flow. The client ID is public (not a
+/// secret), so it's safe to commit. Override at runtime with GAMUT_GITHUB_CLIENT_ID.
+const DEFAULT_CLIENT_ID: &str = "Ov23liVS0gVXFvhvRpvC";
+
 fn client_id() -> Option<String> {
     if let Ok(v) = std::env::var("GAMUT_GITHUB_CLIENT_ID") {
         if !v.is_empty() {
             return Some(v);
         }
     }
-    option_env!("GAMUT_GITHUB_CLIENT_ID")
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+    Some(DEFAULT_CLIENT_ID.to_string())
 }
 
 /// Validate a token against /user, returning the login.
