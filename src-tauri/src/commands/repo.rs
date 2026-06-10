@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+use git2::BranchType;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
+use crate::commands::history::open_repo;
 use crate::error::{AppError, AppResult};
 use crate::git;
 use crate::state::AppState;
@@ -123,6 +125,53 @@ pub fn touch_repo(state: State<AppState>, id: i64) -> AppResult<()> {
         "UPDATE repos SET last_opened = datetime('now') WHERE id = ?1",
         [id],
     )?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_head: bool,
+    pub is_remote: bool,
+}
+
+/// List local and remote branches; the current branch is flagged `is_head`.
+#[tauri::command]
+pub fn list_branches(state: State<AppState>, repo_id: i64) -> AppResult<Vec<BranchInfo>> {
+    let repo = open_repo(&state, repo_id)?;
+    let mut out = Vec::new();
+    for kind in [BranchType::Local, BranchType::Remote] {
+        for b in repo.branches(Some(kind))? {
+            let (branch, _) = b?;
+            if let Some(name) = branch.name()? {
+                out.push(BranchInfo {
+                    name: name.to_string(),
+                    is_head: branch.is_head(),
+                    is_remote: matches!(kind, BranchType::Remote),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Check out a branch (safe checkout — aborts if it would overwrite local edits).
+#[tauri::command]
+pub fn checkout_branch(state: State<AppState>, repo_id: i64, name: String) -> AppResult<()> {
+    let repo = open_repo(&state, repo_id)?;
+    let obj = repo.revparse_single(&name)?;
+
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.safe();
+    repo.checkout_tree(&obj, Some(&mut checkout))?;
+
+    let local_ref = format!("refs/heads/{name}");
+    if repo.find_reference(&local_ref).is_ok() {
+        repo.set_head(&local_ref)?;
+    } else {
+        // Remote/arbitrary revision — detached HEAD.
+        repo.set_head_detached(obj.id())?;
+    }
     Ok(())
 }
 

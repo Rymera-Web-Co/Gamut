@@ -10,40 +10,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { BlameHunk } from "@/lib/ipc";
+import { isDarkTheme, languageFor } from "@/lib/lang";
 import { cn } from "@/lib/utils";
 import { useBlame, useFileDiff } from "./api";
-
-const LANG: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  rs: "rust",
-  py: "python",
-  go: "go",
-  java: "java",
-  rb: "ruby",
-  php: "php",
-  c: "c",
-  h: "c",
-  cpp: "cpp",
-  cs: "csharp",
-  css: "css",
-  scss: "scss",
-  html: "html",
-  json: "json",
-  md: "markdown",
-  yml: "yaml",
-  yaml: "yaml",
-  sh: "shell",
-  sql: "sql",
-  toml: "ini",
-};
-
-function languageFor(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return LANG[ext] ?? "plaintext";
-}
 
 /** Build a per-line lookup of which blame hunk owns each (1-based) line. */
 function blameByLine(hunks: BlameHunk[]): Map<number, { hunk: BlameHunk; first: boolean }> {
@@ -112,9 +81,7 @@ export function DiffModal({
   const diff = useFileDiff(repoId, sha, path, oldPath);
   const blame = useBlame(repoId, sha, path, mode === "blame");
 
-  const isDark =
-    typeof document !== "undefined" &&
-    document.documentElement.classList.contains("dark");
+  const isDark = isDarkTheme();
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

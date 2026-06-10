@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type View = "repos" | "history" | "review";
+export type View = "history" | "review";
 
 interface UiState {
   view: View;
@@ -10,7 +10,7 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set) => ({
-  view: "repos",
+  view: "history",
   activeRepoId: null,
   setView: (view) => set({ view }),
   setActiveRepo: (id) => set({ activeRepoId: id }),

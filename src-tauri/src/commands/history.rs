@@ -90,7 +90,7 @@ fn repo_path(state: &AppState, repo_id: i64) -> AppResult<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-fn open_repo(state: &State<AppState>, repo_id: i64) -> AppResult<Repository> {
+pub(crate) fn open_repo(state: &State<AppState>, repo_id: i64) -> AppResult<Repository> {
     let path = repo_path(state, repo_id)?;
     git::open(&path)
 }
@@ -141,8 +141,42 @@ fn delta_status(status: Delta) -> &'static str {
     }
 }
 
+/// Build the list of changed files (with line stats) from a prepared diff.
+pub(crate) fn files_from_diff(diff: &git2::Diff) -> AppResult<Vec<FileChange>> {
+    let mut files = Vec::new();
+    for i in 0..diff.deltas().len() {
+        let delta = diff.get_delta(i).unwrap();
+        let (additions, deletions) = match Patch::from_diff(diff, i) {
+            Ok(Some(patch)) => {
+                let (_, adds, dels) = patch.line_stats()?;
+                (adds, dels)
+            }
+            _ => (0, 0),
+        };
+        let new_path = delta
+            .new_file()
+            .path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let old_raw = delta.old_file().path().map(|p| p.display().to_string());
+        // Only surface old_path when it's a genuine rename/copy source.
+        let old_path = match delta.status() {
+            Delta::Renamed | Delta::Copied => old_raw.filter(|o| *o != new_path),
+            _ => None,
+        };
+        files.push(FileChange {
+            path: new_path,
+            old_path,
+            status: delta_status(delta.status()).to_string(),
+            additions,
+            deletions,
+        });
+    }
+    Ok(files)
+}
+
 /// Read a path's blob from a tree as UTF-8 text, plus whether it's binary.
-fn blob_text(repo: &Repository, tree: &Tree, path: &str) -> Option<(String, bool)> {
+pub(crate) fn blob_text(repo: &Repository, tree: &Tree, path: &str) -> Option<(String, bool)> {
     let entry = tree.get_path(Path::new(path)).ok()?;
     let obj = entry.to_object(repo).ok()?;
     let blob = obj.as_blob()?;
@@ -166,14 +200,14 @@ pub fn log(
 
     let mut walk = repo.revwalk()?;
     walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-    // Push all refs; ignore patterns that match nothing.
-    let _ = walk.push_glob("refs/heads/*");
-    let _ = walk.push_glob("refs/remotes/*");
-    let _ = walk.push_glob("refs/tags/*");
-    if let Ok(head) = repo.head() {
-        if let Some(t) = head.target() {
-            let _ = walk.push(t);
-        }
+    // History of the current branch only (HEAD's ancestry).
+    if walk.push_head().is_err() {
+        // Unborn branch / empty repo — nothing to show.
+        return Ok(LogPage {
+            commits: Vec::new(),
+            width: 1,
+            has_more: false,
+        });
     }
 
     let take = offset + limit + 1; // +1 to detect has_more
@@ -247,36 +281,7 @@ pub fn commit_detail(state: State<AppState>, repo_id: i64, sha: String) -> AppRe
     };
 
     let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
-
-    let mut files = Vec::new();
-    for i in 0..diff.deltas().len() {
-        let delta = diff.get_delta(i).unwrap();
-        let (additions, deletions) = match Patch::from_diff(&diff, i) {
-            Ok(Some(patch)) => {
-                let (_, adds, dels) = patch.line_stats()?;
-                (adds, dels)
-            }
-            _ => (0, 0),
-        };
-        let new_path = delta
-            .new_file()
-            .path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        let old_raw = delta.old_file().path().map(|p| p.display().to_string());
-        // Only surface old_path when it's a genuine rename/copy source.
-        let old_path = match delta.status() {
-            Delta::Renamed | Delta::Copied => old_raw.filter(|o| *o != new_path),
-            _ => None,
-        };
-        files.push(FileChange {
-            path: new_path,
-            old_path,
-            status: delta_status(delta.status()).to_string(),
-            additions,
-            deletions,
-        });
-    }
+    let files = files_from_diff(&diff)?;
 
     let author = commit.author();
     Ok(CommitDetail {

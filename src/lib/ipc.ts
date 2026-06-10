@@ -31,6 +31,12 @@ export interface DiscoveredRepo {
   already_registered: boolean;
 }
 
+export interface BranchInfo {
+  name: string;
+  is_head: boolean;
+  is_remote: boolean;
+}
+
 export interface Tag {
   id: number;
   name: string;
@@ -110,6 +116,33 @@ export interface BlameHunk {
   timestamp: number;
 }
 
+export type ReviewSource = "working" | "branch";
+
+export interface ReviewDiff {
+  base_label: string;
+  head_label: string;
+  files: FileChange[];
+}
+
+export interface AuthStatus {
+  logged_in: boolean;
+  login: string | null;
+}
+
+export interface PrSummary {
+  number: number;
+  title: string;
+  author: string;
+  state: string;
+  draft: boolean;
+  base_ref: string;
+  head_ref: string;
+  url: string;
+  updated_at: string;
+}
+
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
 export const ipc = {
   ping: (name?: string) => invoke<string>("ping", { name }),
   dbHealth: () => invoke<DbHealth>("db_health"),
@@ -121,6 +154,10 @@ export const ipc = {
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
   discoverRepos: (root: string, maxDepth?: number) =>
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
+  listBranches: (repoId: number) =>
+    invoke<BranchInfo[]>("list_branches", { repoId }),
+  checkoutBranch: (repoId: number, name: string) =>
+    invoke<void>("checkout_branch", { repoId, name }),
 
   // tags
   listTags: () => invoke<Tag[]>("list_tags"),
@@ -149,6 +186,40 @@ export const ipc = {
     invoke<CommitRow[]>("file_history", { repoId, path, limit }),
   blame: (repoId: number, sha: string, path: string) =>
     invoke<BlameHunk[]>("blame", { repoId, sha, path }),
+
+  // local review
+  reviewFiles: (repoId: number, source: ReviewSource, base?: string) =>
+    invoke<ReviewDiff>("review_files", { repoId, source, base }),
+  reviewFileDiff: (
+    repoId: number,
+    source: ReviewSource,
+    path: string,
+    base?: string,
+    oldPath?: string,
+  ) =>
+    invoke<FileDiff>("review_file_diff", {
+      repoId,
+      source,
+      path,
+      base,
+      oldPath,
+    }),
+
+  // github
+  githubSetToken: (token: string) =>
+    invoke<AuthStatus>("github_set_token", { token }),
+  githubAuthStatus: () => invoke<AuthStatus>("github_auth_status"),
+  githubLogout: () => invoke<void>("github_logout"),
+  githubListPrs: (repoId: number) =>
+    invoke<PrSummary[]>("github_list_prs", { repoId }),
+  githubPrDiff: (repoId: number, number: number) =>
+    invoke<string>("github_pr_diff", { repoId, number }),
+  githubSubmitReview: (
+    repoId: number,
+    number: number,
+    event: ReviewEvent,
+    body: string,
+  ) => invoke<void>("github_submit_review", { repoId, number, event, body }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

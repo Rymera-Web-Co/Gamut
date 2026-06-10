@@ -16,6 +16,12 @@ pub enum AppError {
     #[error("not a git repository: {0}")]
     NotARepo(String),
 
+    #[error("network error: {0}")]
+    Http(#[from] reqwest::Error),
+
+    #[error("keychain error: {0}")]
+    Keyring(#[from] keyring::Error),
+
     #[error("{0}")]
     Other(String),
 }

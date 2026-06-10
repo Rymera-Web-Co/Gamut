@@ -35,6 +35,8 @@ pub fn run() {
             commands::repo::remove_repo,
             commands::repo::touch_repo,
             commands::repo::discover_repos,
+            commands::repo::list_branches,
+            commands::repo::checkout_branch,
             commands::tags::list_tags,
             commands::tags::create_tag,
             commands::tags::delete_tag,
@@ -48,6 +50,14 @@ pub fn run() {
             commands::history::file_diff,
             commands::history::file_history,
             commands::history::blame,
+            commands::review::review_files,
+            commands::review::review_file_diff,
+            commands::github::github_set_token,
+            commands::github::github_auth_status,
+            commands::github::github_logout,
+            commands::github::github_list_prs,
+            commands::github::github_pr_diff,
+            commands::github::github_submit_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

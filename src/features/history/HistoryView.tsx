@@ -4,11 +4,12 @@ import { GitBranch } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { CommitRow, FileChange, RefLabel } from "@/lib/ipc";
-import { formatDate, graphColor, relativeTime } from "@/lib/format";
+import { formatDate, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useRepos } from "@/features/repos/api";
 import { useUiStore } from "@/store/ui";
 import { useCommitDetail, useLog } from "./api";
+import { BranchSwitcher } from "./BranchSwitcher";
 import { CommitGraph, ROW_HEIGHT } from "./CommitGraph";
 import { DiffModal } from "./DiffModal";
 
@@ -159,7 +160,6 @@ function CommitDetailPanel({
 
 export function HistoryView() {
   const repoId = useUiStore((s) => s.activeRepoId);
-  const setView = useUiStore((s) => s.setView);
   const repos = useRepos();
   const [limit, setLimit] = useState(PAGE);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
@@ -172,11 +172,8 @@ export function HistoryView() {
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
         <GitBranch className="size-8 text-[var(--color-muted-foreground)]" />
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Select a repository to view its history.
+          Select a repository from the left to view its history.
         </p>
-        <Button variant="outline" size="sm" onClick={() => setView("repos")}>
-          Go to Repositories
-        </Button>
       </div>
     );
   }
@@ -188,14 +185,7 @@ export function HistoryView() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <h1 className="text-sm font-semibold">{repo?.name ?? "History"}</h1>
-        {repo?.default_branch && (
-          <span
-            className="rounded px-1.5 py-0.5 text-xs"
-            style={{ background: graphColor(0), color: "white" }}
-          >
-            {repo.default_branch}
-          </span>
-        )}
+        <BranchSwitcher repoId={repoId} />
         <span className="ml-auto text-xs text-[var(--color-muted-foreground)]">
           {page ? `${page.commits.length} commits` : "loading…"}
         </span>
