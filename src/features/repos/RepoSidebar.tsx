@@ -4,46 +4,47 @@ import {
   GripVertical,
   Plus,
   FolderSearch,
-  Settings2,
-  Tag as TagIcon,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
-import { ipc, pickDirectory, type Repo, type RepoStatus, type Tag } from "@/lib/ipc";
+import { ipc, pickDirectory, type Repo, type RepoStatus } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import {
   useGroups,
   useRegisterRepo,
+  useRemoveRepo,
   useReorderRepos,
   useRepoStatuses,
   useRepos,
   useSetRepoGroups,
-  useTags,
 } from "./api";
-import { NewTagDialog } from "./CreateDialogs";
 import { DiscoverDialog } from "./DiscoverDialog";
-import { EditRepoDialog } from "./EditRepoDialog";
 
 function RepoRow({
   repo,
-  tags,
   status,
-  onEdit,
+  onRemove,
   onReorder,
 }: {
   repo: Repo;
-  tags: Tag[];
   status?: RepoStatus;
-  onEdit: (repo: Repo) => void;
+  onRemove: (repo: Repo) => void;
   onReorder: (srcId: number, targetId: number) => void;
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
-  const repoTags = tags.filter((t) => repo.tag_ids.includes(t.id));
   const [dropOver, setDropOver] = useState(false);
   const active = activeRepoId === repo.id;
 
@@ -100,23 +101,16 @@ function RepoRow({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1">
           <span className="min-w-0 flex-1 truncate leading-tight">{repo.name}</span>
-          {repoTags.map((t) => (
-            <span
-              key={t.id}
-              title={t.name}
-              className="size-2 shrink-0 rounded-full"
-              style={{ background: t.color }}
-            />
-          ))}
           <button
-            aria-label="Edit repository"
+            aria-label="Remove repository"
+            title="Remove from Gamut"
             onClick={(e) => {
               e.stopPropagation();
-              onEdit(repo);
+              onRemove(repo);
             }}
-            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+            className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100"
           >
-            <Settings2 className="size-3.5 text-[var(--color-muted-foreground)]" />
+            <Trash2 className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)]" />
           </button>
         </div>
         {/* Per-repo branch switcher + sync controls (manage without selecting). */}
@@ -139,9 +133,9 @@ function RepoRow({
 
 export function RepoSidebar() {
   const repos = useRepos();
-  const tags = useTags();
   const groups = useGroups();
   const registerRepo = useRegisterRepo();
+  const removeRepo = useRemoveRepo();
   const setRepoGroups = useSetRepoGroups();
   const reorderRepos = useReorderRepos();
   const statuses = useRepoStatuses();
@@ -150,11 +144,9 @@ export function RepoSidebar() {
   const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
-  const [newTagOpen, setNewTagOpen] = useState(false);
-  const [editing, setEditing] = useState<Repo | null>(null);
+  const [removing, setRemoving] = useState<Repo | null>(null);
 
   const allRepos = repos.data ?? [];
-  const allTags = tags.data ?? [];
   const allGroups = groups.data ?? [];
   const activeGroup = allGroups.find((g) => g.id === activeGroupId);
 
@@ -207,15 +199,6 @@ export function RepoSidebar() {
           >
             <FolderSearch />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="New tag"
-            onClick={() => setNewTagOpen(true)}
-          >
-            <TagIcon />
-          </Button>
         </div>
       </header>
 
@@ -224,16 +207,15 @@ export function RepoSidebar() {
           <p className="px-2 py-6 text-center text-xs text-[var(--color-muted-foreground)]">
             {allRepos.length === 0
               ? "No repositories yet. Use + or scan a folder."
-              : "No repositories in this group. Use + to add one, or assign existing repos via their settings."}
+              : "No repositories in this group. Use + to add one, or drag a repo onto this group."}
           </p>
         ) : (
           visible.map((r) => (
             <RepoRow
               key={r.id}
               repo={r}
-              tags={allTags}
               status={statusById.get(r.id)}
-              onEdit={setEditing}
+              onRemove={setRemoving}
               onReorder={reorder}
             />
           ))
@@ -241,8 +223,33 @@ export function RepoSidebar() {
       </div>
 
       <DiscoverDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
-      <NewTagDialog open={newTagOpen} onOpenChange={setNewTagOpen} />
-      <EditRepoDialog repo={editing} onOpenChange={(o) => !o && setEditing(null)} />
+
+      <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove repository?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--color-muted-foreground)]">
+            Remove <span className="font-medium text-[var(--color-foreground)]">{removing?.name}</span> from
+            Gamut? This only removes it from the list — your files on disk are
+            not touched.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (removing) removeRepo.mutate(removing.id);
+                setRemoving(null);
+              }}
+            >
+              <Trash2 /> Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

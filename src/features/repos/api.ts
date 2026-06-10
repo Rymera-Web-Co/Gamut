@@ -8,16 +8,11 @@ import { ipc } from "@/lib/ipc";
 
 const keys = {
   repos: ["repos"] as const,
-  tags: ["tags"] as const,
   groups: ["groups"] as const,
 };
 
 export function useRepos() {
   return useQuery({ queryKey: keys.repos, queryFn: ipc.listRepos });
-}
-
-export function useTags() {
-  return useQuery({ queryKey: keys.tags, queryFn: ipc.listTags });
 }
 
 export function useGroups() {
@@ -37,7 +32,6 @@ function useInvalidateTree() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: keys.repos });
-    qc.invalidateQueries({ queryKey: keys.tags });
     qc.invalidateQueries({ queryKey: keys.groups });
   };
 }
@@ -54,23 +48,6 @@ export function useRemoveRepo() {
   const invalidate = useInvalidateTree();
   return useMutation({
     mutationFn: (id: number) => ipc.removeRepo(id),
-    onSuccess: invalidate,
-  });
-}
-
-export function useCreateTag() {
-  const invalidate = useInvalidateTree();
-  return useMutation({
-    mutationFn: ({ name, color }: { name: string; color: string }) =>
-      ipc.createTag(name, color),
-    onSuccess: invalidate,
-  });
-}
-
-export function useDeleteTag() {
-  const invalidate = useInvalidateTree();
-  return useMutation({
-    mutationFn: (id: number) => ipc.deleteTag(id),
     onSuccess: invalidate,
   });
 }
@@ -120,15 +97,6 @@ export function useReorderGroups() {
   const invalidate = useInvalidateTree();
   return useMutation({
     mutationFn: (groupIds: number[]) => ipc.reorderGroups(groupIds),
-    onSuccess: invalidate,
-  });
-}
-
-export function useSetRepoTags() {
-  const invalidate = useInvalidateTree();
-  return useMutation({
-    mutationFn: ({ repoId, tagIds }: { repoId: number; tagIds: number[] }) =>
-      ipc.setRepoTags(repoId, tagIds),
     onSuccess: invalidate,
   });
 }
