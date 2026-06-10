@@ -2,60 +2,12 @@ import { useEffect, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { FileCheck2, Loader2 } from "lucide-react";
 
+import { FileTree } from "@/components/FileTree";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
-import { cn } from "@/lib/utils";
 import { useReviewFileDiff, useReviewFiles } from "./api";
-
-function statusColor(status: string): string {
-  switch (status) {
-    case "added":
-      return "#16a34a";
-    case "deleted":
-      return "#dc2626";
-    case "renamed":
-      return "#2563eb";
-    default:
-      return "#a16207";
-  }
-}
-
-function FileRow({
-  file,
-  selected,
-  onSelect,
-}: {
-  file: FileChange;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={cn(
-        "flex w-full items-center gap-2 px-2 py-1 text-left text-sm",
-        selected ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
-      )}
-    >
-      <span
-        className="w-3 shrink-0 text-center text-xs font-bold"
-        style={{ color: statusColor(file.status) }}
-        title={file.status}
-      >
-        {file.status[0].toUpperCase()}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
-      {file.additions > 0 && (
-        <span className="shrink-0 text-xs text-[#16a34a]">+{file.additions}</span>
-      )}
-      {file.deletions > 0 && (
-        <span className="shrink-0 text-xs text-[#dc2626]">−{file.deletions}</span>
-      )}
-    </button>
-  );
-}
 
 export function LocalReview({
   repoId,
@@ -121,14 +73,11 @@ export function LocalReview({
           file{data.files.length === 1 ? "" : "s"}
         </div>
         <div className="min-h-0 flex-1 overflow-auto py-1">
-          {data.files.map((f) => (
-            <FileRow
-              key={f.path}
-              file={f}
-              selected={selected?.path === f.path}
-              onSelect={() => setSelected(f)}
-            />
-          ))}
+          <FileTree
+            files={data.files}
+            onOpen={setSelected}
+            selectedPath={selected?.path}
+          />
         </div>
       </Panel>
 

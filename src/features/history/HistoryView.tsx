@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
+import { FileTree } from "@/components/FileTree";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { CommitRow, FileChange, RefLabel } from "@/lib/ipc";
@@ -91,42 +92,6 @@ function CommitListRow({
   );
 }
 
-function FileRow({ file, onOpen }: { file: FileChange; onOpen: () => void }) {
-  const statusColor =
-    file.status === "added"
-      ? "#16a34a"
-      : file.status === "deleted"
-        ? "#dc2626"
-        : file.status === "renamed"
-          ? "#2563eb"
-          : "#a16207";
-  return (
-    <button
-      onClick={onOpen}
-      className="flex w-full items-center gap-3 border-b border-[var(--color-border)] px-3 py-2.5 text-left text-sm hover:bg-[var(--color-accent)]"
-    >
-      <span
-        className="w-4 shrink-0 text-center text-xs font-bold"
-        style={{ color: statusColor }}
-        title={file.status}
-      >
-        {file.status[0].toUpperCase()}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
-      {file.additions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#16a34a]">
-          +{file.additions}
-        </span>
-      )}
-      {file.deletions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#dc2626]">
-          −{file.deletions}
-        </span>
-      )}
-    </button>
-  );
-}
-
 function CommitDetailPanel({
   repoId,
   sha,
@@ -168,9 +133,7 @@ function CommitDetailPanel({
         <p className="border-b px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
           {d.files.length} file{d.files.length === 1 ? "" : "s"} changed
         </p>
-        {d.files.map((f) => (
-          <FileRow key={f.path} file={f} onOpen={() => setOpenFile(f)} />
-        ))}
+        <FileTree files={d.files} onOpen={setOpenFile} />
       </div>
       {openFile && (
         <DiffModal
