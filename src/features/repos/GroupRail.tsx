@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Pencil, Plus } from "lucide-react";
 
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
-import { DND_GROUP, DND_REPO, moveBefore } from "@/lib/dnd";
+import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
@@ -33,13 +33,18 @@ function GroupButton({
         title={group.name}
         draggable={!group.is_default}
         onDragStart={(e) => {
-          e.dataTransfer.setData(DND_GROUP, String(group.id));
+          setDrag({ kind: "group", id: group.id });
+          e.dataTransfer.setData("text/plain", group.name);
           e.dataTransfer.effectAllowed = "move";
         }}
+        onDragEnd={() => {
+          clearDrag();
+          setDropOver(false);
+        }}
         onDragOver={(e) => {
-          const t = e.dataTransfer.types;
-          const acceptGroup = t.includes(DND_GROUP) && !group.is_default;
-          if (t.includes(DND_REPO) || acceptGroup) {
+          const d = getDrag();
+          const acceptGroup = d?.kind === "group" && !group.is_default && d.id !== group.id;
+          if (d?.kind === "repo" || acceptGroup) {
             e.preventDefault();
             setDropOver(true);
           }
@@ -47,16 +52,15 @@ function GroupButton({
         onDragLeave={() => setDropOver(false)}
         onDrop={(e) => {
           setDropOver(false);
-          const t = e.dataTransfer.types;
-          if (t.includes(DND_REPO)) {
+          const d = getDrag();
+          if (d?.kind === "repo") {
             e.preventDefault();
-            const id = Number(e.dataTransfer.getData(DND_REPO));
-            if (id) onRepoDrop(id);
-          } else if (t.includes(DND_GROUP) && !group.is_default) {
+            onRepoDrop(d.id);
+          } else if (d?.kind === "group" && !group.is_default) {
             e.preventDefault();
-            const src = Number(e.dataTransfer.getData(DND_GROUP));
-            if (src) onGroupReorder(src, group.id);
+            onGroupReorder(d.id, group.id);
           }
+          clearDrag();
         }}
         onClick={onSelect}
         className={cn(

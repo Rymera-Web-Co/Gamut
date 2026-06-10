@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FolderGit2, GripVertical, Plus, FolderSearch, Settings2, Tag as TagIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { DND_REPO, moveBefore } from "@/lib/dnd";
+import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
 import { ipc, pickDirectory, type Repo, type Tag } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
@@ -41,11 +41,17 @@ function RepoRow({
       title={repo.path}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData(DND_REPO, String(repo.id));
+        setDrag({ kind: "repo", id: repo.id });
+        e.dataTransfer.setData("text/plain", repo.name);
         e.dataTransfer.effectAllowed = "move";
       }}
+      onDragEnd={() => {
+        clearDrag();
+        setDropOver(false);
+      }}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(DND_REPO)) {
+        const d = getDrag();
+        if (d?.kind === "repo" && d.id !== repo.id) {
           e.preventDefault();
           setDropOver(true);
         }
@@ -53,10 +59,11 @@ function RepoRow({
       onDragLeave={() => setDropOver(false)}
       onDrop={(e) => {
         setDropOver(false);
-        if (!e.dataTransfer.types.includes(DND_REPO)) return;
+        const d = getDrag();
+        if (d?.kind !== "repo") return;
         e.preventDefault();
-        const srcId = Number(e.dataTransfer.getData(DND_REPO));
-        if (srcId) onReorder(srcId, repo.id);
+        onReorder(d.id, repo.id);
+        clearDrag();
       }}
       onClick={() => {
         setActiveRepo(repo.id);
