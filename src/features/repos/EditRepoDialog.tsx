@@ -37,12 +37,13 @@ export function EditRepoDialog({
   const removeRepo = useRemoveRepo();
 
   const [tagIds, setTagIds] = useState<number[]>([]);
-  const [groupIds, setGroupIds] = useState<number[]>([]);
+  // A repo belongs to at most one group; null means the default group.
+  const [groupId, setGroupId] = useState<number | null>(null);
 
   useEffect(() => {
     if (repo) {
       setTagIds(repo.tag_ids);
-      setGroupIds(repo.group_ids);
+      setGroupId(repo.group_ids[0] ?? null);
     }
   }, [repo]);
 
@@ -51,7 +52,10 @@ export function EditRepoDialog({
   function save() {
     if (!repo) return;
     setRepoTags.mutate({ repoId: repo.id, tagIds });
-    setRepoGroups.mutate({ repoId: repo.id, groupIds });
+    setRepoGroups.mutate({
+      repoId: repo.id,
+      groupIds: groupId != null ? [groupId] : [],
+    });
     onOpenChange(false);
   }
 
@@ -106,25 +110,32 @@ export function EditRepoDialog({
         </section>
 
         <section className="space-y-2">
-          <h3 className="text-sm font-medium">Groups</h3>
-          {groups.data && groups.data.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              {groups.data.map((g) => (
+          <h3 className="text-sm font-medium">Group</h3>
+          <div className="flex flex-col gap-1">
+            {/* Default = no group. */}
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="repo-group"
+                checked={groupId == null}
+                onChange={() => setGroupId(null)}
+              />
+              {groups.data?.find((g) => g.is_default)?.name ?? "Default"}
+            </label>
+            {(groups.data ?? [])
+              .filter((g) => !g.is_default)
+              .map((g) => (
                 <label key={g.id} className="flex items-center gap-2 text-sm">
                   <input
-                    type="checkbox"
-                    checked={groupIds.includes(g.id)}
-                    onChange={() => setGroupIds((s) => toggle(s, g.id))}
+                    type="radio"
+                    name="repo-group"
+                    checked={groupId === g.id}
+                    onChange={() => setGroupId(g.id)}
                   />
                   {g.name}
                 </label>
               ))}
-            </div>
-          ) : (
-            <p className="text-xs text-[var(--color-muted-foreground)]">
-              No groups yet — create one from the toolbar.
-            </p>
-          )}
+          </div>
         </section>
 
         <DialogFooter className="sm:justify-between">

@@ -48,6 +48,8 @@ export interface Group {
   name: string;
   parent_id: number | null;
   sort: number;
+  icon: string | null;
+  is_default: boolean;
 }
 
 export interface RefLabel {
@@ -169,8 +171,10 @@ export const ipc = {
 
   // groups
   listGroups: () => invoke<Group[]>("list_groups"),
-  createGroup: (name: string, parentId: number | null) =>
-    invoke<Group>("create_group", { name, parentId }),
+  createGroup: (name: string, icon: string | null, parentId: number | null = null) =>
+    invoke<Group>("create_group", { name, parentId, icon }),
+  updateGroup: (id: number, name: string | null, icon: string | null) =>
+    invoke<void>("update_group", { id, name, icon }),
   deleteGroup: (id: number) => invoke<void>("delete_group", { id }),
   setRepoGroups: (repoId: number, groupIds: number[]) =>
     invoke<void>("set_repo_groups", { repoId, groupIds }),

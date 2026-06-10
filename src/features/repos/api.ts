@@ -70,8 +70,24 @@ export function useDeleteTag() {
 export function useCreateGroup() {
   const invalidate = useInvalidateTree();
   return useMutation({
-    mutationFn: ({ name, parentId }: { name: string; parentId: number | null }) =>
-      ipc.createGroup(name, parentId),
+    mutationFn: ({ name, icon }: { name: string; icon: string | null }) =>
+      ipc.createGroup(name, icon),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateGroup() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: ({
+      id,
+      name,
+      icon,
+    }: {
+      id: number;
+      name: string | null;
+      icon: string | null;
+    }) => ipc.updateGroup(id, name, icon),
     onSuccess: invalidate,
   });
 }

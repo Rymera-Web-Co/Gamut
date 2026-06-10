@@ -5,7 +5,13 @@ use rusqlite::Connection;
 use crate::error::AppResult;
 
 /// Ordered list of migrations. Each is applied once and recorded in `_migrations`.
-const MIGRATIONS: &[(&str, &str)] = &[("0001_init", include_str!("migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("migrations/0001_init.sql")),
+    (
+        "0002_groups_icon",
+        include_str!("migrations/0002_groups_icon.sql"),
+    ),
+];
 
 /// Open (creating if needed) the SQLite database at `path`, enable sane pragmas,
 /// and run any pending migrations.

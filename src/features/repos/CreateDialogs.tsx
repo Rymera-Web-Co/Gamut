@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { useCreateGroup, useCreateTag } from "./api";
+import { useCreateTag } from "./api";
 
 const PALETTE = [
   "#ef4444",
@@ -82,56 +82,6 @@ export function NewTagDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={!name.trim() || createTag.isPending}>
-            Create
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function NewGroupDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [name, setName] = useState("");
-  const createGroup = useCreateGroup();
-
-  function submit() {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    createGroup.mutate(
-      { name: trimmed, parentId: null },
-      {
-        onSuccess: () => {
-          setName("");
-          onOpenChange(false);
-        },
-      },
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>New group</DialogTitle>
-        </DialogHeader>
-        <Input
-          autoFocus
-          placeholder="Group name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={!name.trim() || createGroup.isPending}>
             Create
           </Button>
         </DialogFooter>

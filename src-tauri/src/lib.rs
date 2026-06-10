@@ -43,6 +43,7 @@ pub fn run() {
             commands::tags::set_repo_tags,
             commands::tags::list_groups,
             commands::tags::create_group,
+            commands::tags::update_group,
             commands::tags::delete_group,
             commands::tags::set_repo_groups,
             commands::history::log,
