@@ -61,6 +61,7 @@ pub fn run() {
             commands::sync::git_fetch,
             commands::sync::git_pull,
             commands::sync::git_push,
+            commands::sync::git_checkout_pr,
             commands::github::github_set_token,
             commands::github::github_auth_status,
             commands::github::github_logout,
@@ -69,6 +70,7 @@ pub fn run() {
             commands::github::github_device_poll,
             commands::github::github_list_prs,
             commands::github::github_pr_diff,
+            commands::github::github_pr_thread,
             commands::github::github_submit_review,
         ])
         .run(tauri::generate_context!())

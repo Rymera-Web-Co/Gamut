@@ -73,6 +73,28 @@ export function useGithubPrDiff(repoId: number | null, number: number | null) {
   });
 }
 
+export function usePrThread(repoId: number | null, number: number | null) {
+  return useQuery({
+    queryKey: ["github-pr-thread", repoId, number],
+    queryFn: () => ipc.githubPrThread(repoId!, number!),
+    enabled: repoId != null && number != null,
+  });
+}
+
+export function useCheckoutPr(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ number, headRef }: { number: number; headRef: string }) =>
+      ipc.gitCheckoutPr(repoId, number, headRef),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["branches", repoId] });
+      qc.invalidateQueries({ queryKey: ["log", repoId] });
+      qc.invalidateQueries({ queryKey: ["review-files", repoId] });
+      qc.invalidateQueries({ queryKey: ["sync-status", repoId] });
+    },
+  });
+}
+
 export function useSubmitReview(repoId: number) {
   const qc = useQueryClient();
   return useMutation({

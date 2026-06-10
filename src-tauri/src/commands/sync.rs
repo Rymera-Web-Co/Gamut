@@ -84,6 +84,33 @@ pub async fn git_pull(state: State<'_, AppState>, repo_id: i64) -> AppResult<Str
     run_git(&dir.to_string_lossy(), &["pull"]).await
 }
 
+/// Check out a pull request branch. If a local branch with the PR's head ref
+/// already exists, just switch to it; otherwise fetch `pull/<n>/head` into a
+/// local branch (works for same-repo and fork PRs) and switch to it.
+#[tauri::command]
+pub async fn git_checkout_pr(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    head_ref: String,
+) -> AppResult<String> {
+    let dir = repo_path(&state, repo_id)?;
+    let has_local = {
+        let repo = open_repo(&state, repo_id)?;
+        let exists = repo.find_branch(&head_ref, BranchType::Local).is_ok();
+        exists
+    };
+    let dir = dir.to_string_lossy().to_string();
+
+    if has_local {
+        return run_git(&dir, &["switch", &head_ref]).await;
+    }
+
+    let refspec = format!("pull/{number}/head:{head_ref}");
+    run_git(&dir, &["fetch", "origin", &refspec]).await?;
+    run_git(&dir, &["switch", &head_ref]).await
+}
+
 #[tauri::command]
 pub async fn git_push(state: State<'_, AppState>, repo_id: i64) -> AppResult<String> {
     let dir = repo_path(&state, repo_id)?;

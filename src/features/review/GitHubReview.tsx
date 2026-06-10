@@ -1,17 +1,24 @@
 import { useState } from "react";
-import { GitPullRequestArrow, Loader2 } from "lucide-react";
+import {
+  GitBranch,
+  GitPullRequestArrow,
+  Loader2,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
-import type { PrSummary, ReviewEvent } from "@/lib/ipc";
+import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
+  useCheckoutPr,
   useGithubAuth,
-  useGithubPrDiff,
   useGithubPrs,
   useLogout,
+  usePrThread,
   useSetToken,
   useSubmitReview,
 } from "./api";
@@ -52,28 +59,84 @@ function TokenGate() {
   );
 }
 
-function UnifiedDiff({ text }: { text: string }) {
+function Markdown({ children }: { children: string }) {
   return (
-    <pre className="h-full overflow-auto p-3 font-mono text-xs leading-relaxed">
-      {text.split("\n").map((line, i) => {
-        let color: string | undefined;
-        if (line.startsWith("+") && !line.startsWith("+++")) color = "#16a34a";
-        else if (line.startsWith("-") && !line.startsWith("---")) color = "#dc2626";
-        else if (line.startsWith("@@")) color = "#0891b2";
-        else if (
-          line.startsWith("diff ") ||
-          line.startsWith("index ") ||
-          line.startsWith("+++") ||
-          line.startsWith("---")
-        )
-          color = "var(--color-muted-foreground)";
-        return (
-          <div key={i} style={color ? { color } : undefined}>
-            {line || " "}
-          </div>
-        );
-      })}
-    </pre>
+    <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:text-xs">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {children || "_No description provided._"}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function reviewBadge(state: string | null) {
+  switch (state) {
+    case "APPROVED":
+      return { label: "approved", color: "#16a34a" };
+    case "CHANGES_REQUESTED":
+      return { label: "requested changes", color: "#dc2626" };
+    case "DISMISSED":
+      return { label: "dismissed", color: "#a16207" };
+    default:
+      return { label: "reviewed", color: "var(--color-muted-foreground)" };
+  }
+}
+
+function CommentCard({ comment }: { comment: PrComment }) {
+  const badge = comment.kind === "review" ? reviewBadge(comment.state) : null;
+  return (
+    <div className="rounded-md border">
+      <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs">
+        <span className="font-medium">{comment.author}</span>
+        {badge && (
+          <span style={{ color: badge.color }} className="font-medium">
+            {badge.label}
+          </span>
+        )}
+        <span className="text-[var(--color-muted-foreground)]">
+          {comment.created_at
+            ? relativeTime(Date.parse(comment.created_at) / 1000)
+            : ""}
+        </span>
+      </div>
+      {comment.body && (
+        <div className="px-3 py-2">
+          <Markdown>{comment.body}</Markdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Conversation({ thread }: { thread: PrThread }) {
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      {/* Description */}
+      <div className="rounded-md border">
+        <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs">
+          <span className="font-medium">{thread.author}</span>
+          <span className="text-[var(--color-muted-foreground)]">
+            opened this pull request
+            {thread.created_at
+              ? ` · ${relativeTime(Date.parse(thread.created_at) / 1000)}`
+              : ""}
+          </span>
+        </div>
+        <div className="px-3 py-2">
+          <Markdown>{thread.body}</Markdown>
+        </div>
+      </div>
+
+      {thread.comments.map((c, i) => (
+        <CommentCard key={i} comment={c} />
+      ))}
+
+      {thread.comments.length === 0 && (
+        <p className="py-2 text-center text-xs text-[var(--color-muted-foreground)]">
+          No comments yet.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -185,7 +248,9 @@ export function GitHubReview({ repoId }: { repoId: number }) {
   const logout = useLogout();
   const [selected, setSelected] = useState<number | null>(null);
   const prs = useGithubPrs(repoId, auth.data?.logged_in ?? false);
-  const diff = useGithubPrDiff(repoId, selected);
+  const thread = usePrThread(repoId, selected);
+  const checkout = useCheckoutPr(repoId);
+  const selectedPr = prs.data?.find((p) => p.number === selected) ?? null;
 
   if (auth.isLoading) {
     return (
@@ -242,13 +307,51 @@ export function GitHubReview({ repoId }: { repoId: number }) {
             </div>
           ) : (
             <>
+              <div className="flex items-center gap-2 border-b px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">
+                    {selectedPr?.title}{" "}
+                    <span className="text-[var(--color-muted-foreground)]">
+                      #{selected}
+                    </span>
+                  </div>
+                  {selectedPr && (
+                    <div className="truncate text-xs text-[var(--color-muted-foreground)]">
+                      {selectedPr.base_ref} ← {selectedPr.head_ref}
+                    </div>
+                  )}
+                </div>
+                {selectedPr && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={checkout.isPending}
+                    title="Check out this PR's branch"
+                    onClick={() =>
+                      checkout.mutate({
+                        number: selectedPr.number,
+                        headRef: selectedPr.head_ref,
+                      })
+                    }
+                  >
+                    {checkout.isPending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <GitBranch />
+                    )}
+                    Checkout
+                  </Button>
+                )}
+              </div>
               <div className="min-h-0 flex-1 overflow-hidden">
-                {diff.isLoading || diff.data == null ? (
+                {thread.isLoading || thread.data == null ? (
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
                   </div>
                 ) : (
-                  <UnifiedDiff text={diff.data} />
+                  <div className="h-full overflow-auto">
+                    <Conversation thread={thread.data} />
+                  </div>
                 )}
               </div>
               <ReviewBox repoId={repoId} number={selected} />

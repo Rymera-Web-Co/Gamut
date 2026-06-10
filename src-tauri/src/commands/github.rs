@@ -276,6 +276,25 @@ pub struct PrSummary {
     pub updated_at: String,
 }
 
+#[derive(Serialize)]
+pub struct PrComment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub kind: String, // "comment" | "review"
+    pub state: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct PrThread {
+    pub title: String,
+    pub author: String,
+    pub state: String, // "open" | "closed" | "merged"
+    pub body: String,
+    pub created_at: String,
+    pub comments: Vec<PrComment>,
+}
+
 // ---- GitHub API response shapes ----
 
 #[derive(Deserialize)]
@@ -300,6 +319,31 @@ struct GhPull {
     head: GhRef,
     base: GhRef,
     updated_at: String,
+}
+
+#[derive(Deserialize)]
+struct GhPullFull {
+    title: String,
+    body: Option<String>,
+    state: String,
+    merged_at: Option<String>,
+    created_at: String,
+    user: GhUser,
+}
+
+#[derive(Deserialize)]
+struct GhIssueComment {
+    user: GhUser,
+    body: Option<String>,
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct GhReview {
+    user: GhUser,
+    body: Option<String>,
+    state: String,
+    submitted_at: Option<String>,
 }
 
 // ---- Commands ----
@@ -422,6 +466,102 @@ pub async fn github_pr_diff(
         return Err(api_error("fetching the PR diff", resp).await);
     }
     Ok(resp.text().await?)
+}
+
+/// The conversation thread for a pull request: description + issue comments +
+/// reviews, merged and sorted chronologically.
+#[tauri::command]
+pub async fn github_pr_thread(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+) -> AppResult<PrThread> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token()?;
+    let client = http()?;
+    let base = format!("{API}/repos/{owner}/{repo}");
+
+    let pr_resp = client
+        .get(format!("{base}/pulls/{number}"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    if !pr_resp.status().is_success() {
+        return Err(api_error("loading the pull request", pr_resp).await);
+    }
+    let pr: GhPullFull = pr_resp.json().await?;
+
+    let issue_comments: Vec<GhIssueComment> = {
+        let resp = client
+            .get(format!("{base}/issues/{number}/comments"))
+            .query(&[("per_page", "100")])
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            resp.json().await?
+        } else {
+            Vec::new()
+        }
+    };
+
+    let reviews: Vec<GhReview> = {
+        let resp = client
+            .get(format!("{base}/pulls/{number}/reviews"))
+            .query(&[("per_page", "100")])
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            resp.json().await?
+        } else {
+            Vec::new()
+        }
+    };
+
+    let mut comments: Vec<PrComment> = Vec::new();
+    for c in issue_comments {
+        comments.push(PrComment {
+            author: c.user.login,
+            body: c.body.unwrap_or_default(),
+            created_at: c.created_at,
+            kind: "comment".to_string(),
+            state: None,
+        });
+    }
+    for r in reviews {
+        let body = r.body.unwrap_or_default();
+        // Skip empty drive-by "commented" reviews (just inline comments).
+        if body.is_empty() && r.state == "COMMENTED" {
+            continue;
+        }
+        comments.push(PrComment {
+            author: r.user.login,
+            body,
+            created_at: r.submitted_at.unwrap_or_default(),
+            kind: "review".to_string(),
+            state: Some(r.state),
+        });
+    }
+    comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    let state = if pr.merged_at.is_some() {
+        "merged".to_string()
+    } else {
+        pr.state
+    };
+
+    Ok(PrThread {
+        title: pr.title,
+        author: pr.user.login,
+        state,
+        body: pr.body.unwrap_or_default(),
+        created_at: pr.created_at,
+        comments,
+    })
 }
 
 /// Submit a review on a pull request. `event` is APPROVE | REQUEST_CHANGES | COMMENT.

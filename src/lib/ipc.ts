@@ -154,6 +154,23 @@ export interface PrSummary {
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
+export interface PrComment {
+  author: string;
+  body: string;
+  created_at: string;
+  kind: "comment" | "review";
+  state: string | null;
+}
+
+export interface PrThread {
+  title: string;
+  author: string;
+  state: string;
+  body: string;
+  created_at: string;
+  comments: PrComment[];
+}
+
 export interface SyncStatus {
   upstream: string | null;
   ahead: number;
@@ -186,6 +203,8 @@ export const ipc = {
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
+  gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
+    invoke<string>("git_checkout_pr", { repoId, number, headRef }),
 
   // tags
   listTags: () => invoke<Tag[]>("list_tags"),
@@ -254,6 +273,8 @@ export const ipc = {
     invoke<PrSummary[]>("github_list_prs", { repoId }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
+  githubPrThread: (repoId: number, number: number) =>
+    invoke<PrThread>("github_pr_thread", { repoId, number }),
   githubSubmitReview: (
     repoId: number,
     number: number,
