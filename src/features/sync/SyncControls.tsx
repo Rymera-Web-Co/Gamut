@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -10,12 +10,16 @@ import { Button } from "@/components/ui/button";
 import { ipc } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 
-export function SyncControls({ repoId }: { repoId: number }) {
+export function SyncControls({
+  repoId,
+  ahead = 0,
+  behind = 0,
+}: {
+  repoId: number;
+  ahead?: number;
+  behind?: number;
+}) {
   const qc = useQueryClient();
-  const status = useQuery({
-    queryKey: ["sync-status", repoId],
-    queryFn: () => ipc.gitSyncStatus(repoId),
-  });
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["sync-status", repoId] });
@@ -49,8 +53,6 @@ export function SyncControls({ repoId }: { repoId: number }) {
   });
 
   const busy = fetch.isPending || pull.isPending || push.isPending;
-  const ahead = status.data?.ahead ?? 0;
-  const behind = status.data?.behind ?? 0;
 
   return (
     <div className="flex items-center">

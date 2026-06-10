@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   FolderGit2,
-  GitBranch,
   GripVertical,
   Plus,
   FolderSearch,
@@ -10,6 +9,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { BranchSwitcher } from "@/features/history/BranchSwitcher";
+import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
 import { ipc, pickDirectory, type Repo, type RepoStatus, type Tag } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -96,50 +97,41 @@ function RepoRow({
           active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
         )}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate leading-tight">{repo.name}</span>
-        {status?.branch && (
-          <span className="flex items-center gap-1 text-[11px] leading-tight text-[var(--color-muted-foreground)]">
-            <GitBranch className="size-3 shrink-0" />
-            <span className="truncate">{status.branch}</span>
-            {status.behind > 0 && (
-              <span
-                className="shrink-0 font-medium text-[#d97706]"
-                title={`${status.behind} new commit${status.behind === 1 ? "" : "s"} on the remote — fetch to update`}
-              >
-                ↓{status.behind}
-              </span>
-            )}
-            {status.ahead > 0 && (
-              <span
-                className="shrink-0 text-[var(--color-muted-foreground)]"
-                title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} to push`}
-              >
-                ↑{status.ahead}
-              </span>
-            )}
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {repoTags.map((t) => (
-          <span
-            key={t.id}
-            title={t.name}
-            className="size-2 rounded-full"
-            style={{ background: t.color }}
-          />
-        ))}
-        <button
-          aria-label="Edit repository"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit(repo);
-          }}
-          className="opacity-0 transition-opacity group-hover:opacity-100"
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex items-center gap-1">
+          <span className="min-w-0 flex-1 truncate leading-tight">{repo.name}</span>
+          {repoTags.map((t) => (
+            <span
+              key={t.id}
+              title={t.name}
+              className="size-2 shrink-0 rounded-full"
+              style={{ background: t.color }}
+            />
+          ))}
+          <button
+            aria-label="Edit repository"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(repo);
+            }}
+            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+          >
+            <Settings2 className="size-3.5 text-[var(--color-muted-foreground)]" />
+          </button>
+        </div>
+        {/* Per-repo branch switcher + sync controls (manage without selecting). */}
+        <div
+          className="flex items-center gap-0.5"
+          onClick={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.stopPropagation()}
         >
-          <Settings2 className="size-3.5 text-[var(--color-muted-foreground)]" />
-        </button>
+          <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
+          <SyncControls
+            repoId={repo.id}
+            ahead={status?.ahead}
+            behind={status?.behind}
+          />
+        </div>
       </div>
     </div>
   );

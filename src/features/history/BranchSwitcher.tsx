@@ -17,18 +17,28 @@ import {
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
 
-export function BranchSwitcher({ repoId }: { repoId: number }) {
+export function BranchSwitcher({
+  repoId,
+  currentBranch,
+}: {
+  repoId: number;
+  currentBranch?: string | null;
+}) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
 
+  // Branch/tag lists are only needed when the dropdown is open, so they load
+  // lazily — keeps the repo list cheap when many rows each have a switcher.
   const branches = useQuery({
     queryKey: ["branches", repoId],
     queryFn: () => ipc.listBranches(repoId),
+    enabled: open,
   });
   const tags = useQuery({
     queryKey: ["git-tags", repoId],
     queryFn: () => ipc.listGitTags(repoId),
+    enabled: open,
   });
 
   const checkout = useMutation({
@@ -46,7 +56,8 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
   });
 
   const q = filter.toLowerCase();
-  const current = branches.data?.find((b) => b.is_head)?.name ?? "detached";
+  const current =
+    currentBranch ?? branches.data?.find((b) => b.is_head)?.name ?? "detached";
   const branchList = (branches.data ?? [])
     .filter((b) => b.name.toLowerCase().includes(q))
     .sort((a, b) => Number(a.is_remote) - Number(b.is_remote));

@@ -1,8 +1,6 @@
 import { GitBranch, GitCompare, GitPullRequestArrow, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { BranchSwitcher } from "@/features/history/BranchSwitcher";
-import { SyncControls } from "@/features/sync/SyncControls";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
@@ -16,18 +14,11 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 export function TopTabs() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
-  const activeRepoId = useUiStore((s) => s.activeRepoId);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
 
   return (
     <div className="flex h-10 shrink-0 items-stretch border-b">
-      {activeRepoId != null && (
-        <div className="flex items-center gap-1 px-2">
-          <BranchSwitcher repoId={activeRepoId} />
-          <SyncControls repoId={activeRepoId} />
-        </div>
-      )}
       {TABS.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
