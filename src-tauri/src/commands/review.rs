@@ -24,44 +24,27 @@ pub struct ReviewDiff {
 }
 
 /// Resolve the base commit + a human label for a "branch" review.
-/// Prefers an explicit `base`, then the branch's upstream, then main/master.
+/// The base is always trunk, main, or master (in that order), preferring a
+/// local branch then its `origin/` counterpart. An explicit `base` overrides.
 fn resolve_base(repo: &Repository, base: Option<&str>) -> AppResult<(Oid, String)> {
     if let Some(name) = base {
-        let obj = repo.revparse_single(name)?;
-        let commit = obj.peel_to_commit()?;
+        let commit = repo.revparse_single(name)?.peel_to_commit()?;
         return Ok((commit.id(), name.to_string()));
     }
 
-    // Try the current branch's configured upstream.
-    if let Ok(head) = repo.head() {
-        if let Some(refname) = head.name() {
-            if let Ok(upstream) = repo.branch_upstream_name(refname) {
-                if let Some(up) = upstream.as_str() {
-                    if let Ok(obj) = repo.revparse_single(up) {
-                        if let Ok(commit) = obj.peel_to_commit() {
-                            let label = up
-                                .strip_prefix("refs/remotes/")
-                                .unwrap_or(up)
-                                .to_string();
-                            return Ok((commit.id(), label));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Fall back to a conventional default branch.
-    for cand in ["main", "master", "origin/main", "origin/master"] {
-        if let Ok(obj) = repo.revparse_single(cand) {
-            if let Ok(commit) = obj.peel_to_commit() {
-                return Ok((commit.id(), cand.to_string()));
+    for name in ["trunk", "main", "master"] {
+        for cand in [name.to_string(), format!("origin/{name}")] {
+            if let Ok(commit) = repo
+                .revparse_single(&cand)
+                .and_then(|o| o.peel_to_commit())
+            {
+                return Ok((commit.id(), cand));
             }
         }
     }
 
     Err(AppError::Other(
-        "could not determine a base branch to compare against".into(),
+        "no base branch found (expected trunk, main, or master)".into(),
     ))
 }
 
