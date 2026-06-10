@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::time::sleep;
@@ -9,26 +8,17 @@ use crate::commands::history::open_repo;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-const KEYRING_SERVICE: &str = "com.rymera.gamut";
-const KEYRING_USER: &str = "github-token";
 const API: &str = "https://api.github.com";
-/// Settings key for the connected GitHub login (non-secret) — lets the UI know
-/// you're signed in without touching the keychain at startup.
 const SETTING_LOGIN: &str = "github_login";
+const SETTING_TOKEN: &str = "github_token";
 
-// ---- Token storage (OS keychain) ----
-
-fn token_entry() -> AppResult<Entry> {
-    Ok(Entry::new(KEYRING_SERVICE, KEYRING_USER)?)
-}
-
-fn read_token() -> AppResult<Option<String>> {
-    match token_entry()?.get_password() {
-        Ok(t) => Ok(Some(t)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
+// ---- Token / login storage (local SQLite settings) ----
+//
+// We store the token in the app's SQLite DB rather than the OS keychain.
+// The keychain is more secure, but on macOS an *unsigned* dev binary triggers
+// an access prompt on every keychain read/write (and "Always Allow" doesn't
+// persist across rebuilds since it binds to the code signature). DB storage
+// avoids that entirely; the token sits in the app-data dir in plaintext.
 
 fn http() -> AppResult<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -36,7 +26,41 @@ fn http() -> AppResult<reqwest::Client> {
         .build()?)
 }
 
-/// Get the token, reading the OS keychain at most once per run (cached in state).
+fn get_setting(state: &AppState, key: &str) -> AppResult<Option<String>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    Ok(conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
+        .ok())
+}
+
+fn set_setting(state: &AppState, key: &str, value: &str) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )?;
+    Ok(())
+}
+
+fn del_setting(state: &AppState, key: &str) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+    Ok(())
+}
+
+/// Get the token, caching it in memory after the first DB read.
 fn require_token(state: &AppState) -> AppResult<String> {
     if let Some(t) = state
         .gh_token
@@ -46,7 +70,8 @@ fn require_token(state: &AppState) -> AppResult<String> {
     {
         return Ok(t);
     }
-    let token = read_token()?.ok_or_else(|| AppError::Other("not signed in to GitHub".into()))?;
+    let token = get_setting(state, SETTING_TOKEN)?
+        .ok_or_else(|| AppError::Other("not signed in to GitHub".into()))?;
     cache_token(state, Some(token.clone()))?;
     Ok(token)
 }
@@ -59,43 +84,10 @@ fn cache_token(state: &AppState, token: Option<String>) -> AppResult<()> {
     Ok(())
 }
 
-// ---- Non-secret connected-login flag (SQLite settings) ----
-
-fn set_login(state: &AppState, login: &str) -> AppResult<()> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![SETTING_LOGIN, login],
-    )?;
-    Ok(())
-}
-
-fn get_login(state: &AppState) -> AppResult<Option<String>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
-    let login = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [SETTING_LOGIN],
-            |r| r.get::<_, String>(0),
-        )
-        .ok();
-    Ok(login)
-}
-
-fn clear_login(state: &AppState) -> AppResult<()> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
-    conn.execute("DELETE FROM settings WHERE key = ?1", [SETTING_LOGIN])?;
-    Ok(())
+fn store_credentials(state: &AppState, token: &str, login: &str) -> AppResult<()> {
+    set_setting(state, SETTING_TOKEN, token)?;
+    set_setting(state, SETTING_LOGIN, login)?;
+    cache_token(state, Some(token.to_string()))
 }
 
 /// OAuth App client ID for the device flow. The client ID is public (not a
@@ -300,9 +292,7 @@ pub async fn github_device_poll(
 
         if let Some(token) = body.access_token {
             let login = validate_token(&client, &token).await?;
-            token_entry()?.set_password(&token)?;
-            cache_token(&state, Some(token))?;
-            set_login(&state, &login)?;
+            store_credentials(&state, &token, &login)?;
             return Ok(AuthStatus {
                 logged_in: true,
                 login: Some(login),
@@ -420,9 +410,7 @@ pub async fn github_set_token(
 ) -> AppResult<AuthStatus> {
     let client = http()?;
     let login = validate_token(&client, &token).await?;
-    token_entry()?.set_password(&token)?;
-    cache_token(&state, Some(token))?;
-    set_login(&state, &login)?;
+    store_credentials(&state, &token, &login)?;
     Ok(AuthStatus {
         logged_in: true,
         login: Some(login),
@@ -433,7 +421,7 @@ pub async fn github_set_token(
 /// touch the keychain (no prompt on startup).
 #[tauri::command]
 pub fn github_auth_status(state: State<AppState>) -> AppResult<AuthStatus> {
-    let login = get_login(&state)?;
+    let login = get_setting(&state, SETTING_LOGIN)?;
     Ok(AuthStatus {
         logged_in: login.is_some(),
         login,
@@ -442,12 +430,9 @@ pub fn github_auth_status(state: State<AppState>) -> AppResult<AuthStatus> {
 
 #[tauri::command]
 pub fn github_logout(state: State<AppState>) -> AppResult<()> {
-    clear_login(&state)?;
-    cache_token(&state, None)?;
-    match token_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.into()),
-    }
+    del_setting(&state, SETTING_TOKEN)?;
+    del_setting(&state, SETTING_LOGIN)?;
+    cache_token(&state, None)
 }
 
 /// List open pull requests for the repo's GitHub origin.

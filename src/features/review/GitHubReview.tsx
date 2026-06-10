@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   GitBranch,
+  Github,
   GitPullRequestArrow,
   Loader2,
 } from "lucide-react";
@@ -8,7 +9,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
@@ -19,42 +19,23 @@ import {
   useGithubAuth,
   useGithubPrs,
   usePrThread,
-  useSetToken,
   useSubmitReview,
 } from "./api";
 
 function TokenGate() {
-  const [token, setToken] = useState("");
-  const setTokenMut = useSetToken();
-
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
       <GitPullRequestArrow className="size-8 text-[var(--color-muted-foreground)]" />
       <p className="max-w-sm text-sm text-[var(--color-muted-foreground)]">
-        Sign in with a GitHub personal-access token (with <code>repo</code> scope) to
-        review pull requests. The token is stored in your OS keychain.
+        Connect your GitHub account to review pull requests.
       </p>
-      <div className="flex w-full max-w-sm gap-2">
-        <Input
-          type="password"
-          placeholder="ghp_…"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && token && setTokenMut.mutate(token)}
-        />
-        <Button
-          onClick={() => setTokenMut.mutate(token)}
-          disabled={!token || setTokenMut.isPending}
-        >
-          {setTokenMut.isPending && <Loader2 className="animate-spin" />}
-          Sign in
-        </Button>
-      </div>
-      {setTokenMut.isError && (
-        <p className="text-xs text-[var(--color-destructive)]">
-          {String(setTokenMut.error)}
-        </p>
-      )}
+      <p className="flex max-w-sm items-center justify-center gap-1.5 text-sm text-[var(--color-muted-foreground)]">
+        Click the
+        <span className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[var(--color-foreground)]">
+          <Github className="size-3.5" /> GitHub
+        </span>
+        button at the bottom of the left sidebar to sign in.
+      </p>
     </div>
   );
 }

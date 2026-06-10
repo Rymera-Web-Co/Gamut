@@ -30,6 +30,5 @@ thiserror = "2"
 # default-features disabled to skip ssh/https (openssl/libssh2) — git ops here are
 # local read-only; network fetch in M3 goes through the git CLI. libgit2 is still vendored.
 git2 = { version = "0.20", default-features = false }
-# GitHub: token in the OS keychain, REST calls over rustls (no system OpenSSL).
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# GitHub: REST calls over rustls (no system OpenSSL).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
