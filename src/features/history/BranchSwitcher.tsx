@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  GitBranch,
+  Loader2,
+  Tag as TagIcon,
+} from "lucide-react";
 
 import {
   Dialog,
@@ -10,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
-import { cn } from "@/lib/utils";
 
 export function BranchSwitcher({ repoId }: { repoId: number }) {
   const qc = useQueryClient();
@@ -21,11 +26,16 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
     queryKey: ["branches", repoId],
     queryFn: () => ipc.listBranches(repoId),
   });
+  const tags = useQuery({
+    queryKey: ["git-tags", repoId],
+    queryFn: () => ipc.listGitTags(repoId),
+  });
 
   const checkout = useMutation({
     mutationFn: (name: string) => ipc.checkoutBranch(repoId, name),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["branches", repoId] });
+      qc.invalidateQueries({ queryKey: ["git-tags", repoId] });
       qc.invalidateQueries({ queryKey: ["log", repoId] });
       qc.invalidateQueries({ queryKey: ["review-files", repoId] });
       qc.invalidateQueries({ queryKey: ["repos"] });
@@ -34,16 +44,19 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
     },
   });
 
+  const q = filter.toLowerCase();
   const current = branches.data?.find((b) => b.is_head)?.name ?? "detached";
-  const list = (branches.data ?? [])
-    .filter((b) => b.name.toLowerCase().includes(filter.toLowerCase()))
+  const branchList = (branches.data ?? [])
+    .filter((b) => b.name.toLowerCase().includes(q))
     .sort((a, b) => Number(a.is_remote) - Number(b.is_remote));
+  const tagList = (tags.data ?? []).filter((t) => t.toLowerCase().includes(q));
+  const empty = branchList.length === 0 && tagList.length === 0;
 
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        title="Switch branch"
+        title="Switch branch or tag"
         className="flex items-center gap-1.5 rounded-md bg-[#2563eb] px-2.5 py-1 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#1d4ed8]"
       >
         <GitBranch className="size-3.5" />
@@ -54,11 +67,11 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md gap-2">
           <DialogHeader>
-            <DialogTitle className="text-sm">Switch branch</DialogTitle>
+            <DialogTitle className="text-sm">Switch branch or tag</DialogTitle>
           </DialogHeader>
           <Input
             autoFocus
-            placeholder="Filter branches…"
+            placeholder="Filter branches and tags…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -68,35 +81,54 @@ export function BranchSwitcher({ repoId }: { repoId: number }) {
             </p>
           )}
           <div className="max-h-80 overflow-auto rounded-md border">
-            {list.length === 0 ? (
+            {empty ? (
               <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
-                No matching branches.
+                No matching branches or tags.
               </p>
             ) : (
-              list.map((b) => (
-                <button
-                  key={`${b.is_remote ? "r" : "l"}:${b.name}`}
-                  disabled={checkout.isPending}
-                  onClick={() => checkout.mutate(b.name)}
-                  className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
-                    "hover:bg-[var(--color-accent)]",
-                  )}
-                >
-                  <span className="w-4 shrink-0">
-                    {b.is_head && <Check className="size-3.5" />}
-                  </span>
-                  <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                    {b.name}
-                  </span>
-                  {b.is_remote && (
-                    <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
-                      remote
+              <>
+                {branchList.map((b) => (
+                  <button
+                    key={`${b.is_remote ? "r" : "l"}:${b.name}`}
+                    disabled={checkout.isPending}
+                    onClick={() => checkout.mutate(b.name)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                  >
+                    <span className="w-4 shrink-0">
+                      {b.is_head && <Check className="size-3.5" />}
                     </span>
-                  )}
-                </button>
-              ))
+                    <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                      {b.name}
+                    </span>
+                    {b.is_remote && (
+                      <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
+                        remote
+                      </span>
+                    )}
+                  </button>
+                ))}
+
+                {tagList.length > 0 && (
+                  <div className="border-t bg-[var(--color-sidebar)] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                    Tags
+                  </div>
+                )}
+                {tagList.map((t) => (
+                  <button
+                    key={`t:${t}`}
+                    disabled={checkout.isPending}
+                    onClick={() => checkout.mutate(t)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                  >
+                    <span className="w-4 shrink-0" />
+                    <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                      {t}
+                    </span>
+                  </button>
+                ))}
+              </>
             )}
           </div>
           {checkout.isPending && (

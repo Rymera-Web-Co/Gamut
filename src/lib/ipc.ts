@@ -158,6 +158,8 @@ export const ipc = {
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
   listBranches: (repoId: number) =>
     invoke<BranchInfo[]>("list_branches", { repoId }),
+  listGitTags: (repoId: number) =>
+    invoke<string[]>("list_git_tags", { repoId }),
   checkoutBranch: (repoId: number, name: string) =>
     invoke<void>("checkout_branch", { repoId, name }),
 

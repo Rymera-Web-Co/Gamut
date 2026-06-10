@@ -102,6 +102,7 @@ export function GroupRail() {
         group={editing}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        onCreated={(g) => setActiveGroup(g.id)}
         onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
       />
     </nav>

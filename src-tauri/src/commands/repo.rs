@@ -155,22 +155,39 @@ pub fn list_branches(state: State<AppState>, repo_id: i64) -> AppResult<Vec<Bran
     Ok(out)
 }
 
-/// Check out a branch (safe checkout — aborts if it would overwrite local edits).
+/// List tag names in the repository.
+#[tauri::command]
+pub fn list_git_tags(state: State<AppState>, repo_id: i64) -> AppResult<Vec<String>> {
+    let repo = open_repo(&state, repo_id)?;
+    let mut names: Vec<String> = repo
+        .tag_names(None)?
+        .iter()
+        .flatten()
+        .map(|s| s.to_string())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// Check out a branch, tag, or commit (safe checkout — aborts if it would
+/// overwrite local edits). Local branches stay attached; tags/commits detach HEAD.
 #[tauri::command]
 pub fn checkout_branch(state: State<AppState>, repo_id: i64, name: String) -> AppResult<()> {
     let repo = open_repo(&state, repo_id)?;
     let obj = repo.revparse_single(&name)?;
+    // Peel through annotated tags to the underlying commit.
+    let commit = obj.peel_to_commit()?;
 
     let mut checkout = git2::build::CheckoutBuilder::new();
     checkout.safe();
-    repo.checkout_tree(&obj, Some(&mut checkout))?;
+    repo.checkout_tree(commit.as_object(), Some(&mut checkout))?;
 
     let local_ref = format!("refs/heads/{name}");
     if repo.find_reference(&local_ref).is_ok() {
         repo.set_head(&local_ref)?;
     } else {
-        // Remote/arbitrary revision — detached HEAD.
-        repo.set_head_detached(obj.id())?;
+        // Tag / remote / arbitrary revision — detached HEAD.
+        repo.set_head_detached(commit.id())?;
     }
     Ok(())
 }

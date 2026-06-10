@@ -36,6 +36,7 @@ pub fn run() {
             commands::repo::touch_repo,
             commands::repo::discover_repos,
             commands::repo::list_branches,
+            commands::repo::list_git_tags,
             commands::repo::checkout_branch,
             commands::tags::list_tags,
             commands::tags::create_tag,

@@ -19,12 +19,14 @@ export function GroupDialog({
   group,
   open,
   onOpenChange,
+  onCreated,
   onDeleted,
 }: {
   /** null = create mode; a Group = edit mode. */
   group: Group | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: (group: Group) => void;
   onDeleted?: () => void;
 }) {
   const [name, setName] = useState("");
@@ -53,7 +55,12 @@ export function GroupDialog({
     } else {
       create.mutate(
         { name: trimmed, icon },
-        { onSuccess: () => onOpenChange(false) },
+        {
+          onSuccess: (g) => {
+            onCreated?.(g);
+            onOpenChange(false);
+          },
+        },
       );
     }
   }

@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { ipc, pickDirectory, type DiscoveredRepo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { useRegisterRepo } from "./api";
+import { useUiStore } from "@/store/ui";
+import { useGroups, useRegisterRepo, useSetRepoGroups } from "./api";
 
 export function DiscoverDialog({
   open,
@@ -26,6 +27,10 @@ export function DiscoverDialog({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const registerRepo = useRegisterRepo();
+  const setRepoGroups = useSetRepoGroups();
+  const groups = useGroups();
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const activeGroup = groups.data?.find((g) => g.id === activeGroupId);
 
   function reset() {
     setRoot(null);
@@ -61,9 +66,17 @@ export function DiscoverDialog({
 
   async function addSelected() {
     setAdding(true);
+    const assignToGroup =
+      activeGroupId != null && activeGroup != null && !activeGroup.is_default;
     try {
       for (const path of selected) {
-        await registerRepo.mutateAsync(path);
+        const repo = await registerRepo.mutateAsync(path);
+        if (assignToGroup) {
+          await setRepoGroups.mutateAsync({
+            repoId: repo.id,
+            groupIds: [activeGroupId],
+          });
+        }
       }
       onOpenChange(false);
       reset();
