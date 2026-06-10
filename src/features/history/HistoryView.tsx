@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { VList } from "virtua";
 import { Copy, GitBranch } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -57,20 +58,19 @@ function CommitListRow({
       role="button"
       onClick={onSelect}
       className={cn(
-        "group flex w-max min-w-full cursor-pointer items-center gap-2 border-b pr-3 text-sm",
+        "group flex cursor-pointer items-center gap-2 border-b pr-3 text-sm",
         selected ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
       )}
       style={{ height: ROW_HEIGHT }}
     >
       <CommitGraph row={commit} width={width} />
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         {commit.refs.map((r) => (
           <RefBadge key={`${r.kind}-${r.name}`} label={r} />
         ))}
-        <span className="whitespace-nowrap">{commit.subject}</span>
+        <span className="truncate">{commit.subject}</span>
       </div>
-      <div className="min-w-8 flex-1" />
-      <span className="shrink-0 whitespace-nowrap text-xs text-[var(--color-muted-foreground)]">
+      <span className="shrink-0 text-xs text-[var(--color-muted-foreground)]">
         {commit.author_name}
       </span>
       <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
@@ -146,7 +146,7 @@ function CommitDetailPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b p-4">
+      <div className="max-h-[50%] shrink-0 overflow-auto border-b p-4">
         <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-pre:text-xs">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {d.message.trim()}
@@ -245,34 +245,44 @@ export function HistoryView() {
         className="flex min-h-0 flex-1"
       >
         <Panel defaultSize={60} minSize={30} className="flex min-w-0 flex-col">
-          {/* Native scroll container so long commit subjects can be read by
-              scrolling horizontally (virtua clips cross-axis overflow). */}
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 flex-1">
             {commits.length > 0 ? (
-              <div className="w-max min-w-full">
-                {commits.map((c) => (
-                  <div key={c.sha} className="pl-2">
-                    <CommitListRow
-                      commit={c}
-                      width={width}
-                      selected={c.sha === selectedSha}
-                      onSelect={() => setSelectedSha(c.sha)}
-                    />
-                  </div>
-                ))}
-                {showLoadMore && (
-                  <div className="sticky left-0 flex min-w-full justify-center border-t p-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={logQuery.isFetching}
-                      onClick={() => setLimit((l) => l + PAGE)}
-                    >
-                      {logQuery.isFetching ? "Loading…" : "Load more"}
-                    </Button>
-                  </div>
-                )}
-              </div>
+              <VList
+                style={{ height: "100%" }}
+                count={commits.length + (showLoadMore ? 1 : 0)}
+              >
+                {(i) => {
+                  // "Load more" is the last row, so it appears only at the bottom.
+                  if (i >= commits.length) {
+                    return (
+                      <div
+                        key="load-more"
+                        className="flex justify-center border-t p-2"
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={logQuery.isFetching}
+                          onClick={() => setLimit((l) => l + PAGE)}
+                        >
+                          {logQuery.isFetching ? "Loading…" : "Load more"}
+                        </Button>
+                      </div>
+                    );
+                  }
+                  const c = commits[i];
+                  return (
+                    <div key={c.sha} className="pl-2">
+                      <CommitListRow
+                        commit={c}
+                        width={width}
+                        selected={c.sha === selectedSha}
+                        onSelect={() => setSelectedSha(c.sha)}
+                      />
+                    </div>
+                  );
+                }}
+              </VList>
             ) : (
               <p className="p-4 text-sm text-[var(--color-muted-foreground)]">
                 {logQuery.isLoading ? "Loading history…" : "No commits."}
