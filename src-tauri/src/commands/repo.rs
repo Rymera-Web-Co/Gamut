@@ -76,7 +76,8 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
 pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
     let conn = lock(&state)?;
     let ids: Vec<i64> = {
-        let mut stmt = conn.prepare("SELECT id FROM repos ORDER BY name COLLATE NOCASE")?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM repos ORDER BY sort, name COLLATE NOCASE")?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -115,6 +116,22 @@ pub fn register_repo(state: State<AppState>, path: String) -> AppResult<Repo> {
 pub fn remove_repo(state: State<AppState>, id: i64) -> AppResult<()> {
     let conn = lock(&state)?;
     conn.execute("DELETE FROM repos WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Persist a new ordering for repos (drag-and-drop). `repo_ids` is the desired
+/// order; each repo's `sort` is set to its index.
+#[tauri::command]
+pub fn reorder_repos(state: State<AppState>, repo_ids: Vec<i64>) -> AppResult<()> {
+    let mut conn = lock(&state)?;
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("UPDATE repos SET sort = ?1 WHERE id = ?2")?;
+        for (idx, id) in repo_ids.iter().enumerate() {
+            stmt.execute(rusqlite::params![idx as i64, id])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 

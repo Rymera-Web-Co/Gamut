@@ -3,6 +3,7 @@ import { GitPullRequestArrow, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { PrSummary, ReviewEvent } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -209,8 +210,12 @@ export function GitHubReview({ repoId }: { repoId: number }) {
         </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-80 shrink-0 flex-col border-r">
+      <PanelGroup
+        direction="horizontal"
+        autoSaveId="gamut.layout.review-github"
+        className="flex min-h-0 flex-1"
+      >
+        <Panel defaultSize={30} minSize={18} maxSize={55} className="flex min-w-0 flex-col">
           {prs.isLoading ? (
             <div className="flex flex-1 items-center justify-center">
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
@@ -226,9 +231,11 @@ export function GitHubReview({ repoId }: { repoId: number }) {
               onSelect={setSelected}
             />
           )}
-        </div>
+        </Panel>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <ResizeHandle />
+
+        <Panel className="flex min-w-0 flex-col">
           {selected == null ? (
             <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-muted-foreground)]">
               Select a pull request to review.
@@ -247,8 +254,8 @@ export function GitHubReview({ repoId }: { repoId: number }) {
               <ReviewBox repoId={repoId} number={selected} />
             </>
           )}
-        </div>
-      </div>
+        </Panel>
+      </PanelGroup>
     </div>
   );
 }

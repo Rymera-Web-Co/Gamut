@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { FileCheck2, Loader2 } from "lucide-react";
 
+import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { cn } from "@/lib/utils";
@@ -107,8 +108,12 @@ export function LocalReview({
   }
 
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex w-72 shrink-0 flex-col border-r">
+    <PanelGroup
+      direction="horizontal"
+      autoSaveId="gamut.layout.review-local"
+      className="flex h-full min-h-0"
+    >
+      <Panel defaultSize={28} minSize={15} maxSize={55} className="flex min-w-0 flex-col">
         <div className="border-b px-3 py-1.5 text-xs text-[var(--color-muted-foreground)]">
           <span className="font-mono">{data.base_label}</span> →{" "}
           <span className="font-mono">{data.head_label}</span> · {data.files.length}{" "}
@@ -124,9 +129,11 @@ export function LocalReview({
             />
           ))}
         </div>
-      </div>
+      </Panel>
 
-      <div className="min-w-0 flex-1">
+      <ResizeHandle />
+
+      <Panel className="min-w-0">
         {!selected ? (
           <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
             Select a file to see its diff.
@@ -155,7 +162,7 @@ export function LocalReview({
             }}
           />
         )}
-      </div>
-    </div>
+      </Panel>
+    </PanelGroup>
   );
 }

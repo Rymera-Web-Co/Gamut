@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { GroupRail } from "@/features/repos/GroupRail";
 import { RepoSidebar } from "@/features/repos/RepoSidebar";
 import { TopTabs } from "@/components/layout/TopTabs";
+import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/toaster";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
@@ -42,14 +43,25 @@ export default function App() {
     <div className="flex h-full w-full flex-col">
       <div className="flex min-h-0 flex-1">
         <GroupRail />
-        <RepoSidebar />
-        <main className="flex min-w-0 flex-1 flex-col">
-          <TopTabs />
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {view === "history" && <HistoryView />}
-            {view === "review" && <ReviewView />}
-          </div>
-        </main>
+        <PanelGroup
+          direction="horizontal"
+          autoSaveId="gamut.layout.main"
+          className="min-w-0 flex-1"
+        >
+          <Panel defaultSize={20} minSize={12} maxSize={40} className="min-w-0">
+            <RepoSidebar />
+          </Panel>
+          <ResizeHandle />
+          <Panel className="min-w-0">
+            <main className="flex h-full min-w-0 flex-col">
+              <TopTabs />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {view === "history" && <HistoryView />}
+                {view === "review" && <ReviewView />}
+              </div>
+            </main>
+          </Panel>
+        </PanelGroup>
       </div>
       <StatusBar />
       <Toaster />

@@ -1,11 +1,19 @@
 import { useState } from "react";
-import { FolderGit2, Plus, FolderSearch, Settings2, Tag as TagIcon } from "lucide-react";
+import { FolderGit2, GripVertical, Plus, FolderSearch, Settings2, Tag as TagIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { DND_REPO, moveBefore } from "@/lib/dnd";
 import { ipc, pickDirectory, type Repo, type Tag } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
-import { useGroups, useRegisterRepo, useRepos, useSetRepoGroups, useTags } from "./api";
+import {
+  useGroups,
+  useRegisterRepo,
+  useReorderRepos,
+  useRepos,
+  useSetRepoGroups,
+  useTags,
+} from "./api";
 import { NewTagDialog } from "./CreateDialogs";
 import { DiscoverDialog } from "./DiscoverDialog";
 import { EditRepoDialog } from "./EditRepoDialog";
@@ -14,31 +22,55 @@ function RepoRow({
   repo,
   tags,
   onEdit,
+  onReorder,
 }: {
   repo: Repo;
   tags: Tag[];
   onEdit: (repo: Repo) => void;
+  onReorder: (srcId: number, targetId: number) => void;
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const repoTags = tags.filter((t) => repo.tag_ids.includes(t.id));
+  const [dropOver, setDropOver] = useState(false);
 
   return (
     <div
       role="button"
       tabIndex={0}
       title={repo.path}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DND_REPO, String(repo.id));
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(DND_REPO)) {
+          e.preventDefault();
+          setDropOver(true);
+        }
+      }}
+      onDragLeave={() => setDropOver(false)}
+      onDrop={(e) => {
+        setDropOver(false);
+        if (!e.dataTransfer.types.includes(DND_REPO)) return;
+        e.preventDefault();
+        const srcId = Number(e.dataTransfer.getData(DND_REPO));
+        if (srcId) onReorder(srcId, repo.id);
+      }}
       onClick={() => {
         setActiveRepo(repo.id);
         ipc.touchRepo(repo.id);
       }}
       className={cn(
-        "group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+        "group flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-1.5 text-sm",
+        dropOver && "border-t-2 border-[var(--color-primary)]",
         activeRepoId === repo.id
           ? "bg-[var(--color-accent)]"
           : "hover:bg-[var(--color-accent)]",
       )}
     >
+      <GripVertical className="size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
       <FolderGit2 className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
       <span className="min-w-0 flex-1 truncate">{repo.name}</span>
       <div className="flex shrink-0 items-center gap-1">
@@ -71,6 +103,7 @@ export function RepoSidebar() {
   const groups = useGroups();
   const registerRepo = useRegisterRepo();
   const setRepoGroups = useSetRepoGroups();
+  const reorderRepos = useReorderRepos();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -87,6 +120,15 @@ export function RepoSidebar() {
     ? allRepos.filter((r) => r.group_ids.length === 0)
     : allRepos.filter((r) => activeGroupId != null && r.group_ids.includes(activeGroupId));
 
+  function reorder(srcId: number, targetId: number) {
+    const order = moveBefore(
+      visible.map((r) => r.id),
+      srcId,
+      targetId,
+    );
+    reorderRepos.mutate(order);
+  }
+
   async function addRepo() {
     const dir = await pickDirectory("Choose a git repository");
     if (!dir) return;
@@ -99,7 +141,7 @@ export function RepoSidebar() {
 
   return (
     <aside
-      className="flex w-64 shrink-0 flex-col border-r"
+      className="flex h-full w-full flex-col"
       style={{ background: "var(--color-sidebar)" }}
     >
       <header className="flex items-center justify-between gap-1 border-b px-3 py-2">
@@ -143,7 +185,13 @@ export function RepoSidebar() {
           </p>
         ) : (
           visible.map((r) => (
-            <RepoRow key={r.id} repo={r} tags={allTags} onEdit={setEditing} />
+            <RepoRow
+              key={r.id}
+              repo={r}
+              tags={allTags}
+              onEdit={setEditing}
+              onReorder={reorder}
+            />
           ))
         )}
       </div>

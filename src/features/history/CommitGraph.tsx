@@ -1,7 +1,7 @@
 import type { CommitRow } from "@/lib/ipc";
 import { graphColor } from "@/lib/format";
 
-export const ROW_HEIGHT = 30;
+export const ROW_HEIGHT = 40;
 export const COL_WIDTH = 16;
 
 function cx(col: number) {

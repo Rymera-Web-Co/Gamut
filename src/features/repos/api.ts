@@ -100,6 +100,22 @@ export function useDeleteGroup() {
   });
 }
 
+export function useReorderRepos() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: (repoIds: number[]) => ipc.reorderRepos(repoIds),
+    onSuccess: invalidate,
+  });
+}
+
+export function useReorderGroups() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: (groupIds: number[]) => ipc.reorderGroups(groupIds),
+    onSuccess: invalidate,
+  });
+}
+
 export function useSetRepoTags() {
   const invalidate = useInvalidateTree();
   return useMutation({

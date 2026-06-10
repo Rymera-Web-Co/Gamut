@@ -154,6 +154,8 @@ export const ipc = {
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
+  reorderRepos: (repoIds: number[]) =>
+    invoke<void>("reorder_repos", { repoIds }),
   discoverRepos: (root: string, maxDepth?: number) =>
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
   listBranches: (repoId: number) =>
@@ -177,6 +179,8 @@ export const ipc = {
     invoke<Group>("create_group", { name, parentId, icon }),
   updateGroup: (id: number, name: string | null, icon: string | null) =>
     invoke<void>("update_group", { id, name, icon }),
+  reorderGroups: (groupIds: number[]) =>
+    invoke<void>("reorder_groups", { groupIds }),
   deleteGroup: (id: number) => invoke<void>("delete_group", { id }),
   setRepoGroups: (repoId: number, groupIds: number[]) =>
     invoke<void>("set_repo_groups", { repoId, groupIds }),

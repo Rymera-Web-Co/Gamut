@@ -11,6 +11,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0002_groups_icon",
         include_str!("migrations/0002_groups_icon.sql"),
     ),
+    (
+        "0003_repo_sort",
+        include_str!("migrations/0003_repo_sort.sql"),
+    ),
 ];
 
 /// Open (creating if needed) the SQLite database at `path`, enable sane pragmas,

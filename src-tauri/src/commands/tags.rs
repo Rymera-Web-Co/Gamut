@@ -151,6 +151,22 @@ pub fn update_group(
     Ok(())
 }
 
+/// Persist a new ordering for groups (drag-and-drop in the rail). The default
+/// group always sorts first regardless, since list_groups orders by is_default.
+#[tauri::command]
+pub fn reorder_groups(state: State<AppState>, group_ids: Vec<i64>) -> AppResult<()> {
+    let mut conn = lock(&state)?;
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("UPDATE groups SET sort = ?1 WHERE id = ?2")?;
+        for (idx, id) in group_ids.iter().enumerate() {
+            stmt.execute(rusqlite::params![idx as i64, id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn delete_group(state: State<AppState>, id: i64) -> AppResult<()> {
     let conn = lock(&state)?;

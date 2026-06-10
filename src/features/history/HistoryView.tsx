@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { VList } from "virtua";
-import { GitBranch } from "lucide-react";
+import { Copy, GitBranch } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { CommitRow, FileChange, RefLabel } from "@/lib/ipc";
+import { copy } from "@/lib/clipboard";
 import { formatDate, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useRepos } from "@/features/repos/api";
@@ -54,7 +56,7 @@ function CommitListRow({
       role="button"
       onClick={onSelect}
       className={cn(
-        "flex cursor-pointer items-center gap-2 border-b pr-3 text-sm",
+        "group flex cursor-pointer items-center gap-2 border-b pr-3 text-sm",
         selected ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
       )}
       style={{ height: ROW_HEIGHT }}
@@ -72,9 +74,17 @@ function CommitListRow({
       <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
         {relativeTime(commit.timestamp)}
       </span>
-      <span className="w-16 shrink-0 text-right font-mono text-xs text-[var(--color-muted-foreground)]">
+      <button
+        title="Copy commit hash"
+        onClick={(e) => {
+          e.stopPropagation();
+          copy(commit.sha, `Copied ${commit.short_sha}`);
+        }}
+        className="flex w-20 shrink-0 items-center justify-end gap-1 font-mono text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+      >
+        <Copy className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
         {commit.short_sha}
-      </span>
+      </button>
     </div>
   );
 }
@@ -135,7 +145,14 @@ function CommitDetailPanel({
         <p className="mt-2 text-xs text-[var(--color-muted-foreground)]">
           {d.author_name} &lt;{d.author_email}&gt; · {formatDate(d.timestamp)}
         </p>
-        <p className="mt-1 font-mono text-xs text-[var(--color-muted-foreground)]">{d.sha}</p>
+        <button
+          title="Copy commit hash"
+          onClick={() => copy(d.sha, `Copied ${d.sha.slice(0, 8)}`)}
+          className="mt-1 flex items-center gap-1.5 font-mono text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+        >
+          {d.sha}
+          <Copy className="size-3" />
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
@@ -210,8 +227,12 @@ export function HistoryView() {
         </span>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-[3] flex-col border-r">
+      <PanelGroup
+        direction="horizontal"
+        autoSaveId="gamut.layout.history"
+        className="flex min-h-0 flex-1"
+      >
+        <Panel defaultSize={60} minSize={30} className="flex min-w-0 flex-col">
           <div className="min-h-0 flex-1">
             {commits.length > 0 ? (
               <VList style={{ height: "100%" }} count={commits.length}>
@@ -246,9 +267,11 @@ export function HistoryView() {
               </Button>
             </div>
           )}
-        </div>
+        </Panel>
 
-        <div className="min-w-0 flex-[2]">
+        <ResizeHandle />
+
+        <Panel defaultSize={40} minSize={20} className="min-w-0">
           {selectedSha ? (
             <CommitDetailPanel repoId={repoId} sha={selectedSha} />
           ) : (
@@ -256,8 +279,8 @@ export function HistoryView() {
               Select a commit to see its changes.
             </div>
           )}
-        </div>
-      </div>
+        </Panel>
+      </PanelGroup>
     </div>
   );
 }

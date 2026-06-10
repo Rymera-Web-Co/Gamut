@@ -15,6 +15,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // Database lives in the platform app-data directory, e.g.
             // ~/Library/Application Support/com.rymera.gamut/gamut.db on macOS.
@@ -34,6 +35,7 @@ pub fn run() {
             commands::repo::register_repo,
             commands::repo::remove_repo,
             commands::repo::touch_repo,
+            commands::repo::reorder_repos,
             commands::repo::discover_repos,
             commands::repo::list_branches,
             commands::repo::list_git_tags,
@@ -45,6 +47,7 @@ pub fn run() {
             commands::tags::list_groups,
             commands::tags::create_group,
             commands::tags::update_group,
+            commands::tags::reorder_groups,
             commands::tags::delete_group,
             commands::tags::set_repo_groups,
             commands::history::log,
