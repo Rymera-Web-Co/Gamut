@@ -2,6 +2,7 @@ import { GitBranch, GitPullRequestArrow, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
+import { SyncControls } from "@/features/sync/SyncControls";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
@@ -21,8 +22,9 @@ export function TopTabs() {
   return (
     <div className="flex h-10 shrink-0 items-stretch border-b">
       {activeRepoId != null && (
-        <div className="flex items-center px-2">
+        <div className="flex items-center gap-1 px-2">
           <BranchSwitcher repoId={activeRepoId} />
+          <SyncControls repoId={activeRepoId} />
         </div>
       )}
       {TABS.map(({ view: v, label, icon: Icon }) => (

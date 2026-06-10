@@ -1243,6 +1243,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -4375,6 +4376,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]

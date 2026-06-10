@@ -79,7 +79,7 @@ pub struct BlameHunk {
 
 // ---- Helpers ----
 
-fn repo_path(state: &AppState, repo_id: i64) -> AppResult<PathBuf> {
+pub(crate) fn repo_path(state: &AppState, repo_id: i64) -> AppResult<PathBuf> {
     let conn = state
         .db
         .lock()

@@ -145,6 +145,12 @@ export interface PrSummary {
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
+export interface SyncStatus {
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
 export const ipc = {
   ping: (name?: string) => invoke<string>("ping", { name }),
   dbHealth: () => invoke<DbHealth>("db_health"),
@@ -164,6 +170,13 @@ export const ipc = {
     invoke<string[]>("list_git_tags", { repoId }),
   checkoutBranch: (repoId: number, name: string) =>
     invoke<void>("checkout_branch", { repoId, name }),
+
+  // sync (network ops via git CLI)
+  gitSyncStatus: (repoId: number) =>
+    invoke<SyncStatus>("git_sync_status", { repoId }),
+  gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
+  gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
+  gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
 
   // tags
   listTags: () => invoke<Tag[]>("list_tags"),
