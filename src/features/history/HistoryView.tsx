@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 import { useRepos } from "@/features/repos/api";
 import { useUiStore } from "@/store/ui";
 import { useCommitDetail, useLog } from "./api";
-import { BranchSwitcher } from "./BranchSwitcher";
 import { CommitGraph, ROW_HEIGHT } from "./CommitGraph";
 import { DiffModal } from "./DiffModal";
 
@@ -196,7 +195,6 @@ export function HistoryView() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <h1 className="text-sm font-semibold">{repo?.name ?? "History"}</h1>
-        <BranchSwitcher repoId={repoId} />
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

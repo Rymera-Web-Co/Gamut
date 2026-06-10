@@ -1,6 +1,7 @@
 import { GitBranch, GitPullRequestArrow, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
@@ -13,6 +14,7 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 export function TopTabs() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
 
@@ -33,6 +35,12 @@ export function TopTabs() {
           {label}
         </button>
       ))}
+      {activeRepoId != null && (
+        <div className="flex items-center pl-3">
+          <BranchSwitcher repoId={activeRepoId} />
+        </div>
+      )}
+
       <div className="ml-auto flex items-center pr-2">
         <Button
           size="icon"
