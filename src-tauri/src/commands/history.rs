@@ -189,8 +189,8 @@ pub(crate) fn blob_text(repo: &Repository, tree: &Tree, path: &str) -> Option<(S
 
 /// Paginated commit log across all refs, with graph layout.
 #[tauri::command]
-pub fn log(
-    state: State<AppState>,
+pub async fn log(
+    state: State<'_, AppState>,
     repo_id: i64,
     offset: usize,
     limit: usize,
@@ -269,7 +269,11 @@ fn clone_labels(labels: &[RefLabel]) -> Vec<RefLabel> {
 
 /// Files changed by a commit (diffed against its first parent), with line stats.
 #[tauri::command]
-pub fn commit_detail(state: State<AppState>, repo_id: i64, sha: String) -> AppResult<CommitDetail> {
+pub async fn commit_detail(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    sha: String,
+) -> AppResult<CommitDetail> {
     let repo = open_repo(&state, repo_id)?;
     let oid = Oid::from_str(&sha)?;
     let commit = repo.find_commit(oid)?;
@@ -296,8 +300,8 @@ pub fn commit_detail(state: State<AppState>, repo_id: i64, sha: String) -> AppRe
 
 /// Old/new text for one file in a commit, for the diff editor.
 #[tauri::command]
-pub fn file_diff(
-    state: State<AppState>,
+pub async fn file_diff(
+    state: State<'_, AppState>,
     repo_id: i64,
     sha: String,
     path: String,
@@ -330,8 +334,8 @@ pub fn file_diff(
 
 /// Commits that touched a given path (newest first).
 #[tauri::command]
-pub fn file_history(
-    state: State<AppState>,
+pub async fn file_history(
+    state: State<'_, AppState>,
     repo_id: i64,
     path: String,
     limit: usize,
@@ -384,8 +388,8 @@ pub fn file_history(
 
 /// Per-line blame for a file at a given commit.
 #[tauri::command]
-pub fn blame(
-    state: State<AppState>,
+pub async fn blame(
+    state: State<'_, AppState>,
     repo_id: i64,
     sha: String,
     path: String,

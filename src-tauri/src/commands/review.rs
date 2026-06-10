@@ -57,8 +57,8 @@ fn head_branch_label(repo: &Repository) -> String {
 
 /// List files changed in a local review (working tree or branch-vs-base).
 #[tauri::command]
-pub fn review_files(
-    state: State<AppState>,
+pub async fn review_files(
+    state: State<'_, AppState>,
     repo_id: i64,
     source: ReviewSource,
     base: Option<String>,
@@ -95,8 +95,8 @@ pub fn review_files(
 
 /// Old/new text for one file in a local review, for the diff editor.
 #[tauri::command]
-pub fn review_file_diff(
-    state: State<AppState>,
+pub async fn review_file_diff(
+    state: State<'_, AppState>,
     repo_id: i64,
     source: ReviewSource,
     path: String,

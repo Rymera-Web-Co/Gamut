@@ -156,7 +156,7 @@ pub struct RepoStatus {
 /// Per-repo current branch and ahead/behind vs its upstream (local-only; the
 /// behind count reflects the last fetch — "new commits available" after fetching).
 #[tauri::command]
-pub fn repo_statuses(state: State<AppState>) -> AppResult<Vec<RepoStatus>> {
+pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStatus>> {
     let rows: Vec<(i64, String)> = {
         let conn = lock(&state)?;
         let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
@@ -211,7 +211,10 @@ pub struct BranchInfo {
 
 /// List local and remote branches; the current branch is flagged `is_head`.
 #[tauri::command]
-pub fn list_branches(state: State<AppState>, repo_id: i64) -> AppResult<Vec<BranchInfo>> {
+pub async fn list_branches(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<Vec<BranchInfo>> {
     let repo = open_repo(&state, repo_id)?;
     let mut out = Vec::new();
     for kind in [BranchType::Local, BranchType::Remote] {
@@ -231,7 +234,10 @@ pub fn list_branches(state: State<AppState>, repo_id: i64) -> AppResult<Vec<Bran
 
 /// List tag names in the repository.
 #[tauri::command]
-pub fn list_git_tags(state: State<AppState>, repo_id: i64) -> AppResult<Vec<String>> {
+pub async fn list_git_tags(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<Vec<String>> {
     let repo = open_repo(&state, repo_id)?;
     let mut names: Vec<String> = repo
         .tag_names(None)?
