@@ -58,19 +58,20 @@ function CommitListRow({
       role="button"
       onClick={onSelect}
       className={cn(
-        "group flex cursor-pointer items-center gap-2 border-b pr-3 text-sm",
+        "group flex w-max min-w-full cursor-pointer items-center gap-2 border-b pr-3 text-sm",
         selected ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
       )}
       style={{ height: ROW_HEIGHT }}
     >
       <CommitGraph row={commit} width={width} />
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {commit.refs.map((r) => (
           <RefBadge key={`${r.kind}-${r.name}`} label={r} />
         ))}
-        <span className="truncate">{commit.subject}</span>
+        <span className="whitespace-nowrap">{commit.subject}</span>
       </div>
-      <span className="shrink-0 text-xs text-[var(--color-muted-foreground)]">
+      <div className="min-w-8 flex-1" />
+      <span className="shrink-0 whitespace-nowrap text-xs text-[var(--color-muted-foreground)]">
         {commit.author_name}
       </span>
       <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
@@ -209,6 +210,8 @@ export function HistoryView() {
   const page = logQuery.data;
   const width = page?.width ?? 1;
   const q = query.trim().toLowerCase();
+  // Only offer "load more" on the unfiltered list (it fetches more from the repo).
+  const showLoadMore = !!page?.has_more && !q;
   const commits = q
     ? (page?.commits ?? []).filter(
         (c) =>
@@ -245,8 +248,30 @@ export function HistoryView() {
         <Panel defaultSize={60} minSize={30} className="flex min-w-0 flex-col">
           <div className="min-h-0 flex-1">
             {commits.length > 0 ? (
-              <VList style={{ height: "100%" }} count={commits.length}>
+              <VList
+                style={{ height: "100%", overflowX: "auto" }}
+                count={commits.length + (showLoadMore ? 1 : 0)}
+              >
                 {(i) => {
+                  // The "Load more" row is the last item, so it only appears
+                  // once the user scrolls to the bottom of the list.
+                  if (i >= commits.length) {
+                    return (
+                      <div
+                        key="load-more"
+                        className="flex min-w-full justify-center border-t p-2"
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={logQuery.isFetching}
+                          onClick={() => setLimit((l) => l + PAGE)}
+                        >
+                          {logQuery.isFetching ? "Loading…" : "Load more"}
+                        </Button>
+                      </div>
+                    );
+                  }
                   const c = commits[i];
                   return (
                     <div key={c.sha} className="pl-2">
@@ -266,17 +291,6 @@ export function HistoryView() {
               </p>
             )}
           </div>
-          {page?.has_more && (
-            <div className="border-t p-2 text-center">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setLimit((l) => l + PAGE)}
-              >
-                Load more
-              </Button>
-            </div>
-          )}
         </Panel>
 
         <ResizeHandle />
