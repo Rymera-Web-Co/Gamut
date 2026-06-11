@@ -132,8 +132,9 @@ fn store_credentials(state: &AppState, token: &str, login: &str) -> AppResult<()
 }
 
 /// OAuth App client ID for the device flow. The client ID is public (not a
-/// secret), so it's safe to commit. Override at runtime with GAMUT_GITHUB_CLIENT_ID.
-const DEFAULT_CLIENT_ID: &str = "Ov23liVS0gVXFvhvRpvC";
+/// secret), so it's safe to commit. This is the "Gamut" OAuth App owned by the
+/// Rymera-Web-Co org. Override at runtime with GAMUT_GITHUB_CLIENT_ID.
+const DEFAULT_CLIENT_ID: &str = "Ov23lizeswh97Fq6GTC3";
 
 fn client_id() -> Option<String> {
     if let Ok(v) = std::env::var("GAMUT_GITHUB_CLIENT_ID") {
