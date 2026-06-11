@@ -223,6 +223,46 @@ export interface ReviewThread {
   comments: ThreadComment[];
 }
 
+/** A non-comment event in a PR's timeline (commit, review request, label, …). */
+export interface TimelineEvent {
+  kind:
+    | "committed"
+    | "ready_for_review"
+    | "convert_to_draft"
+    | "review_requested"
+    | "labeled"
+    | "assigned"
+    | "renamed"
+    | "cross_referenced"
+    | "closed"
+    | "reopened"
+    | "merged"
+    | "head_ref_force_pushed"
+    | "head_ref_deleted";
+  created_at: string;
+  actor?: string | null;
+  actor_avatar?: string | null;
+  // committed / merged
+  sha?: string | null;
+  short_sha?: string | null;
+  message?: string | null;
+  // review_requested / assigned — the reviewer/assignee login
+  subject?: string | null;
+  // labeled
+  label?: string | null;
+  label_color?: string | null;
+  // renamed
+  rename_from?: string | null;
+  rename_to?: string | null;
+  // cross_referenced
+  ref_number?: number | null;
+  ref_title?: string | null;
+  ref_url?: string | null;
+  ref_is_pull?: boolean | null;
+  // true for additions (labeled/assigned/review_requested), false for removals
+  added?: boolean | null;
+}
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 export interface Reviewer {
@@ -358,6 +398,8 @@ export const ipc = {
     invoke<string>("github_pr_diff", { repoId, number }),
   githubPrThread: (repoId: number, number: number) =>
     invoke<PrThread>("github_pr_thread", { repoId, number }),
+  githubPrTimeline: (repoId: number, number: number) =>
+    invoke<TimelineEvent[]>("github_pr_timeline", { repoId, number }),
   githubSubmitReview: (
     repoId: number,
     number: number,

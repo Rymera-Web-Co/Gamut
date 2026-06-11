@@ -664,6 +664,198 @@ pub async fn github_pr_thread(
     })
 }
 
+/// A non-comment event in a PR's timeline (commits, ready-for-review, review
+/// requests, cross-references, labels, …). Comments and reviews are rendered
+/// from `github_pr_thread`, so they're omitted here. Follows the flat
+/// `kind` + optional-fields style of `PrComment`.
+#[derive(Serialize)]
+pub struct TimelineEvent {
+    pub kind: String,
+    pub created_at: String,
+    pub actor: Option<String>,
+    pub actor_avatar: Option<String>,
+    // committed
+    pub sha: Option<String>,
+    pub short_sha: Option<String>,
+    pub message: Option<String>,
+    // review_requested / assigned — the reviewer/assignee (or team) login
+    pub subject: Option<String>,
+    // labeled / unlabeled
+    pub label: Option<String>,
+    pub label_color: Option<String>,
+    // renamed
+    pub rename_from: Option<String>,
+    pub rename_to: Option<String>,
+    // cross-referenced — the issue/PR that mentioned this one
+    pub ref_number: Option<u64>,
+    pub ref_title: Option<String>,
+    pub ref_url: Option<String>,
+    pub ref_is_pull: Option<bool>,
+    // true for labeled/assigned/review_requested, false for the removals
+    pub added: Option<bool>,
+}
+
+impl TimelineEvent {
+    fn new(kind: &str, created_at: String) -> Self {
+        TimelineEvent {
+            kind: kind.to_string(),
+            created_at,
+            actor: None,
+            actor_avatar: None,
+            sha: None,
+            short_sha: None,
+            message: None,
+            subject: None,
+            label: None,
+            label_color: None,
+            rename_from: None,
+            rename_to: None,
+            ref_number: None,
+            ref_title: None,
+            ref_url: None,
+            ref_is_pull: None,
+            added: None,
+        }
+    }
+}
+
+fn str_at(v: &serde_json::Value, ptr: &str) -> Option<String> {
+    v.pointer(ptr)
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+}
+
+/// The PR's event timeline (excluding comments/reviews): commits, review
+/// requests, ready-for-review, cross-references, labels, etc. Used to enrich
+/// the conversation view the way GitHub's web timeline does.
+#[tauri::command]
+pub async fn github_pr_timeline(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+) -> AppResult<Vec<TimelineEvent>> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let url = format!("{API}/repos/{owner}/{repo}/issues/{number}/timeline");
+
+    // Walk pages until a short page (cap at 5 pages / 500 events — plenty).
+    let mut raw: Vec<serde_json::Value> = Vec::new();
+    for page in 1..=5u32 {
+        let resp = client
+            .get(&url)
+            .query(&[
+                ("per_page", "100".to_string()),
+                ("page", page.to_string()),
+            ])
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            if page == 1 {
+                return Err(api_error("loading the PR timeline", resp).await);
+            }
+            break;
+        }
+        let batch: Vec<serde_json::Value> = resp.json().await?;
+        let full = batch.len() == 100;
+        raw.extend(batch);
+        if !full {
+            break;
+        }
+    }
+
+    let actor = |e: &serde_json::Value| str_at(e, "/actor/login");
+    let actor_avatar = |e: &serde_json::Value| str_at(e, "/actor/avatar_url");
+    let at = |e: &serde_json::Value| str_at(e, "/created_at").unwrap_or_default();
+
+    let mut out: Vec<TimelineEvent> = Vec::new();
+    for e in &raw {
+        let kind = e.get("event").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "committed" => {
+                let sha = str_at(e, "/sha").unwrap_or_default();
+                let mut ev = TimelineEvent::new(
+                    "committed",
+                    str_at(e, "/committer/date")
+                        .or_else(|| str_at(e, "/author/date"))
+                        .unwrap_or_default(),
+                );
+                ev.short_sha = Some(sha.chars().take(7).collect());
+                ev.sha = Some(sha);
+                // Show only the commit subject (first line).
+                ev.message = str_at(e, "/message")
+                    .map(|m| m.lines().next().unwrap_or("").to_string());
+                ev.actor = str_at(e, "/author/name");
+                out.push(ev);
+            }
+            "ready_for_review" | "convert_to_draft" | "closed" | "reopened"
+            | "merged" | "head_ref_force_pushed" | "head_ref_deleted" => {
+                let mut ev = TimelineEvent::new(kind, at(e));
+                ev.actor = actor(e);
+                ev.actor_avatar = actor_avatar(e);
+                if kind == "merged" {
+                    let cid = str_at(e, "/commit_id").unwrap_or_default();
+                    ev.short_sha = Some(cid.chars().take(7).collect());
+                    ev.sha = Some(cid);
+                }
+                out.push(ev);
+            }
+            "review_requested" | "review_request_removed" => {
+                let mut ev = TimelineEvent::new("review_requested", at(e));
+                ev.actor = actor(e);
+                ev.actor_avatar = actor_avatar(e);
+                ev.subject = str_at(e, "/requested_reviewer/login")
+                    .or_else(|| str_at(e, "/requested_team/name"));
+                ev.added = Some(kind == "review_requested");
+                out.push(ev);
+            }
+            "labeled" | "unlabeled" => {
+                let mut ev = TimelineEvent::new("labeled", at(e));
+                ev.actor = actor(e);
+                ev.actor_avatar = actor_avatar(e);
+                ev.label = str_at(e, "/label/name");
+                ev.label_color = str_at(e, "/label/color");
+                ev.added = Some(kind == "labeled");
+                out.push(ev);
+            }
+            "assigned" | "unassigned" => {
+                let mut ev = TimelineEvent::new("assigned", at(e));
+                ev.actor = actor(e);
+                ev.actor_avatar = actor_avatar(e);
+                ev.subject = str_at(e, "/assignee/login");
+                ev.added = Some(kind == "assigned");
+                out.push(ev);
+            }
+            "renamed" => {
+                let mut ev = TimelineEvent::new("renamed", at(e));
+                ev.actor = actor(e);
+                ev.actor_avatar = actor_avatar(e);
+                ev.rename_from = str_at(e, "/rename/from");
+                ev.rename_to = str_at(e, "/rename/to");
+                out.push(ev);
+            }
+            "cross-referenced" => {
+                let mut ev = TimelineEvent::new("cross_referenced", at(e));
+                ev.actor = str_at(e, "/actor/login");
+                ev.actor_avatar = str_at(e, "/actor/avatar_url");
+                ev.ref_number = e.pointer("/source/issue/number").and_then(|v| v.as_u64());
+                ev.ref_title = str_at(e, "/source/issue/title");
+                ev.ref_url = str_at(e, "/source/issue/html_url");
+                ev.ref_is_pull = Some(e.pointer("/source/issue/pull_request").is_some());
+                out.push(ev);
+            }
+            // Comments and reviews come from github_pr_thread; everything else
+            // (subscribed, mentioned, …) is noise we drop.
+            _ => {}
+        }
+    }
+
+    out.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    Ok(out)
+}
+
 /// An inline review comment anchored to a line (or line range) of the diff.
 #[derive(Deserialize)]
 pub struct DraftComment {

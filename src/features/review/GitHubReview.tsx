@@ -8,16 +8,25 @@ import {
   ChevronRight,
   CircleDot,
   CircleSlash,
+  Eye,
+  EyeOff,
   FileDiff,
   GitBranch,
+  GitCommitHorizontal,
   GitMerge,
   Github,
   GitPullRequestArrow,
   Link as LinkIcon,
   Loader2,
   MessageSquare,
+  Pencil,
   RefreshCw,
   RotateCw,
+  Tag,
+  Trash2,
+  UserMinus,
+  UserPlus,
+  XCircle,
   type LucideIcon,
 } from "lucide-react";
 import { Markdown, toggleTaskInMarkdown } from "@/components/Markdown";
@@ -39,12 +48,14 @@ import type {
   ReviewEvent,
   ReviewThread,
   ThreadComment,
+  TimelineEvent,
 } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import { useDraftsFor, useReviewDrafts } from "@/store/reviewDrafts";
 import {
+  useBranches,
   useCheckoutPr,
   useGithubAuth,
   useGithubPrs,
@@ -52,6 +63,7 @@ import {
   useMergePr,
   usePrDetails,
   usePrThread,
+  usePrTimeline,
   useReplyReviewComment,
   useResolveThread,
   useReviewThreads,
@@ -569,19 +581,348 @@ function PrDetailsCard({ repoId, number }: { repoId: number; number: number }) {
   );
 }
 
+/** Join names the way GitHub does: "a", "a and b", "a, b, and c". */
+function joinNames(names: string[]) {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/** A grouped run of commits pushed to the PR branch (GitHub-style commit list). */
+function Commits({
+  repoId,
+  number,
+  headRef,
+  commits,
+}: {
+  repoId: number;
+  number: number;
+  headRef?: string;
+  commits: TimelineEvent[];
+}) {
+  const branches = useBranches(repoId);
+  const checkout = useCheckoutPr(repoId);
+  const setView = useUiStore((s) => s.setView);
+  const setHistorySha = useUiStore((s) => s.setHistorySha);
+  const [confirmSha, setConfirmSha] = useState<string | null>(null);
+
+  const isCheckedOut = !!(
+    headRef && branches.data?.some((b) => b.name === headRef && b.is_head)
+  );
+  // We can only offer checkout when we know the branch and it isn't current.
+  const needsCheckout = !isCheckedOut && !!headRef;
+
+  function open(sha: string) {
+    setHistorySha(sha);
+    setView("history");
+  }
+
+  function onRow(sha: string) {
+    // When checked out (or we can't checkout), jump straight to History;
+    // otherwise the row's popover handles confirmation.
+    if (!needsCheckout) open(sha);
+  }
+
+  function confirmCheckout() {
+    if (!confirmSha || !headRef) return;
+    const sha = confirmSha;
+    checkout.mutate(
+      { number, headRef },
+      {
+        onSuccess: () => {
+          setConfirmSha(null);
+          open(sha);
+        },
+      },
+    );
+  }
+
+  return (
+    <div className="rounded-md border">
+      <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs text-[var(--color-muted-foreground)]">
+        <GitCommitHorizontal className="size-4 shrink-0" />
+        <span>
+          added {commits.length} commit{commits.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="divide-y">
+        {commits.map((c) => (
+          <Popover
+            key={c.sha}
+            open={confirmSha === c.sha}
+            onOpenChange={(o) => {
+              if (needsCheckout) setConfirmSha(o ? c.sha! : null);
+            }}
+          >
+            <PopoverTrigger asChild>
+              <button
+                onClick={() => onRow(c.sha!)}
+                title={
+                  needsCheckout
+                    ? "Check out this branch to view the commit"
+                    : "Open this commit in History"
+                }
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+              >
+                <GitCommitHorizontal className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                <span className="min-w-0 flex-1 truncate">{c.message}</span>
+                {c.actor && (
+                  <span className="shrink-0 text-xs text-[var(--color-muted-foreground)]">
+                    {c.actor}
+                  </span>
+                )}
+                <code className="shrink-0 font-mono text-xs text-[var(--color-muted-foreground)]">
+                  {c.short_sha}
+                </code>
+              </button>
+            </PopoverTrigger>
+            {needsCheckout && (
+              <PopoverContent align="end" className="w-72 space-y-3 p-3">
+                <p className="text-sm">
+                  The branch{" "}
+                  <span className="font-mono font-medium">{headRef}</span> isn't
+                  checked out. Check it out to view this commit in History?
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setConfirmSha(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={checkout.isPending}
+                    onClick={confirmCheckout}
+                  >
+                    {checkout.isPending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <GitBranch />
+                    )}
+                    Checkout
+                  </Button>
+                </div>
+              </PopoverContent>
+            )}
+          </Popover>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A single subtle timeline line (ready-for-review, label, cross-reference, …). */
+function TimelineEventRow({ event }: { event: TimelineEvent }) {
+  const actor = event.actor ?? "someone";
+  let Icon: LucideIcon = CircleDot;
+  let body: ReactElement | string = "";
+
+  switch (event.kind) {
+    case "ready_for_review":
+      Icon = Eye;
+      body = "marked this pull request as ready for review";
+      break;
+    case "convert_to_draft":
+      Icon = EyeOff;
+      body = "marked this pull request as a draft";
+      break;
+    case "review_requested":
+      Icon = event.added === false ? UserMinus : UserPlus;
+      body = event.added === false ? (
+        <>removed the review request for <b>{event.subject}</b></>
+      ) : (
+        <>requested a review from <b>{event.subject}</b></>
+      );
+      break;
+    case "assigned":
+      Icon = event.added === false ? UserMinus : UserPlus;
+      body = (
+        <>
+          {event.added === false ? "unassigned" : "assigned"}{" "}
+          <b>{event.subject}</b>
+        </>
+      );
+      break;
+    case "labeled":
+      Icon = Tag;
+      body = (
+        <>
+          {event.added === false ? "removed" : "added"} the{" "}
+          <span
+            style={{
+              backgroundColor: `#${event.label_color ?? "888888"}`,
+              color: labelTextColor(event.label_color ?? "888888"),
+            }}
+            className="rounded-full px-2 py-0.5 text-xs font-medium"
+          >
+            {event.label}
+          </span>{" "}
+          label
+        </>
+      );
+      break;
+    case "renamed":
+      Icon = Pencil;
+      body = (
+        <>
+          renamed this from “{event.rename_from}” to “{event.rename_to}”
+        </>
+      );
+      break;
+    case "cross_referenced":
+      Icon = event.ref_is_pull ? GitPullRequestArrow : CircleDot;
+      body = (
+        <>
+          mentioned this in{" "}
+          <button
+            onClick={() => event.ref_url && openUrl(event.ref_url).catch(() => {})}
+            className="text-left font-medium text-[var(--color-foreground)] hover:underline"
+          >
+            #{event.ref_number} {event.ref_title}
+          </button>
+        </>
+      );
+      break;
+    case "closed":
+      Icon = XCircle;
+      body = "closed this pull request";
+      break;
+    case "reopened":
+      Icon = CircleDot;
+      body = "reopened this pull request";
+      break;
+    case "merged":
+      Icon = GitMerge;
+      body = (
+        <>
+          merged commit{" "}
+          <code className="font-mono">{event.short_sha}</code>
+        </>
+      );
+      break;
+    case "head_ref_force_pushed":
+      Icon = GitBranch;
+      body = "force-pushed the branch";
+      break;
+    case "head_ref_deleted":
+      Icon = Trash2;
+      body = "deleted the branch";
+      break;
+    default:
+      return null;
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-1 text-xs text-[var(--color-muted-foreground)]">
+      <Icon className="size-4 shrink-0" />
+      {event.actor_avatar !== undefined && event.actor && (
+        <Avatar src={event.actor_avatar} name={actor} size={16} />
+      )}
+      <span className="min-w-0">
+        <span className="font-medium text-[var(--color-foreground)]">
+          {actor}
+        </span>{" "}
+        {body}
+      </span>
+      {event.created_at && (
+        <span className="shrink-0">
+          · {relativeTime(Date.parse(event.created_at) / 1000)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Collapse the raw timeline into render items: consecutive commits become one
+ * commit list, and consecutive review requests by the same actor merge into a
+ * single "requested a review from A and B" line.
+ */
+function groupTimeline(
+  events: TimelineEvent[],
+  repoId: number,
+  number: number,
+  headRef?: string,
+): { at: number; key: string; node: ReactElement }[] {
+  const at = (s: string) => (s ? Date.parse(s) : 0);
+  const items: { at: number; key: string; node: ReactElement }[] = [];
+  let i = 0;
+  while (i < events.length) {
+    const e = events[i];
+
+    if (e.kind === "committed") {
+      const run: TimelineEvent[] = [];
+      while (i < events.length && events[i].kind === "committed") {
+        run.push(events[i]);
+        i++;
+      }
+      items.push({
+        at: at(run[run.length - 1].created_at),
+        key: `commits-${run[0].sha}`,
+        node: (
+          <Commits
+            repoId={repoId}
+            number={number}
+            headRef={headRef}
+            commits={run}
+          />
+        ),
+      });
+      continue;
+    }
+
+    if (e.kind === "review_requested" && e.added !== false) {
+      const run: TimelineEvent[] = [];
+      while (
+        i < events.length &&
+        events[i].kind === "review_requested" &&
+        events[i].added !== false &&
+        events[i].actor === e.actor
+      ) {
+        run.push(events[i]);
+        i++;
+      }
+      const names = run.map((r) => r.subject).filter(Boolean) as string[];
+      items.push({
+        at: at(e.created_at),
+        key: `review-req-${e.created_at}`,
+        node: (
+          <TimelineEventRow
+            event={{ ...e, subject: joinNames(names) }}
+          />
+        ),
+      });
+      continue;
+    }
+
+    items.push({
+      at: at(e.created_at),
+      key: `ev-${e.kind}-${e.created_at}-${i}`,
+      node: <TimelineEventRow event={e} />,
+    });
+    i++;
+  }
+  return items;
+}
+
 function Conversation({
   thread,
   repoId,
   number,
   prUrl,
+  headRef,
 }: {
   thread: PrThread;
   repoId: number;
   number: number;
   prUrl?: string;
+  headRef?: string;
 }) {
   const update = useUpdateBody(repoId);
   const threads = useReviewThreads(repoId, number).data ?? [];
+  const timeline = usePrTimeline(repoId, number).data ?? [];
   // e.g. ".../owner/repo/pull/22" -> ".../owner/repo/issues" for #N refs.
   const issueBaseUrl = prUrl
     ? prUrl.replace(/\/pull\/\d+.*$/, "/issues")
@@ -659,6 +1000,7 @@ function Conversation({
       ),
     });
   }
+  items.push(...groupTimeline(timeline, repoId, number, headRef));
   items.sort((a, b) => a.at - b.at);
 
   return (
@@ -1014,6 +1356,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
     if (selected == null) return;
     for (const k of [
       "github-pr-thread",
+      "github-pr-timeline",
       "github-review-threads",
       "github-pr-details",
       "github-pr-diff",
@@ -1150,6 +1493,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                       repoId={repoId}
                       number={selected}
                       prUrl={selectedPr?.url}
+                      headRef={selectedPr?.head_ref}
                     />
                   </div>
                 )}

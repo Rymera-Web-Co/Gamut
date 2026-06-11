@@ -89,6 +89,15 @@ export function usePrThread(repoId: number | null, number: number | null) {
   });
 }
 
+/** PR timeline events (commits, review requests, cross-references, labels, …). */
+export function usePrTimeline(repoId: number | null, number: number | null) {
+  return useQuery({
+    queryKey: ["github-pr-timeline", repoId, number],
+    queryFn: () => ipc.githubPrTimeline(repoId!, number!),
+    enabled: repoId != null && number != null,
+  });
+}
+
 /** Read-only PR sidebar metadata (reviewers, assignees, labels, milestone, links). */
 export function usePrDetails(repoId: number, number: number | null) {
   return useQuery({
@@ -158,6 +167,15 @@ export function useMentionables(repoId: number, enabled: boolean) {
     enabled: enabled && repoId != null,
     staleTime: 10 * 60_000,
     retry: false,
+  });
+}
+
+/** Local + remote branches for the repo (to tell if a PR branch is checked out). */
+export function useBranches(repoId: number | null) {
+  return useQuery({
+    queryKey: ["branches", repoId],
+    queryFn: () => ipc.listBranches(repoId!),
+    enabled: repoId != null,
   });
 }
 

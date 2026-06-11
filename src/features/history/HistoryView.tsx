@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { VList } from "virtua";
+import { useEffect, useRef, useState } from "react";
+import { VList, type VListHandle } from "virtua";
 import { Copy, GitBranch } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
@@ -149,9 +149,25 @@ export function HistoryView() {
   const [limit, setLimit] = useState(PAGE);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const listRef = useRef<VListHandle>(null);
+  const historySha = useUiStore((s) => s.historySha);
+  const setHistorySha = useUiStore((s) => s.setHistorySha);
 
   const logQuery = useLog(repoId, limit);
   const repo = repos.data?.find((r) => r.id === repoId);
+
+  // Reveal a commit requested from elsewhere (e.g. a PR's commit list): select
+  // it, clear any active filter, scroll it into view, then clear the signal.
+  useEffect(() => {
+    if (!historySha) return;
+    setSelectedSha(historySha);
+    setQuery("");
+    const idx = (logQuery.data?.commits ?? []).findIndex(
+      (c) => c.sha === historySha,
+    );
+    if (idx >= 0) listRef.current?.scrollToIndex(idx, { align: "center" });
+    setHistorySha(null);
+  }, [historySha, logQuery.data, setHistorySha]);
 
   if (repoId == null) {
     return (
@@ -206,6 +222,7 @@ export function HistoryView() {
           <div className="min-h-0 flex-1">
             {commits.length > 0 ? (
               <VList
+                ref={listRef}
                 style={{ height: "100%" }}
                 count={commits.length + (showLoadMore ? 1 : 0)}
               >

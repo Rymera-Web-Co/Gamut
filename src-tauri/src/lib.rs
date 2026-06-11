@@ -85,6 +85,7 @@ pub fn run() {
             commands::github::github_list_prs,
             commands::github::github_pr_diff,
             commands::github::github_pr_thread,
+            commands::github::github_pr_timeline,
             commands::github::github_submit_review,
             commands::github::github_pr_comment,
             commands::github::github_update_body,
