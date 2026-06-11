@@ -5,28 +5,30 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* Warm cream / off-white palette — softer on the eyes than pure white.
+     Subtle yellow hue (~85) at low chroma keeps it paper-like, not yellowed. */
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --background: oklch(0.975 0.008 85); /* cream canvas */
+  --foreground: oklch(0.22 0.006 75); /* warm near-black text */
+  --card: oklch(0.992 0.004 85); /* lighter — surfaces lift off the canvas */
+  --card-foreground: oklch(0.22 0.006 75);
+  --popover: oklch(0.992 0.004 85);
+  --popover-foreground: oklch(0.22 0.006 75);
+  --primary: oklch(0.255 0.006 75);
+  --primary-foreground: oklch(0.985 0.004 85);
+  --secondary: oklch(0.945 0.01 85); /* soft cream fill */
+  --secondary-foreground: oklch(0.255 0.006 75);
+  --muted: oklch(0.945 0.01 85);
+  --muted-foreground: oklch(0.55 0.012 75); /* warm gray */
+  --accent: oklch(0.945 0.01 85);
+  --accent-foreground: oklch(0.255 0.006 75);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --border: oklch(0.905 0.008 85); /* warm light border */
+  --input: oklch(0.905 0.008 85);
+  --ring: oklch(0.708 0.01 85);
+  --sidebar: oklch(0.96 0.01 85); /* slightly deeper cream */
+  --sidebar-foreground: oklch(0.22 0.006 75);
+  --sidebar-border: oklch(0.9 0.008 85);
 }
 
 .dark {

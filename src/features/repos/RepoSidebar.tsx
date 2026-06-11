@@ -10,12 +10,10 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
@@ -48,6 +46,7 @@ function RepoRow({
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const [dropOver, setDropOver] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const active = activeRepoId === repo.id;
 
   return (
@@ -103,17 +102,49 @@ function RepoRow({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1">
           <span className="min-w-0 flex-1 truncate leading-tight">{repo.name}</span>
-          <button
-            aria-label="Remove repository"
-            title="Remove from Gamut"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(repo);
-            }}
-            className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100"
-          >
-            <Trash2 className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)]" />
-          </button>
+          <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <PopoverTrigger asChild>
+              <button
+                aria-label="Remove repository"
+                title="Remove from Gamut"
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  "shrink-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100",
+                  confirmOpen ? "opacity-100" : "opacity-0",
+                )}
+              >
+                <Trash2 className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)]" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              side="bottom"
+              className="w-64 p-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                Remove{" "}
+                <span className="font-medium text-[var(--color-foreground)]">{repo.name}</span> from
+                Gamut? This only removes it from the list — your files on disk
+                are not touched.
+              </p>
+              <div className="mt-3 flex justify-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    setConfirmOpen(false);
+                    onRemove(repo);
+                  }}
+                >
+                  <Trash2 /> Remove
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
         {/* Per-repo branch switcher + sync controls (manage without selecting). */}
         <div
@@ -148,7 +179,6 @@ export function RepoSidebar() {
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [editGroupOpen, setEditGroupOpen] = useState(false);
-  const [removing, setRemoving] = useState<Repo | null>(null);
 
   const allRepos = repos.data ?? [];
   const allGroups = groups.data ?? [];
@@ -184,7 +214,7 @@ export function RepoSidebar() {
       className="flex h-full w-full flex-col"
       style={{ background: "var(--color-sidebar)" }}
     >
-      <header className="flex items-center justify-between gap-1 border-b px-3 py-2">
+      <header className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
         <div className="group flex min-w-0 items-center gap-1">
           <span
             className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
@@ -232,7 +262,7 @@ export function RepoSidebar() {
               key={r.id}
               repo={r}
               status={statusById.get(r.id)}
-              onRemove={setRemoving}
+              onRemove={(repo) => removeRepo.mutate(repo.id)}
               onReorder={reorder}
             />
           ))
@@ -247,33 +277,6 @@ export function RepoSidebar() {
         onOpenChange={setEditGroupOpen}
         onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
       />
-
-      <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Remove repository?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-[var(--color-muted-foreground)]">
-            Remove <span className="font-medium text-[var(--color-foreground)]">{removing?.name}</span> from
-            Gamut? This only removes it from the list — your files on disk are
-            not touched.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoving(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (removing) removeRepo.mutate(removing.id);
-                setRemoving(null);
-              }}
-            >
-              <Trash2 /> Remove
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </aside>
   );
 }
