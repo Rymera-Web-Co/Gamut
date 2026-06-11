@@ -88,6 +88,46 @@ export function usePrThread(repoId: number | null, number: number | null) {
   });
 }
 
+/** Inline review-comment threads (grouped comments + replies + resolved state). */
+export function useReviewThreads(repoId: number, number: number | null) {
+  return useQuery({
+    queryKey: ["github-review-threads", repoId, number],
+    queryFn: () => ipc.githubReviewThreads(repoId, number!),
+    enabled: number != null,
+  });
+}
+
+export function useReplyReviewComment(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      number,
+      commentId,
+      body,
+    }: {
+      number: number;
+      commentId: number;
+      body: string;
+    }) => ipc.githubReplyReviewComment(repoId, number, commentId, body),
+    onSuccess: (_d, { number }) =>
+      qc.invalidateQueries({
+        queryKey: ["github-review-threads", repoId, number],
+      }),
+  });
+}
+
+export function useResolveThread(repoId: number, number: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ threadId, resolved }: { threadId: string; resolved: boolean }) =>
+      ipc.githubResolveThread(threadId, resolved),
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: ["github-review-threads", repoId, number],
+      }),
+  });
+}
+
 /** Users that can be @-mentioned in this repo (its assignable collaborators). */
 export function useMentionables(repoId: number, enabled: boolean) {
   return useQuery({

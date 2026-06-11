@@ -158,6 +158,7 @@ export interface PrSummary {
   head_sha: string;
   url: string;
   updated_at: string;
+  author_avatar?: string | null;
 }
 
 /** An inline review comment anchored to a line (or range) of the diff. */
@@ -177,12 +178,18 @@ export interface PrComment {
   author: string;
   body: string;
   created_at: string;
-  kind: "comment" | "review";
+  kind: "comment" | "review" | "review_comment";
   state: string | null;
+  author_avatar?: string | null;
+  // Set for inline review comments ("review_comment").
+  path?: string | null;
+  line?: number | null;
+  diff_hunk?: string | null;
+  html_url?: string | null;
 }
 
-/** Where an editable body lives: the PR description, an issue comment, or a review. */
-export type BodyTarget = "pr" | "comment" | "review";
+/** Where an editable body lives within a PR. */
+export type BodyTarget = "pr" | "comment" | "review" | "review_comment";
 
 export interface PrThread {
   title: string;
@@ -190,7 +197,29 @@ export interface PrThread {
   state: string;
   body: string;
   created_at: string;
+  author_avatar?: string | null;
   comments: PrComment[];
+}
+
+/** A single comment inside an inline review thread. */
+export interface ThreadComment {
+  id: number | null;
+  author: string;
+  author_avatar?: string | null;
+  body: string;
+  created_at: string;
+  url?: string | null;
+}
+
+/** A grouped inline review-comment thread (root comment + replies). */
+export interface ReviewThread {
+  id: string; // GraphQL node id (for resolve/unresolve)
+  is_resolved: boolean;
+  is_outdated: boolean;
+  path?: string | null;
+  line?: number | null;
+  diff_hunk?: string | null;
+  comments: ThreadComment[];
 }
 
 export interface SyncStatus {
@@ -331,6 +360,22 @@ export const ipc = {
     invoke<void>("github_update_body", { repoId, number, target, id, body }),
   githubMentionables: (repoId: number) =>
     invoke<string[]>("github_mentionables", { repoId }),
+  githubReviewThreads: (repoId: number, number: number) =>
+    invoke<ReviewThread[]>("github_review_threads", { repoId, number }),
+  githubReplyReviewComment: (
+    repoId: number,
+    number: number,
+    commentId: number,
+    body: string,
+  ) =>
+    invoke<void>("github_reply_review_comment", {
+      repoId,
+      number,
+      commentId,
+      body,
+    }),
+  githubResolveThread: (threadId: string, resolved: boolean) =>
+    invoke<void>("github_resolve_thread", { threadId, resolved }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

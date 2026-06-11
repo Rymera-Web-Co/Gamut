@@ -77,6 +77,9 @@ pub fn run() {
             commands::github::github_pr_comment,
             commands::github::github_update_body,
             commands::github::github_mentionables,
+            commands::github::github_review_threads,
+            commands::github::github_reply_review_comment,
+            commands::github::github_resolve_thread,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,20 +1,37 @@
 import { useState } from "react";
 import {
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleSlash,
+  FileDiff,
   GitBranch,
   Github,
   GitPullRequestArrow,
+  Link as LinkIcon,
   Loader2,
+  MessageSquare,
+  type LucideIcon,
 } from "lucide-react";
 import { Markdown, toggleTaskInMarkdown } from "@/components/Markdown";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
+import { copy } from "@/lib/clipboard";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
-import type { PrComment, PrSummary, PrThread, ReviewEvent } from "@/lib/ipc";
+import type {
+  PrComment,
+  PrSummary,
+  PrThread,
+  ReviewEvent,
+  ReviewThread,
+  ThreadComment,
+} from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
@@ -25,6 +42,9 @@ import {
   useGithubPrs,
   useMentionables,
   usePrThread,
+  useReplyReviewComment,
+  useResolveThread,
+  useReviewThreads,
   useSubmitReview,
   useUpdateBody,
 } from "./api";
@@ -47,34 +67,120 @@ function TokenGate() {
   );
 }
 
-function reviewBadge(state: string | null) {
+function reviewBadge(
+  state: string | null,
+): { label: string; color: string; Icon: LucideIcon } {
   switch (state) {
     case "APPROVED":
-      return { label: "approved", color: "#16a34a" };
+      return { label: "approved", color: "#16a34a", Icon: CheckCircle2 };
     case "CHANGES_REQUESTED":
-      return { label: "requested changes", color: "#dc2626" };
+      return { label: "requested changes", color: "#dc2626", Icon: FileDiff };
     case "DISMISSED":
-      return { label: "dismissed", color: "#a16207" };
+      return { label: "dismissed", color: "#a16207", Icon: CircleSlash };
     default:
-      return { label: "reviewed", color: "var(--color-muted-foreground)" };
+      return {
+        label: "reviewed",
+        color: "var(--color-muted-foreground)",
+        Icon: MessageSquare,
+      };
   }
+}
+
+/** Small round user avatar with an initial fallback. */
+function Avatar({
+  src,
+  name,
+  size = 18,
+}: {
+  src?: string | null;
+  name: string;
+  size?: number;
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        title={name}
+        width={size}
+        height={size}
+        className="shrink-0 rounded-full"
+      />
+    );
+  }
+  return (
+    <span
+      title={name}
+      style={{ width: size, height: size }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[10px] font-medium uppercase text-[var(--color-muted-foreground)]"
+    >
+      {name.slice(0, 1)}
+    </span>
+  );
+}
+
+function CopyLinkButton({
+  url,
+  label,
+  className,
+}: {
+  url: string;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <button
+      title={label}
+      onClick={() => copy(url, "Link copied")}
+      className={cn(
+        "shrink-0 rounded p-0.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+        className,
+      )}
+    >
+      <LinkIcon className="size-3.5" />
+    </button>
+  );
+}
+
+/** Permalink to a specific comment/review within the PR. */
+function commentUrl(prUrl: string, comment: PrComment) {
+  // Inline review comments carry their own permalink (#discussion_r…).
+  if (comment.html_url) return comment.html_url;
+  const frag =
+    comment.kind === "review"
+      ? `pullrequestreview-${comment.id}`
+      : `issuecomment-${comment.id}`;
+  return `${prUrl}#${frag}`;
+}
+
+/** Keep the last `n` lines of a diff hunk (the context around the comment). */
+function lastLines(text: string, n: number) {
+  const lines = text.split("\n");
+  return lines.length <= n ? text : lines.slice(-n).join("\n");
 }
 
 function CommentCard({
   comment,
+  prUrl,
   onToggleTask,
 }: {
   comment: PrComment;
+  prUrl?: string;
   onToggleTask: (index: number, checked: boolean) => void;
 }) {
   const badge = comment.kind === "review" ? reviewBadge(comment.state) : null;
   return (
     <div className="rounded-md border">
       <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs">
+        <Avatar src={comment.author_avatar} name={comment.author} />
         <span className="font-medium">{comment.author}</span>
         {badge && (
-          <span style={{ color: badge.color }} className="font-medium">
-            {badge.label}
+          <span
+            title={badge.label}
+            style={{ color: badge.color }}
+            className="flex items-center"
+          >
+            <badge.Icon className="size-4" />
           </span>
         )}
         <span className="text-[var(--color-muted-foreground)]">
@@ -82,7 +188,15 @@ function CommentCard({
             ? relativeTime(Date.parse(comment.created_at) / 1000)
             : ""}
         </span>
+        {prUrl && (
+          <CopyLinkButton
+            url={commentUrl(prUrl, comment)}
+            label="Copy link to this comment"
+            className="ml-auto"
+          />
+        )}
       </div>
+
       {comment.body && (
         <div className="px-3 py-2">
           <Markdown onToggleTask={onToggleTask}>{comment.body}</Markdown>
@@ -92,14 +206,192 @@ function CommentCard({
   );
 }
 
-function Conversation({
+function ThreadCommentRow({ comment }: { comment: ThreadComment }) {
+  return (
+    <div className="px-3 py-2">
+      <div className="mb-1 flex items-center gap-2 text-xs">
+        <Avatar src={comment.author_avatar} name={comment.author} size={16} />
+        <span className="font-medium">{comment.author}</span>
+        <span className="text-[var(--color-muted-foreground)]">
+          {comment.created_at
+            ? relativeTime(Date.parse(comment.created_at) / 1000)
+            : ""}
+        </span>
+        {comment.url && (
+          <CopyLinkButton
+            url={comment.url}
+            label="Copy link to this comment"
+            className="ml-auto"
+          />
+        )}
+      </div>
+      <Markdown>{comment.body}</Markdown>
+    </div>
+  );
+}
+
+function ReviewThreadCard({
   thread,
   repoId,
   number,
 }: {
+  thread: ReviewThread;
+  repoId: number;
+  number: number;
+}) {
+  const reply = useReplyReviewComment(repoId);
+  const resolve = useResolveThread(repoId, number);
+  const mentionables = useMentionables(repoId, true);
+  const [open, setOpen] = useState(!thread.is_resolved);
+  const [replying, setReplying] = useState(false);
+  const [replyBody, setReplyBody] = useState("");
+  const rootId = thread.comments[0]?.id;
+
+  function sendReply() {
+    if (rootId == null || !replyBody.trim()) return;
+    reply.mutate(
+      { number, commentId: rootId, body: replyBody },
+      {
+        onSuccess: () => {
+          setReplyBody("");
+          setReplying(false);
+        },
+      },
+    );
+  }
+
+  return (
+    <div className={cn("rounded-md border", thread.is_resolved && "opacity-75")}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs"
+      >
+        {open ? (
+          <ChevronDown className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0" />
+        )}
+        <span className="min-w-0 truncate font-mono text-[var(--color-muted-foreground)]">
+          {thread.path}
+          {thread.line != null ? `:${thread.line}` : ""}
+        </span>
+        {thread.is_outdated && (
+          <span className="shrink-0 rounded border px-1 text-[10px] text-[#a16207]">
+            Outdated
+          </span>
+        )}
+        {thread.is_resolved && (
+          <span className="flex shrink-0 items-center gap-1 rounded border px-1 text-[10px] text-[#16a34a]">
+            <Check className="size-3" /> Resolved
+          </span>
+        )}
+        <span className="ml-auto shrink-0 text-[var(--color-muted-foreground)]">
+          {thread.comments.length}
+        </span>
+      </button>
+
+      {open && (
+        <>
+          {thread.diff_hunk && (
+            <pre className="max-h-40 overflow-auto border-b bg-[var(--color-sidebar)] p-2 text-[11px] leading-snug">
+              <code>{lastLines(thread.diff_hunk, 6)}</code>
+            </pre>
+          )}
+
+          <div className="divide-y">
+            {thread.comments.map((c, i) => (
+              <ThreadCommentRow key={c.id ?? i} comment={c} />
+            ))}
+          </div>
+
+          <div className="space-y-2 border-t p-2">
+            {replying ? (
+              <>
+                <MarkdownEditor
+                  value={replyBody}
+                  onChange={setReplyBody}
+                  autoFocus
+                  minHeight="min-h-20"
+                  mentions={mentionables.data ?? []}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setReplying(false);
+                      setReplyBody("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!replyBody.trim() || reply.isPending || rootId == null}
+                    onClick={sendReply}
+                  >
+                    {reply.isPending && <Loader2 className="animate-spin" />}
+                    Reply
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setReplying(true)}
+                  className="flex-1 rounded-md border border-[var(--color-input)] px-3 py-1.5 text-left text-sm text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+                >
+                  Reply…
+                </button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={resolve.isPending}
+                  onClick={() =>
+                    resolve.mutate({
+                      threadId: thread.id,
+                      resolved: !thread.is_resolved,
+                    })
+                  }
+                >
+                  {resolve.isPending && <Loader2 className="animate-spin" />}
+                  {thread.is_resolved ? "Unresolve" : "Resolve conversation"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReviewThreads({ repoId, number }: { repoId: number; number: number }) {
+  const threads = useReviewThreads(repoId, number);
+  const list = threads.data ?? [];
+  if (list.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        Review comments
+      </div>
+      {list.map((t) => (
+        <ReviewThreadCard key={t.id} thread={t} repoId={repoId} number={number} />
+      ))}
+    </div>
+  );
+}
+
+function Conversation({
+  thread,
+  repoId,
+  number,
+  prUrl,
+}: {
   thread: PrThread;
   repoId: number;
   number: number;
+  prUrl?: string;
 }) {
   const update = useUpdateBody(repoId);
 
@@ -108,6 +400,7 @@ function Conversation({
       {/* Description */}
       <div className="rounded-md border">
         <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs">
+          <Avatar src={thread.author_avatar} name={thread.author} />
           <span className="font-medium">{thread.author}</span>
           <span className="text-[var(--color-muted-foreground)]">
             opened this pull request
@@ -115,6 +408,13 @@ function Conversation({
               ? ` · ${relativeTime(Date.parse(thread.created_at) / 1000)}`
               : ""}
           </span>
+          {prUrl && (
+            <CopyLinkButton
+              url={prUrl}
+              label="Copy link to this pull request"
+              className="ml-auto"
+            />
+          )}
         </div>
         <div className="px-3 py-2">
           <Markdown
@@ -136,6 +436,7 @@ function Conversation({
         <CommentCard
           key={c.id}
           comment={c}
+          prUrl={prUrl}
           onToggleTask={(index) =>
             update.mutate({
               number,
@@ -147,9 +448,11 @@ function Conversation({
         />
       ))}
 
+      <ReviewThreads repoId={repoId} number={number} />
+
       {thread.comments.length === 0 && (
         <p className="py-2 text-center text-xs text-[var(--color-muted-foreground)]">
-          No comments yet.
+          No top-level comments yet.
         </p>
       )}
     </div>
@@ -333,7 +636,8 @@ function PrList({
               </span>
             )}
           </div>
-          <div className="text-xs text-[var(--color-muted-foreground)]">
+          <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]">
+            <Avatar src={pr.author_avatar} name={pr.author} size={16} />
             {pr.author} · {pr.base_ref} ← {pr.head_ref} · {relativeTime(
               Date.parse(pr.updated_at) / 1000,
             )}
@@ -424,6 +728,17 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                   <Button
                     size="sm"
                     variant="outline"
+                    title="Copy link to this pull request"
+                    onClick={() => copy(selectedPr.url, "PR link copied")}
+                  >
+                    <LinkIcon />
+                    Copy link
+                  </Button>
+                )}
+                {selectedPr && (
+                  <Button
+                    size="sm"
+                    variant="outline"
                     disabled={checkout.isPending}
                     title="Check out this PR's branch"
                     onClick={() =>
@@ -466,6 +781,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                       thread={thread.data}
                       repoId={repoId}
                       number={selected}
+                      prUrl={selectedPr?.url}
                     />
                   </div>
                 )}

@@ -372,6 +372,7 @@ pub struct PrSummary {
     pub head_sha: String,
     pub url: String,
     pub updated_at: String,
+    pub author_avatar: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -380,8 +381,14 @@ pub struct PrComment {
     pub author: String,
     pub body: String,
     pub created_at: String,
-    pub kind: String, // "comment" | "review"
+    pub kind: String, // "comment" | "review" | "review_comment"
     pub state: Option<String>,
+    pub author_avatar: Option<String>,
+    // Set for inline review comments ("review_comment").
+    pub path: Option<String>,
+    pub line: Option<u64>,
+    pub diff_hunk: Option<String>,
+    pub html_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -391,6 +398,7 @@ pub struct PrThread {
     pub state: String, // "open" | "closed" | "merged"
     pub body: String,
     pub created_at: String,
+    pub author_avatar: Option<String>,
     pub comments: Vec<PrComment>,
 }
 
@@ -399,6 +407,7 @@ pub struct PrThread {
 #[derive(Deserialize)]
 struct GhUser {
     login: String,
+    avatar_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -517,6 +526,7 @@ pub async fn github_list_prs(
             head_sha: p.head.sha,
             url: p.html_url,
             updated_at: p.updated_at,
+            author_avatar: p.user.avatar_url,
         })
         .collect())
 }
@@ -597,6 +607,8 @@ pub async fn github_pr_thread(
         }
     };
 
+    // Inline review comments are grouped into threads separately (see
+    // github_review_threads), so they're not added to this flat timeline.
     let mut comments: Vec<PrComment> = Vec::new();
     for c in issue_comments {
         comments.push(PrComment {
@@ -606,6 +618,11 @@ pub async fn github_pr_thread(
             created_at: c.created_at,
             kind: "comment".to_string(),
             state: None,
+            author_avatar: c.user.avatar_url,
+            path: None,
+            line: None,
+            diff_hunk: None,
+            html_url: None,
         });
     }
     for r in reviews {
@@ -621,6 +638,11 @@ pub async fn github_pr_thread(
             created_at: r.submitted_at.unwrap_or_default(),
             kind: "review".to_string(),
             state: Some(r.state),
+            author_avatar: r.user.avatar_url,
+            path: None,
+            line: None,
+            diff_hunk: None,
+            html_url: None,
         });
     }
     comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -637,6 +659,7 @@ pub async fn github_pr_thread(
         state,
         body: pr.body.unwrap_or_default(),
         created_at: pr.created_at,
+        author_avatar: pr.user.avatar_url,
         comments,
     })
 }
@@ -769,6 +792,10 @@ pub async fn github_update_body(
             let id = id.ok_or_else(|| AppError::Other("review id required".into()))?;
             client.put(format!("{base}/pulls/{number}/reviews/{id}"))
         }
+        "review_comment" => {
+            let id = id.ok_or_else(|| AppError::Other("comment id required".into()))?;
+            client.patch(format!("{base}/pulls/comments/{id}"))
+        }
         other => return Err(AppError::Other(format!("unknown update target: {other}"))),
     };
 
@@ -806,6 +833,247 @@ pub async fn github_mentionables(
     }
     let users: Vec<GhUser> = resp.json().await?;
     Ok(users.into_iter().map(|u| u.login).collect())
+}
+
+// ---- Review threads (grouped inline comments, via GraphQL) ----
+
+#[derive(Serialize)]
+pub struct ThreadComment {
+    pub id: Option<u64>, // databaseId (for replies/edits)
+    pub author: String,
+    pub author_avatar: Option<String>,
+    pub body: String,
+    pub created_at: String,
+    pub url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ReviewThread {
+    pub id: String, // GraphQL node id (for resolve/unresolve)
+    pub is_resolved: bool,
+    pub is_outdated: bool,
+    pub path: Option<String>,
+    pub line: Option<u64>,
+    pub diff_hunk: Option<String>,
+    pub comments: Vec<ThreadComment>,
+}
+
+const GRAPHQL: &str = "https://api.github.com/graphql";
+
+const THREADS_QUERY: &str = r#"
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      reviewThreads(first:100){
+        nodes{
+          id isResolved isOutdated path line originalLine
+          comments(first:100){
+            nodes{ databaseId body createdAt url diffHunk author{ login avatarUrl } }
+          }
+        }
+      }
+    }
+  }
+}"#;
+
+#[derive(Deserialize)]
+struct GqlResp<T> {
+    data: Option<T>,
+    errors: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct GqlThreadsData {
+    repository: Option<GqlRepo>,
+}
+#[derive(Deserialize)]
+struct GqlRepo {
+    #[serde(rename = "pullRequest")]
+    pull_request: Option<GqlPr>,
+}
+#[derive(Deserialize)]
+struct GqlPr {
+    #[serde(rename = "reviewThreads")]
+    review_threads: GqlConn<GqlThread>,
+}
+#[derive(Deserialize)]
+struct GqlConn<T> {
+    nodes: Vec<T>,
+}
+#[derive(Deserialize)]
+struct GqlThread {
+    id: String,
+    #[serde(rename = "isResolved")]
+    is_resolved: bool,
+    #[serde(rename = "isOutdated")]
+    is_outdated: bool,
+    path: Option<String>,
+    line: Option<u64>,
+    #[serde(rename = "originalLine")]
+    original_line: Option<u64>,
+    comments: GqlConn<GqlComment>,
+}
+#[derive(Deserialize)]
+struct GqlComment {
+    #[serde(rename = "databaseId")]
+    database_id: Option<u64>,
+    body: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    url: Option<String>,
+    #[serde(rename = "diffHunk")]
+    diff_hunk: Option<String>,
+    author: Option<GqlAuthor>,
+}
+#[derive(Deserialize)]
+struct GqlAuthor {
+    login: String,
+    #[serde(rename = "avatarUrl")]
+    avatar_url: Option<String>,
+}
+
+async fn graphql<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    token: &str,
+    query: &str,
+    variables: serde_json::Value,
+    context: &str,
+) -> AppResult<T> {
+    let resp = client
+        .post(GRAPHQL)
+        .bearer_auth(token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&serde_json::json!({ "query": query, "variables": variables }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error(context, resp).await);
+    }
+    let parsed: GqlResp<T> = resp.json().await?;
+    if let Some(errors) = parsed.errors {
+        return Err(AppError::Other(format!("GitHub GraphQL ({context}): {errors}")));
+    }
+    parsed
+        .data
+        .ok_or_else(|| AppError::Other(format!("GitHub GraphQL ({context}): no data")))
+}
+
+/// Inline review comment threads (grouped comments + replies + resolved state).
+#[tauri::command]
+pub async fn github_review_threads(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+) -> AppResult<Vec<ReviewThread>> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let data: GqlThreadsData = graphql(
+        &client,
+        &token,
+        THREADS_QUERY,
+        serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
+        "loading review threads",
+    )
+    .await?;
+
+    let nodes = data
+        .repository
+        .and_then(|r| r.pull_request)
+        .map(|p| p.review_threads.nodes)
+        .unwrap_or_default();
+
+    Ok(nodes
+        .into_iter()
+        .map(|t| {
+            let diff_hunk = t.comments.nodes.first().and_then(|c| c.diff_hunk.clone());
+            ReviewThread {
+                id: t.id,
+                is_resolved: t.is_resolved,
+                is_outdated: t.is_outdated,
+                path: t.path,
+                line: t.line.or(t.original_line),
+                diff_hunk,
+                comments: t
+                    .comments
+                    .nodes
+                    .into_iter()
+                    .map(|c| ThreadComment {
+                        id: c.database_id,
+                        author: c
+                            .author
+                            .as_ref()
+                            .map(|a| a.login.clone())
+                            .unwrap_or_else(|| "ghost".into()),
+                        author_avatar: c.author.and_then(|a| a.avatar_url),
+                        body: c.body,
+                        created_at: c.created_at,
+                        url: c.url,
+                    })
+                    .collect(),
+            }
+        })
+        .collect())
+}
+
+/// Reply to an existing inline review comment thread (REST).
+#[tauri::command]
+pub async fn github_reply_review_comment(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    comment_id: u64,
+    body: String,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let resp = client
+        .post(format!(
+            "{API}/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies"
+        ))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&serde_json::json!({ "body": body }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("posting the reply", resp).await);
+    }
+    Ok(())
+}
+
+const RESOLVE_MUTATION: &str =
+    "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}";
+const UNRESOLVE_MUTATION: &str =
+    "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{id}}}";
+
+#[derive(Deserialize)]
+struct GqlIgnore {}
+
+/// Resolve or unresolve a review thread by its GraphQL node id.
+#[tauri::command]
+pub async fn github_resolve_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    resolved: bool,
+) -> AppResult<()> {
+    let token = require_token(&state)?;
+    let client = http()?;
+    let query = if resolved {
+        RESOLVE_MUTATION
+    } else {
+        UNRESOLVE_MUTATION
+    };
+    let _: GqlIgnore = graphql(
+        &client,
+        &token,
+        query,
+        serde_json::json!({ "id": thread_id }),
+        "updating the thread",
+    )
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
