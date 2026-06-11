@@ -102,8 +102,8 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex flex-col gap-3 py-2">
       <p className="text-sm text-[var(--color-muted-foreground)]">
-        Paste a GitHub personal-access token (with <code>repo</code> scope). It's
-        stored in your OS keychain.
+        Paste a GitHub personal-access token (with <code>repo</code> and{" "}
+        <code>read:org</code> scopes). It's stored in your OS keychain.
       </p>
       <div className="flex gap-2">
         <Input

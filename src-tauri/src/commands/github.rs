@@ -280,7 +280,7 @@ pub async fn github_device_start() -> AppResult<DeviceCode> {
     let resp = client
         .post("https://github.com/login/device/code")
         .header("Accept", "application/json")
-        .form(&[("client_id", cid.as_str()), ("scope", "repo")])
+        .form(&[("client_id", cid.as_str()), ("scope", "repo read:org")])
         .send()
         .await?;
     if !resp.status().is_success() {
