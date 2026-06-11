@@ -225,6 +225,34 @@ export interface ReviewThread {
 
 export type MergeMethod = "merge" | "squash" | "rebase";
 
+export interface Reviewer {
+  login: string;
+  avatar?: string | null;
+  state: string; // APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED
+  re_requested: boolean;
+}
+export interface Person {
+  login: string;
+  avatar?: string | null;
+}
+export interface PrLabel {
+  name: string;
+  color: string;
+}
+export interface LinkedIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+}
+export interface PrDetails {
+  reviewers: Reviewer[];
+  assignees: Person[];
+  labels: PrLabel[];
+  milestone?: string | null;
+  linked_issues: LinkedIssue[];
+}
+
 export interface SyncStatus {
   upstream: string | null;
   ahead: number;
@@ -381,6 +409,8 @@ export const ipc = {
     invoke<void>("github_resolve_thread", { threadId, resolved }),
   githubMergePr: (repoId: number, number: number, method: MergeMethod) =>
     invoke<void>("github_merge_pr", { repoId, number, method }),
+  githubPrDetails: (repoId: number, number: number) =>
+    invoke<PrDetails>("github_pr_details", { repoId, number }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

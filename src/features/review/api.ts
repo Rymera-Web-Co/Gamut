@@ -89,6 +89,15 @@ export function usePrThread(repoId: number | null, number: number | null) {
   });
 }
 
+/** Read-only PR sidebar metadata (reviewers, assignees, labels, milestone, links). */
+export function usePrDetails(repoId: number, number: number | null) {
+  return useQuery({
+    queryKey: ["github-pr-details", repoId, number],
+    queryFn: () => ipc.githubPrDetails(repoId, number!),
+    enabled: number != null,
+  });
+}
+
 export function useMergePr(repoId: number) {
   const qc = useQueryClient();
   return useMutation({

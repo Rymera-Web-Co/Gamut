@@ -1,9 +1,12 @@
 import { useState, type ReactElement } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleDot,
   CircleSlash,
   FileDiff,
   GitBranch,
@@ -13,6 +16,8 @@ import {
   Link as LinkIcon,
   Loader2,
   MessageSquare,
+  RefreshCw,
+  RotateCw,
   type LucideIcon,
 } from "lucide-react";
 import { Markdown, toggleTaskInMarkdown } from "@/components/Markdown";
@@ -45,6 +50,7 @@ import {
   useGithubPrs,
   useMentionables,
   useMergePr,
+  usePrDetails,
   usePrThread,
   useReplyReviewComment,
   useResolveThread,
@@ -166,10 +172,12 @@ function lastLines(text: string, n: number) {
 function CommentCard({
   comment,
   prUrl,
+  issueBaseUrl,
   onToggleTask,
 }: {
   comment: PrComment;
   prUrl?: string;
+  issueBaseUrl?: string;
   onToggleTask: (index: number, checked: boolean) => void;
 }) {
   const badge = comment.kind === "review" ? reviewBadge(comment.state) : null;
@@ -203,14 +211,22 @@ function CommentCard({
 
       {comment.body && (
         <div className="px-3 py-2">
-          <Markdown onToggleTask={onToggleTask}>{comment.body}</Markdown>
+          <Markdown onToggleTask={onToggleTask} issueBaseUrl={issueBaseUrl}>
+            {comment.body}
+          </Markdown>
         </div>
       )}
     </div>
   );
 }
 
-function ThreadCommentRow({ comment }: { comment: ThreadComment }) {
+function ThreadCommentRow({
+  comment,
+  issueBaseUrl,
+}: {
+  comment: ThreadComment;
+  issueBaseUrl?: string;
+}) {
   return (
     <div className="px-3 py-2">
       <div className="mb-1 flex items-center gap-2 text-xs">
@@ -229,7 +245,7 @@ function ThreadCommentRow({ comment }: { comment: ThreadComment }) {
           />
         )}
       </div>
-      <Markdown>{comment.body}</Markdown>
+      <Markdown issueBaseUrl={issueBaseUrl}>{comment.body}</Markdown>
     </div>
   );
 }
@@ -238,10 +254,12 @@ function ReviewThreadCard({
   thread,
   repoId,
   number,
+  issueBaseUrl,
 }: {
   thread: ReviewThread;
   repoId: number;
   number: number;
+  issueBaseUrl?: string;
 }) {
   const reply = useReplyReviewComment(repoId);
   const resolve = useResolveThread(repoId, number);
@@ -304,7 +322,11 @@ function ReviewThreadCard({
 
           <div className="divide-y">
             {thread.comments.map((c, i) => (
-              <ThreadCommentRow key={c.id ?? i} comment={c} />
+              <ThreadCommentRow
+                key={c.id ?? i}
+                comment={c}
+                issueBaseUrl={issueBaseUrl}
+              />
             ))}
           </div>
 
@@ -372,6 +394,181 @@ function ReviewThreadCard({
   );
 }
 
+function ReviewerStatusIcon({ state }: { state: string }) {
+  switch (state) {
+    case "APPROVED":
+      return <Check className="size-4 text-[#16a34a]" />;
+    case "CHANGES_REQUESTED":
+      return <FileDiff className="size-4 text-[#dc2626]" />;
+    case "COMMENTED":
+      return <MessageSquare className="size-4 text-[var(--color-muted-foreground)]" />;
+    case "DISMISSED":
+      return <CircleSlash className="size-4 text-[var(--color-muted-foreground)]" />;
+    default:
+      return <span className="size-2.5 rounded-full bg-[#d4a72c]" />;
+  }
+}
+
+/** Black or white text for readable contrast on a label's hex background. */
+function labelTextColor(hex: string) {
+  const c = /^[0-9a-fA-F]{6}$/.test(hex) ? hex : "888888";
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#000" : "#fff";
+}
+
+function DetailsSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactElement | string;
+}) {
+  return (
+    <div className="px-3 py-2">
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function PrDetailsCard({ repoId, number }: { repoId: number; number: number }) {
+  const details = usePrDetails(repoId, number);
+  const [open, setOpen] = useState(true);
+  const d = details.data;
+  const empty = (text: string) => (
+    <span className="text-xs text-[var(--color-muted-foreground)]">{text}</span>
+  );
+
+  return (
+    <div className="rounded-md border">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs font-semibold"
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronRight className="size-3.5" />
+        )}
+        Details
+        {details.isFetching && (
+          <Loader2 className="size-3 animate-spin text-[var(--color-muted-foreground)]" />
+        )}
+      </button>
+
+      {open && details.isError && (
+        <p className="px-3 py-2 text-xs text-[var(--color-destructive)]">
+          {String(details.error)}
+        </p>
+      )}
+
+      {open && !d && !details.isError && (
+        <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
+          <Loader2 className="size-3 animate-spin" /> Loading…
+        </div>
+      )}
+
+      {open && d && (
+        <div className="divide-y text-sm">
+          <DetailsSection title="Reviewers">
+            {d.reviewers.length === 0 ? (
+              empty("No reviewers")
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {d.reviewers.map((r) => (
+                  <div key={r.login} className="flex items-center gap-2">
+                    <Avatar src={r.avatar} name={r.login} size={18} />
+                    <span className="min-w-0 flex-1 truncate">{r.login}</span>
+                    {r.re_requested && (
+                      <span title="Re-review requested">
+                        <RotateCw className="size-3.5 text-[var(--color-muted-foreground)]" />
+                      </span>
+                    )}
+                    <span title={r.state.toLowerCase().replace("_", " ")}>
+                      <ReviewerStatusIcon state={r.state} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DetailsSection>
+
+          <DetailsSection title="Assignees">
+            {d.assignees.length === 0 ? (
+              empty("No one")
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {d.assignees.map((a) => (
+                  <span key={a.login} className="flex items-center gap-1">
+                    <Avatar src={a.avatar} name={a.login} size={18} />
+                    {a.login}
+                  </span>
+                ))}
+              </div>
+            )}
+          </DetailsSection>
+
+          <DetailsSection title="Labels">
+            {d.labels.length === 0 ? (
+              empty("None yet")
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {d.labels.map((l) => (
+                  <span
+                    key={l.name}
+                    style={{
+                      backgroundColor: `#${l.color}`,
+                      color: labelTextColor(l.color),
+                    }}
+                    className="rounded-full px-2 py-0.5 text-xs font-medium"
+                  >
+                    {l.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </DetailsSection>
+
+          <DetailsSection title="Milestone">
+            {d.milestone ? d.milestone : empty("No milestone")}
+          </DetailsSection>
+
+          <DetailsSection title="Development">
+            {d.linked_issues.length === 0 ? (
+              empty("No linked issues")
+            ) : (
+              <div className="flex flex-col gap-1">
+                {d.linked_issues.map((i) => (
+                  <button
+                    key={i.number}
+                    title={i.url}
+                    onClick={() => openUrl(i.url).catch(() => {})}
+                    className="flex items-center gap-2 text-left hover:underline"
+                  >
+                    <CircleDot
+                      className={cn(
+                        "size-3.5 shrink-0",
+                        i.state === "OPEN" ? "text-[#16a34a]" : "text-[#8957e5]",
+                      )}
+                    />
+                    <span className="min-w-0 truncate">
+                      #{i.number} {i.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </DetailsSection>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Conversation({
   thread,
   repoId,
@@ -385,6 +582,10 @@ function Conversation({
 }) {
   const update = useUpdateBody(repoId);
   const threads = useReviewThreads(repoId, number).data ?? [];
+  // e.g. ".../owner/repo/pull/22" -> ".../owner/repo/issues" for #N refs.
+  const issueBaseUrl = prUrl
+    ? prUrl.replace(/\/pull\/\d+.*$/, "/issues")
+    : undefined;
 
   // Group inline threads under the review they were submitted with; threads
   // with no matching review stand alone in the timeline.
@@ -417,6 +618,7 @@ function Conversation({
           <CommentCard
             comment={c}
             prUrl={prUrl}
+            issueBaseUrl={issueBaseUrl}
             onToggleTask={(index) =>
               update.mutate({
                 number,
@@ -434,6 +636,7 @@ function Conversation({
                   thread={t}
                   repoId={repoId}
                   number={number}
+                  issueBaseUrl={issueBaseUrl}
                 />
               ))}
             </div>
@@ -447,7 +650,12 @@ function Conversation({
       at: at(t.comments[0]?.created_at ?? ""),
       key: `t${t.id}`,
       node: (
-        <ReviewThreadCard thread={t} repoId={repoId} number={number} />
+        <ReviewThreadCard
+          thread={t}
+          repoId={repoId}
+          number={number}
+          issueBaseUrl={issueBaseUrl}
+        />
       ),
     });
   }
@@ -455,6 +663,8 @@ function Conversation({
 
   return (
     <div className="flex flex-col gap-3 p-3">
+      <PrDetailsCard repoId={repoId} number={number} />
+
       {/* Description */}
       <div className="rounded-md border">
         <div className="flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs">
@@ -476,6 +686,7 @@ function Conversation({
         </div>
         <div className="px-3 py-2">
           <Markdown
+            issueBaseUrl={issueBaseUrl}
             onToggleTask={(index) =>
               update.mutate({
                 number,
@@ -795,6 +1006,21 @@ export function GitHubReview({ repoId }: { repoId: number }) {
   const selectedPr = prs.data?.find((p) => p.number === selected) ?? null;
   const setView = useUiStore((s) => s.setView);
   const setReviewMode = useUiStore((s) => s.setReviewMode);
+  const qc = useQueryClient();
+
+  // Pull fresh data for the open PR (new comments, reviews, commits, …).
+  function refresh() {
+    qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+    if (selected == null) return;
+    for (const k of [
+      "github-pr-thread",
+      "github-review-threads",
+      "github-pr-details",
+      "github-pr-diff",
+    ]) {
+      qc.invalidateQueries({ queryKey: [k, repoId, selected] });
+    }
+  }
 
   if (auth.isLoading) {
     return (
@@ -856,6 +1082,16 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                     </div>
                   )}
                 </div>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="size-8"
+                  title="Refresh"
+                  disabled={thread.isFetching}
+                  onClick={refresh}
+                >
+                  <RefreshCw className={cn(thread.isFetching && "animate-spin")} />
+                </Button>
                 {selectedPr && (
                   <Button
                     size="sm"

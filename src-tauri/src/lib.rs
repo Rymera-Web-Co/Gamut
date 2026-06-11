@@ -80,6 +80,7 @@ pub fn run() {
             commands::github::github_review_threads,
             commands::github::github_reply_review_comment,
             commands::github::github_resolve_thread,
+            commands::github::github_pr_details,
             commands::github::github_merge_pr,
         ])
         .run(tauri::generate_context!())
