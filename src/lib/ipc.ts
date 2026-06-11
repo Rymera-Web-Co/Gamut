@@ -219,8 +219,11 @@ export interface ReviewThread {
   path?: string | null;
   line?: number | null;
   diff_hunk?: string | null;
+  review_id?: number | null;
   comments: ThreadComment[];
 }
+
+export type MergeMethod = "merge" | "squash" | "rebase";
 
 export interface SyncStatus {
   upstream: string | null;
@@ -376,6 +379,8 @@ export const ipc = {
     }),
   githubResolveThread: (threadId: string, resolved: boolean) =>
     invoke<void>("github_resolve_thread", { threadId, resolved }),
+  githubMergePr: (repoId: number, number: number, method: MergeMethod) =>
+    invoke<void>("github_merge_pr", { repoId, number, method }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

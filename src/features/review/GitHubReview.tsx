@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import {
   Check,
   CheckCircle2,
@@ -7,6 +7,7 @@ import {
   CircleSlash,
   FileDiff,
   GitBranch,
+  GitMerge,
   Github,
   GitPullRequestArrow,
   Link as LinkIcon,
@@ -18,6 +19,7 @@ import { Markdown, toggleTaskInMarkdown } from "@/components/Markdown";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
 import { copy } from "@/lib/clipboard";
+import { toast } from "@/store/toast";
 import {
   Popover,
   PopoverContent,
@@ -25,6 +27,7 @@ import {
 } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type {
+  MergeMethod,
   PrComment,
   PrSummary,
   PrThread,
@@ -41,6 +44,7 @@ import {
   useGithubAuth,
   useGithubPrs,
   useMentionables,
+  useMergePr,
   usePrThread,
   useReplyReviewComment,
   useResolveThread,
@@ -366,22 +370,6 @@ function ReviewThreadCard({
   );
 }
 
-function ReviewThreads({ repoId, number }: { repoId: number; number: number }) {
-  const threads = useReviewThreads(repoId, number);
-  const list = threads.data ?? [];
-  if (list.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
-        Review comments
-      </div>
-      {list.map((t) => (
-        <ReviewThreadCard key={t.id} thread={t} repoId={repoId} number={number} />
-      ))}
-    </div>
-  );
-}
-
 function Conversation({
   thread,
   repoId,
@@ -394,6 +382,74 @@ function Conversation({
   prUrl?: string;
 }) {
   const update = useUpdateBody(repoId);
+  const threads = useReviewThreads(repoId, number).data ?? [];
+
+  // Group inline threads under the review they were submitted with; threads
+  // with no matching review stand alone in the timeline.
+  const reviewIds = new Set(
+    thread.comments.filter((c) => c.kind === "review").map((c) => c.id),
+  );
+  const threadsByReview = new Map<number, ReviewThread[]>();
+  const orphanThreads: ReviewThread[] = [];
+  for (const t of threads) {
+    if (t.review_id != null && reviewIds.has(t.review_id)) {
+      const arr = threadsByReview.get(t.review_id) ?? [];
+      arr.push(t);
+      threadsByReview.set(t.review_id, arr);
+    } else {
+      orphanThreads.push(t);
+    }
+  }
+
+  const at = (s: string) => (s ? Date.parse(s) : 0);
+  const items: { at: number; key: string; node: ReactElement }[] = [];
+
+  for (const c of thread.comments) {
+    const childThreads =
+      c.kind === "review" ? threadsByReview.get(c.id) ?? [] : [];
+    items.push({
+      at: at(c.created_at),
+      key: `c${c.id}`,
+      node: (
+        <div className="flex flex-col gap-3">
+          <CommentCard
+            comment={c}
+            prUrl={prUrl}
+            onToggleTask={(index) =>
+              update.mutate({
+                number,
+                target: c.kind === "review" ? "review" : "comment",
+                id: c.id,
+                body: toggleTaskInMarkdown(c.body, index),
+              })
+            }
+          />
+          {childThreads.length > 0 && (
+            <div className="ml-4 flex flex-col gap-3 border-l-2 border-[var(--color-border)] pl-3">
+              {childThreads.map((t) => (
+                <ReviewThreadCard
+                  key={t.id}
+                  thread={t}
+                  repoId={repoId}
+                  number={number}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ),
+    });
+  }
+  for (const t of orphanThreads) {
+    items.push({
+      at: at(t.comments[0]?.created_at ?? ""),
+      key: `t${t.id}`,
+      node: (
+        <ReviewThreadCard thread={t} repoId={repoId} number={number} />
+      ),
+    });
+  }
+  items.sort((a, b) => a.at - b.at);
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -432,27 +488,13 @@ function Conversation({
         </div>
       </div>
 
-      {thread.comments.map((c) => (
-        <CommentCard
-          key={c.id}
-          comment={c}
-          prUrl={prUrl}
-          onToggleTask={(index) =>
-            update.mutate({
-              number,
-              target: c.kind === "review" ? "review" : "comment",
-              id: c.id,
-              body: toggleTaskInMarkdown(c.body, index),
-            })
-          }
-        />
+      {items.map((i) => (
+        <div key={i.key}>{i.node}</div>
       ))}
 
-      <ReviewThreads repoId={repoId} number={number} />
-
-      {thread.comments.length === 0 && (
+      {items.length === 0 && (
         <p className="py-2 text-center text-xs text-[var(--color-muted-foreground)]">
-          No top-level comments yet.
+          No comments yet.
         </p>
       )}
     </div>
@@ -602,6 +644,94 @@ export function ReviewPopover({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+const MERGE_METHODS: { method: MergeMethod; label: string }[] = [
+  { method: "merge", label: "Create a merge commit" },
+  { method: "squash", label: "Squash and merge" },
+  { method: "rebase", label: "Rebase and merge" },
+];
+
+function MergeBar({
+  repoId,
+  number,
+  state,
+}: {
+  repoId: number;
+  number: number;
+  state: string;
+}) {
+  const merge = useMergePr(repoId);
+  const [open, setOpen] = useState(false);
+  const [method, setMethod] = useState<MergeMethod>("merge");
+
+  if (state === "merged") {
+    return (
+      <div className="shrink-0 border-t px-3 py-2 text-sm font-medium text-[#8957e5]">
+        This pull request has been merged.
+      </div>
+    );
+  }
+  if (state === "closed") {
+    return (
+      <div className="shrink-0 border-t px-3 py-2 text-sm text-[var(--color-muted-foreground)]">
+        This pull request is closed.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button size="sm">
+            <GitMerge /> Merge pull request
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 space-y-3 p-3">
+          <div className="text-sm font-semibold">Merge pull request</div>
+          <div className="space-y-1.5">
+            {MERGE_METHODS.map((m) => (
+              <label
+                key={m.method}
+                className="flex cursor-pointer items-center gap-2 text-sm"
+              >
+                <input
+                  type="radio"
+                  name="merge-method"
+                  checked={method === m.method}
+                  onChange={() => setMethod(m.method)}
+                />
+                {m.label}
+              </label>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            className="w-full"
+            disabled={merge.isPending}
+            onClick={() =>
+              merge.mutate(
+                { number, method },
+                {
+                  onSuccess: () => {
+                    setOpen(false);
+                    toast.success("Pull request merged");
+                  },
+                },
+              )
+            }
+          >
+            {merge.isPending && <Loader2 className="animate-spin" />}
+            Confirm merge
+          </Button>
+        </PopoverContent>
+      </Popover>
+      <span className="text-xs text-[var(--color-muted-foreground)]">
+        Merges into the base branch on GitHub.
+      </span>
+    </div>
   );
 }
 
@@ -786,6 +916,13 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                   </div>
                 )}
               </div>
+              {thread.data && (
+                <MergeBar
+                  repoId={repoId}
+                  number={selected}
+                  state={thread.data.state}
+                />
+              )}
             </>
           )}
         </Panel>

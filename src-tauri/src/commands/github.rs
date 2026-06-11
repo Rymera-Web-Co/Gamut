@@ -855,6 +855,8 @@ pub struct ReviewThread {
     pub path: Option<String>,
     pub line: Option<u64>,
     pub diff_hunk: Option<String>,
+    // The review this thread was submitted with, so it can be grouped under it.
+    pub review_id: Option<u64>,
     pub comments: Vec<ThreadComment>,
 }
 
@@ -868,7 +870,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         nodes{
           id isResolved isOutdated path line originalLine
           comments(first:100){
-            nodes{ databaseId body createdAt url diffHunk author{ login avatarUrl } }
+            nodes{ databaseId body createdAt url diffHunk pullRequestReview{ databaseId } author{ login avatarUrl } }
           }
         }
       }
@@ -923,7 +925,14 @@ struct GqlComment {
     url: Option<String>,
     #[serde(rename = "diffHunk")]
     diff_hunk: Option<String>,
+    #[serde(rename = "pullRequestReview")]
+    pull_request_review: Option<GqlReviewRef>,
     author: Option<GqlAuthor>,
+}
+#[derive(Deserialize)]
+struct GqlReviewRef {
+    #[serde(rename = "databaseId")]
+    database_id: Option<u64>,
 }
 #[derive(Deserialize)]
 struct GqlAuthor {
@@ -986,7 +995,11 @@ pub async fn github_review_threads(
     Ok(nodes
         .into_iter()
         .map(|t| {
-            let diff_hunk = t.comments.nodes.first().and_then(|c| c.diff_hunk.clone());
+            let first = t.comments.nodes.first();
+            let diff_hunk = first.and_then(|c| c.diff_hunk.clone());
+            let review_id = first
+                .and_then(|c| c.pull_request_review.as_ref())
+                .and_then(|p| p.database_id);
             ReviewThread {
                 id: t.id,
                 is_resolved: t.is_resolved,
@@ -994,6 +1007,7 @@ pub async fn github_review_threads(
                 path: t.path,
                 line: t.line.or(t.original_line),
                 diff_hunk,
+                review_id,
                 comments: t
                     .comments
                     .nodes
@@ -1073,6 +1087,30 @@ pub async fn github_resolve_thread(
         "updating the thread",
     )
     .await?;
+    Ok(())
+}
+
+/// Merge a pull request. `method` is "merge" | "squash" | "rebase".
+#[tauri::command]
+pub async fn github_merge_pr(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    method: String,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let client = http()?;
+    let resp = client
+        .put(format!("{API}/repos/{owner}/{repo}/pulls/{number}/merge"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&serde_json::json!({ "merge_method": method }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("merging the pull request", resp).await);
+    }
     Ok(())
 }
 

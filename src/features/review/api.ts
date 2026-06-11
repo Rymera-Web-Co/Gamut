@@ -8,6 +8,7 @@ import {
   ipc,
   type BodyTarget,
   type DraftComment,
+  type MergeMethod,
   type PrThread,
   type ReviewEvent,
   type ReviewSource,
@@ -85,6 +86,18 @@ export function usePrThread(repoId: number | null, number: number | null) {
     queryKey: ["github-pr-thread", repoId, number],
     queryFn: () => ipc.githubPrThread(repoId!, number!),
     enabled: repoId != null && number != null,
+  });
+}
+
+export function useMergePr(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ number, method }: { number: number; method: MergeMethod }) =>
+      ipc.githubMergePr(repoId, number, method),
+    onSuccess: (_d, { number }) => {
+      qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+      qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+    },
   });
 }
 
