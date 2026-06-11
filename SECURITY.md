@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Gamut, please report it **privately** so it
 can be addressed before public disclosure.
 
-Use GitHub's [private vulnerability reporting](https://github.com/junixdev/gamut/security/advisories/new)
+Use GitHub's [private vulnerability reporting](https://github.com/Rymera-Web-Co/Gamut/security/advisories/new)
 to open a report.
 
 Please include:

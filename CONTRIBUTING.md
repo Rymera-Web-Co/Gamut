@@ -17,8 +17,8 @@ toolchain installed.
 ## Getting started
 
 ```bash
-git clone https://github.com/junixdev/gamut.git
-cd gamut
+git clone https://github.com/Rymera-Web-Co/Gamut.git
+cd Gamut
 pnpm install
 pnpm tauri dev      # launches the desktop app with hot reload
 ```
@@ -79,7 +79,7 @@ command in `src-tauri/src/commands/` and a typed wrapper on the frontend.
 
 ## Reporting bugs & requesting features
 
-Use the [issue templates](https://github.com/junixdev/gamut/issues/new/choose). For
+Use the [issue templates](https://github.com/Rymera-Web-Co/Gamut/issues/new/choose). For
 bugs, include your OS, how you installed/built Gamut, and clear reproduction steps.
 
 ## Security
