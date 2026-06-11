@@ -38,6 +38,119 @@ export function useReviewFileDiff(
   });
 }
 
+// ---- Working tree: staging / commit / stash ----
+
+export function useWorktreeStatus(repoId: number | null) {
+  return useQuery({
+    queryKey: ["worktree-status", repoId],
+    queryFn: () => ipc.worktreeStatus(repoId!),
+    enabled: repoId != null,
+  });
+}
+
+export function useWorktreeFileDiff(
+  repoId: number | null,
+  path: string | null,
+  staged: boolean,
+  oldPath?: string | null,
+) {
+  return useQuery({
+    queryKey: ["worktree-file-diff", repoId, path, staged],
+    queryFn: () =>
+      ipc.worktreeFileDiff(repoId!, path!, staged, oldPath ?? undefined),
+    enabled: repoId != null && path != null,
+  });
+}
+
+export function useStashList(repoId: number | null) {
+  return useQuery({
+    queryKey: ["stash-list", repoId],
+    queryFn: () => ipc.gitStashList(repoId!),
+    enabled: repoId != null,
+  });
+}
+
+/** Refresh everything a staging/commit/stash action can affect. */
+function useInvalidateWorktree(repoId: number) {
+  const qc = useQueryClient();
+  return () => {
+    for (const key of [
+      "worktree-status",
+      "worktree-file-diff",
+      "review-files",
+      "stash-list",
+      "log",
+      "branches",
+      "sync-status",
+    ]) {
+      qc.invalidateQueries({ queryKey: [key, repoId] });
+    }
+    qc.invalidateQueries({ queryKey: ["repo-statuses"] });
+  };
+}
+
+export function useStage(repoId: number) {
+  const invalidate = useInvalidateWorktree(repoId);
+  return useMutation({
+    mutationFn: (paths: string[]) => ipc.gitStage(repoId, paths),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUnstage(repoId: number) {
+  const invalidate = useInvalidateWorktree(repoId);
+  return useMutation({
+    mutationFn: (paths: string[]) => ipc.gitUnstage(repoId, paths),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDiscard(repoId: number) {
+  const invalidate = useInvalidateWorktree(repoId);
+  return useMutation({
+    mutationFn: (paths: string[]) => ipc.gitDiscard(repoId, paths),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCommit(repoId: number) {
+  const invalidate = useInvalidateWorktree(repoId);
+  return useMutation({
+    mutationFn: (message: string) => ipc.gitCommit(repoId, message),
+    onSuccess: invalidate,
+  });
+}
+
+export function useStashPush(repoId: number) {
+  const invalidate = useInvalidateWorktree(repoId);
+  return useMutation({
+    mutationFn: ({
+      message,
+      includeUntracked,
+    }: {
+      message: string | null;
+      includeUntracked: boolean;
+    }) => ipc.gitStashPush(repoId, message, includeUntracked),
+    onSuccess: invalidate,
+  });
+}
+
+export function useStashAction(
+  repoId: number,
+  action: "pop" | "apply" | "drop",
+) {
+  const invalidate = useInvalidateWorktree(repoId);
+  const fn = {
+    pop: ipc.gitStashPop,
+    apply: ipc.gitStashApply,
+    drop: ipc.gitStashDrop,
+  }[action];
+  return useMutation({
+    mutationFn: (index: number) => fn(repoId, index),
+    onSuccess: invalidate,
+  });
+}
+
 // ---- GitHub ----
 
 export function useGithubAuth() {

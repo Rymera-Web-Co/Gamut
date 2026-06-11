@@ -16,6 +16,9 @@ export function useGitWatch() {
       "git-tags",
       "log",
       "review-files",
+      "worktree-status",
+      "worktree-file-diff",
+      "stash-list",
       "sync-status",
     ];
     const unlisten = listen("repos-changed", () => {

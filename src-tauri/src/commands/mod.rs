@@ -5,3 +5,4 @@ pub mod review;
 pub mod sync;
 pub mod system;
 pub mod tags;
+pub mod worktree;

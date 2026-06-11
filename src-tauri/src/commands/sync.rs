@@ -10,7 +10,7 @@ use crate::state::AppState;
 /// Run a git CLI command in `dir`, returning stdout (or stderr on failure).
 /// Network operations go through the CLI so they reuse the user's existing
 /// credentials (ssh agent, credential helpers).
-async fn run_git(dir: &str, args: &[&str]) -> AppResult<String> {
+pub(crate) async fn run_git(dir: &str, args: &[&str]) -> AppResult<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(dir)

@@ -9,6 +9,7 @@ import { useUiStore, type ReviewMode } from "@/store/ui";
 import { useGithubAuth, useGithubPrs, useReviewFiles } from "./api";
 import { ReviewPopover } from "./GitHubReview";
 import { LocalReview } from "./LocalReview";
+import { WorkingTree } from "./WorkingTree";
 
 const MODES: { mode: ReviewMode; label: string }[] = [
   { mode: "working", label: "Working tree" },
@@ -107,16 +108,20 @@ export function ReviewView() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <LocalReview
-          key={`${repoId}-${mode}`}
-          repoId={repoId}
-          source={mode}
-          pr={
-            mode === "branch" && matchingPr
-              ? { number: matchingPr.number, headSha: matchingPr.head_sha }
-              : undefined
-          }
-        />
+        {mode === "working" ? (
+          <WorkingTree key={`${repoId}-working`} repoId={repoId} />
+        ) : (
+          <LocalReview
+            key={`${repoId}-${mode}`}
+            repoId={repoId}
+            source={mode}
+            pr={
+              matchingPr
+                ? { number: matchingPr.number, headSha: matchingPr.head_sha }
+                : undefined
+            }
+          />
+        )}
       </div>
     </div>
   );

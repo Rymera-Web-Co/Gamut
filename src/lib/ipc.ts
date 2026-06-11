@@ -125,6 +125,17 @@ export interface BlameHunk {
   timestamp: number;
 }
 
+/** The working tree split into staged (HEAD → index) and unstaged (index → wd). */
+export interface WorktreeStatus {
+  staged: FileChange[];
+  unstaged: FileChange[];
+}
+
+export interface StashEntry {
+  index: number;
+  message: string;
+}
+
 export type ReviewSource = "working" | "branch";
 
 export interface ReviewDiff {
@@ -328,6 +339,35 @@ export const ipc = {
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),
+
+  // working tree (staging / commit / stash)
+  worktreeStatus: (repoId: number) =>
+    invoke<WorktreeStatus>("git_worktree_status", { repoId }),
+  worktreeFileDiff: (
+    repoId: number,
+    path: string,
+    staged: boolean,
+    oldPath?: string,
+  ) =>
+    invoke<FileDiff>("worktree_file_diff", { repoId, path, staged, oldPath }),
+  gitStage: (repoId: number, paths: string[]) =>
+    invoke<void>("git_stage", { repoId, paths }),
+  gitUnstage: (repoId: number, paths: string[]) =>
+    invoke<void>("git_unstage", { repoId, paths }),
+  gitDiscard: (repoId: number, paths: string[]) =>
+    invoke<void>("git_discard", { repoId, paths }),
+  gitCommit: (repoId: number, message: string) =>
+    invoke<string>("git_commit", { repoId, message }),
+  gitStashList: (repoId: number) =>
+    invoke<StashEntry[]>("git_stash_list", { repoId }),
+  gitStashPush: (repoId: number, message: string | null, includeUntracked: boolean) =>
+    invoke<string>("git_stash_push", { repoId, message, includeUntracked }),
+  gitStashPop: (repoId: number, index: number) =>
+    invoke<string>("git_stash_pop", { repoId, index }),
+  gitStashApply: (repoId: number, index: number) =>
+    invoke<string>("git_stash_apply", { repoId, index }),
+  gitStashDrop: (repoId: number, index: number) =>
+    invoke<string>("git_stash_drop", { repoId, index }),
 
   // tags
   listTags: () => invoke<Tag[]>("list_tags"),
