@@ -109,13 +109,18 @@ pub fn register_repo(state: State<AppState>, path: String) -> AppResult<Repo> {
     let id: i64 = conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
         r.get(0)
     })?;
-    load_repo(&conn, id)
+    let repo = load_repo(&conn, id)?;
+    drop(conn); // release the DB lock before resync re-reads it
+    crate::watch::resync(&state);
+    Ok(repo)
 }
 
 #[tauri::command]
 pub fn remove_repo(state: State<AppState>, id: i64) -> AppResult<()> {
     let conn = lock(&state)?;
     conn.execute("DELETE FROM repos WHERE id = ?1", [id])?;
+    drop(conn); // release the DB lock before resync re-reads it
+    crate::watch::resync(&state);
     Ok(())
 }
 

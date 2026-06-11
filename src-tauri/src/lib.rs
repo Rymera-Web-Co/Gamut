@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod git;
 mod state;
+mod watch;
 
 use std::sync::Mutex;
 
@@ -26,7 +27,18 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(conn),
                 gh_token: Mutex::new(None),
+                watcher: Mutex::new(None),
             });
+
+            // Watch registered repos' .git so external changes reflect live.
+            match watch::RepoWatcher::new(app.handle().clone()) {
+                Ok(w) => {
+                    let state = app.state::<AppState>();
+                    *state.watcher.lock().unwrap() = Some(w);
+                    watch::resync(&state);
+                }
+                Err(e) => eprintln!("repo watcher init failed: {e}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

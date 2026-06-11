@@ -9,6 +9,7 @@ import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
 import { ipc } from "@/lib/ipc";
+import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
 
@@ -39,6 +40,7 @@ function StatusBar() {
 export default function App() {
   const view = useUiStore((s) => s.view);
   useKeyboardShortcuts();
+  useGitWatch();
 
   return (
     <div className="flex h-full w-full flex-col">
