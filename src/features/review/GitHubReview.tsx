@@ -351,12 +351,14 @@ function ReviewThreadCard({
                   variant="outline"
                   size="sm"
                   disabled={resolve.isPending}
-                  onClick={() =>
-                    resolve.mutate({
-                      threadId: thread.id,
-                      resolved: !thread.is_resolved,
-                    })
-                  }
+                  onClick={() => {
+                    const next = !thread.is_resolved;
+                    resolve.mutate(
+                      { threadId: thread.id, resolved: next },
+                      // Collapse once resolved, expand again on unresolve.
+                      { onSuccess: () => setOpen(!next) },
+                    );
+                  }}
                 >
                   {resolve.isPending && <Loader2 className="animate-spin" />}
                   {thread.is_resolved ? "Unresolve" : "Resolve conversation"}
