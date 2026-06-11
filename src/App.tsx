@@ -39,6 +39,7 @@ function StatusBar() {
 
 export default function App() {
   const view = useUiStore((s) => s.view);
+  const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   useKeyboardShortcuts();
   useGitWatch();
 
@@ -51,11 +52,20 @@ export default function App() {
           autoSaveId="gamut.layout.main"
           className="min-w-0 flex-1"
         >
-          <Panel defaultSize={20} minSize={12} maxSize={40} className="min-w-0">
-            <RepoSidebar />
-          </Panel>
-          <ResizeHandle />
-          <Panel className="min-w-0">
+          {!repoSidebarHidden && (
+            <Panel
+              id="repos"
+              order={1}
+              defaultSize={20}
+              minSize={12}
+              maxSize={40}
+              className="min-w-0"
+            >
+              <RepoSidebar />
+            </Panel>
+          )}
+          {!repoSidebarHidden && <ResizeHandle />}
+          <Panel id="main" order={2} className="min-w-0">
             <main className="flex h-full min-w-0 flex-col">
               <TopTabs />
               <div className="min-h-0 flex-1 overflow-hidden">

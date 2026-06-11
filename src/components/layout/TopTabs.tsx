@@ -1,6 +1,20 @@
-import { GitBranch, GitCompare, GitPullRequestArrow, Moon, Sun } from "lucide-react";
+import { useState } from "react";
+import {
+  GitBranch,
+  GitCompare,
+  GitPullRequestArrow,
+  Moon,
+  PanelLeft,
+  PanelLeftClose,
+  Sun,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  type ContextMenuPosition,
+} from "@/components/ui/context-menu";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
@@ -14,11 +28,20 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 export function TopTabs() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+  const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
+  const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
+  const [menu, setMenu] = useState<ContextMenuPosition | null>(null);
 
   return (
-    <div className="flex h-10 shrink-0 items-stretch border-b">
+    <div
+      className="flex h-10 shrink-0 items-stretch border-b"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       {TABS.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
@@ -35,7 +58,20 @@ export function TopTabs() {
         </button>
       ))}
 
-      <div className="ml-auto flex items-center pr-2">
+      <div className="ml-auto flex items-center gap-1 pr-2">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          title={
+            repoSidebarHidden
+              ? "Show repositories (⌘B)"
+              : "Hide repositories (⌘B)"
+          }
+          onClick={toggleRepoSidebar}
+        >
+          {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
+        </Button>
         <Button
           size="icon"
           variant="ghost"
@@ -46,6 +82,21 @@ export function TopTabs() {
           {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
       </div>
+
+      <ContextMenu at={menu} onClose={() => setMenu(null)}>
+        <ContextMenuItem
+          onClick={() => {
+            toggleRepoSidebar();
+            setMenu(null);
+          }}
+        >
+          {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
+          {repoSidebarHidden ? "Show repositories" : "Hide repositories"}
+          <span className="ml-auto pl-4 text-xs text-[var(--color-muted-foreground)]">
+            ⌘B
+          </span>
+        </ContextMenuItem>
+      </ContextMenu>
     </div>
   );
 }

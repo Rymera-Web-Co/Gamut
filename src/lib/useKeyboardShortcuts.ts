@@ -5,10 +5,12 @@ import { useUiStore } from "@/store/ui";
 
 /**
  * Global shortcuts:
- *   ⌘/Ctrl+1 → History   ⌘/Ctrl+2 → Review   ⌘/Ctrl+J → toggle theme
+ *   ⌘/Ctrl+1 → History   ⌘/Ctrl+2 → Review   ⌘/Ctrl+3 → Pull Requests
+ *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
+  const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTheme = useTheme((s) => s.toggle);
 
   useEffect(() => {
@@ -27,6 +29,10 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           setView("pulls");
           break;
+        case "b":
+          e.preventDefault();
+          toggleRepoSidebar();
+          break;
         case "j":
           e.preventDefault();
           toggleTheme();
@@ -35,5 +41,5 @@ export function useKeyboardShortcuts() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setView, toggleTheme]);
+  }, [setView, toggleRepoSidebar, toggleTheme]);
 }
