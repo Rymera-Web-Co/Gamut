@@ -10,6 +10,7 @@ import {
   CircleSlash,
   Eye,
   EyeOff,
+  ExternalLink,
   FileDiff,
   GitBranch,
   GitCommitHorizontal,
@@ -1436,15 +1437,27 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                   <RefreshCw className={cn(thread.isFetching && "animate-spin")} />
                 </Button>
                 {selectedPr && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    title="Copy link to this pull request"
-                    onClick={() => copy(selectedPr.url, "PR link copied")}
-                  >
-                    <LinkIcon />
-                    Copy link
-                  </Button>
+                  <div className="flex items-center">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-r-none"
+                      title="Copy link to this pull request"
+                      onClick={() => copy(selectedPr.url, "PR link copied")}
+                    >
+                      <LinkIcon />
+                      Copy link
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-l-none border-l-0 px-2"
+                      title="Open this pull request in your browser"
+                      onClick={() => openUrl(selectedPr.url).catch(() => {})}
+                    >
+                      <ExternalLink />
+                    </Button>
+                  </div>
                 )}
                 {selectedPr && (
                   <Button
