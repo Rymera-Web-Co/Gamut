@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="g" x1="512" y1="900" x2="512" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1597AE"/>
+      <stop offset="0.5" stop-color="#2BA591"/>
+      <stop offset="1" stop-color="#B2CE12"/>
+    </linearGradient>
+    <linearGradient id="gt" x1="250" y1="0" x2="774" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1AA0B4"/>
+      <stop offset="1" stop-color="#B2CE12"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102338"/>
+      <stop offset="1" stop-color="#0A1421"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <!-- tree mark, scaled into the upper region to make room for the wordmark -->
+  <g transform="translate(112.6,-34) scale(0.74)">
+    <g fill="none" stroke="url(#g)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M512 860 L512 150"/>
+      <path d="M512 430 C 470 360 400 332 330 300"/>
+      <path d="M330 300 C 312 252 304 220 300 182"/>
+      <path d="M390 322 C 300 304 244 296 212 252"/>
+      <path d="M512 430 C 554 360 624 332 694 300"/>
+      <path d="M694 300 C 712 252 720 220 724 182"/>
+      <path d="M634 322 C 724 304 780 296 812 252"/>
+      <path d="M512 690 C 446 744 384 772 322 872"/>
+      <path d="M512 690 C 578 744 640 772 702 872"/>
+    </g>
+    <g fill="url(#g)">
+      <circle cx="512" cy="540" r="34"/>
+      <circle cx="512" cy="150" r="22"/>
+      <circle cx="300" cy="182" r="20"/>
+      <circle cx="724" cy="182" r="20"/>
+      <circle cx="212" cy="252" r="16"/>
+      <circle cx="812" cy="252" r="16"/>
+      <circle cx="512" cy="430" r="16"/>
+      <circle cx="512" cy="860" r="22"/>
+      <circle cx="322" cy="872" r="20"/>
+      <circle cx="702" cy="872" r="20"/>
+      <circle cx="512" cy="690" r="16"/>
+    </g>
+  </g>
+  <!-- wordmark -->
+  <text x="512" y="892" text-anchor="middle"
+        font-family="Avenir Next, Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-weight="700" font-size="138" letter-spacing="14" fill="url(#gt)">GAMUT</text>
+</svg>

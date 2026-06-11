@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="g" x1="512" y1="820" x2="512" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1597AE"/>
+      <stop offset="0.55" stop-color="#2BA591"/>
+      <stop offset="1" stop-color="#B2CE12"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102338"/>
+      <stop offset="1" stop-color="#0A1421"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <!-- git-DAG that branches downward from a single root -->
+  <g fill="none" stroke="url(#g)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <!-- spine -->
+    <path d="M512 210 L512 814"/>
+    <!-- first fork -->
+    <path d="M512 380 Q 512 470 396 470 L 322 470"/>
+    <path d="M512 380 Q 512 470 628 470 L 702 470"/>
+    <!-- branch drops -->
+    <path d="M322 470 L322 660"/>
+    <path d="M702 470 L702 660"/>
+    <!-- second fork off the branches -->
+    <path d="M322 600 Q 322 660 230 660"/>
+    <path d="M702 600 Q 702 660 794 660"/>
+  </g>
+  <g fill="url(#g)">
+    <!-- origin (root) -->
+    <circle cx="512" cy="210" r="40"/>
+    <!-- mid spine commit -->
+    <circle cx="512" cy="512" r="22"/>
+    <!-- spine tip -->
+    <circle cx="512" cy="814" r="26"/>
+    <!-- branch heads -->
+    <circle cx="322" cy="470" r="26"/>
+    <circle cx="702" cy="470" r="26"/>
+    <!-- branch tips -->
+    <circle cx="322" cy="660" r="24"/>
+    <circle cx="702" cy="660" r="24"/>
+    <!-- leaf commits -->
+    <circle cx="230" cy="660" r="20"/>
+    <circle cx="794" cy="660" r="20"/>
+  </g>
+</svg>
