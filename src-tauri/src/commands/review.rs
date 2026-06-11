@@ -34,10 +34,7 @@ fn resolve_base(repo: &Repository, base: Option<&str>) -> AppResult<(Oid, String
 
     for name in ["trunk", "main", "master"] {
         for cand in [name.to_string(), format!("origin/{name}")] {
-            if let Ok(commit) = repo
-                .revparse_single(&cand)
-                .and_then(|o| o.peel_to_commit())
-            {
+            if let Ok(commit) = repo.revparse_single(&cand).and_then(|o| o.peel_to_commit()) {
                 return Ok((commit.id(), cand));
             }
         }
@@ -71,8 +68,7 @@ pub async fn review_files(
         ReviewSource::Working => {
             let mut opts = DiffOptions::new();
             opts.include_untracked(true).recurse_untracked_dirs(true);
-            let diff =
-                repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?;
+            let diff = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?;
             Ok(ReviewDiff {
                 base_label: "HEAD".to_string(),
                 head_label: "Working tree".to_string(),

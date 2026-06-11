@@ -4,7 +4,9 @@ use git2::{DiffOptions, Index, Repository};
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::history::{blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff};
+use crate::commands::history::{
+    blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
+};
 use crate::commands::sync::run_git;
 use crate::error::AppResult;
 use crate::state::AppState;
@@ -22,7 +24,10 @@ fn index_blob_text(repo: &Repository, index: &Index, path: &str) -> Option<(Stri
     let entry = index.get_path(Path::new(path), 0)?;
     let blob = repo.find_blob(entry.id).ok()?;
     let is_binary = blob.is_binary();
-    Some((String::from_utf8_lossy(blob.content()).into_owned(), is_binary))
+    Some((
+        String::from_utf8_lossy(blob.content()).into_owned(),
+        is_binary,
+    ))
 }
 
 /// Staged + unstaged changes for the working tree. Untracked files show up as
@@ -167,9 +172,7 @@ pub async fn git_discard(
         for p in paths {
             let status = repo.status_file(Path::new(&p)).ok();
             let is_untracked = status
-                .map(|s| {
-                    s.contains(git2::Status::WT_NEW) && !s.contains(git2::Status::INDEX_NEW)
-                })
+                .map(|s| s.contains(git2::Status::WT_NEW) && !s.contains(git2::Status::INDEX_NEW))
                 .unwrap_or(false);
             if is_untracked {
                 untracked.push(p);

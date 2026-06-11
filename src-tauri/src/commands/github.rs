@@ -64,9 +64,7 @@ fn delete_token_store(state: &AppState) -> AppResult<()> {
 }
 
 fn http() -> AppResult<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .user_agent("gamut")
-        .build()?)
+    Ok(reqwest::Client::builder().user_agent("gamut").build()?)
 }
 
 fn get_setting(state: &AppState, key: &str) -> AppResult<Option<String>> {
@@ -309,7 +307,8 @@ pub async fn github_device_poll(
     interval: u64,
     expires_in: u64,
 ) -> AppResult<AuthStatus> {
-    let cid = client_id().ok_or_else(|| AppError::Other("GitHub OAuth is not configured".into()))?;
+    let cid =
+        client_id().ok_or_else(|| AppError::Other("GitHub OAuth is not configured".into()))?;
     let client = http()?;
     let mut wait = interval.max(5);
     let mut elapsed = 0u64;
@@ -318,7 +317,9 @@ pub async fn github_device_poll(
         sleep(Duration::from_secs(wait)).await;
         elapsed += wait;
         if elapsed > expires_in {
-            return Err(AppError::Other("authorization timed out — please try again".into()));
+            return Err(AppError::Other(
+                "authorization timed out — please try again".into(),
+            ));
         }
 
         let resp = client
@@ -349,7 +350,9 @@ pub async fn github_device_poll(
                 continue;
             }
             Some("expired_token") => {
-                return Err(AppError::Other("the code expired — please try again".into()))
+                return Err(AppError::Other(
+                    "the code expired — please try again".into(),
+                ))
             }
             Some("access_denied") => {
                 return Err(AppError::Other("authorization was denied".into()))
@@ -461,10 +464,7 @@ struct GhReview {
 
 /// Validate and store a GitHub personal-access token in the OS keychain.
 #[tauri::command]
-pub async fn github_set_token(
-    state: State<'_, AppState>,
-    token: String,
-) -> AppResult<AuthStatus> {
+pub async fn github_set_token(state: State<'_, AppState>, token: String) -> AppResult<AuthStatus> {
     let client = http()?;
     let login = validate_token(&client, &token).await?;
     store_credentials(&state, &token, &login)?;
@@ -744,10 +744,7 @@ pub async fn github_pr_timeline(
     for page in 1..=5u32 {
         let resp = client
             .get(&url)
-            .query(&[
-                ("per_page", "100".to_string()),
-                ("page", page.to_string()),
-            ])
+            .query(&[("per_page", "100".to_string()), ("page", page.to_string())])
             .bearer_auth(&token)
             .header("Accept", "application/vnd.github+json")
             .send()
@@ -785,13 +782,18 @@ pub async fn github_pr_timeline(
                 ev.short_sha = Some(sha.chars().take(7).collect());
                 ev.sha = Some(sha);
                 // Show only the commit subject (first line).
-                ev.message = str_at(e, "/message")
-                    .map(|m| m.lines().next().unwrap_or("").to_string());
+                ev.message =
+                    str_at(e, "/message").map(|m| m.lines().next().unwrap_or("").to_string());
                 ev.actor = str_at(e, "/author/name");
                 out.push(ev);
             }
-            "ready_for_review" | "convert_to_draft" | "closed" | "reopened"
-            | "merged" | "head_ref_force_pushed" | "head_ref_deleted" => {
+            "ready_for_review"
+            | "convert_to_draft"
+            | "closed"
+            | "reopened"
+            | "merged"
+            | "head_ref_force_pushed"
+            | "head_ref_deleted" => {
                 let mut ev = TimelineEvent::new(kind, at(e));
                 ev.actor = actor(e);
                 ev.actor_avatar = actor_avatar(e);
@@ -945,7 +947,9 @@ pub async fn github_pr_comment(
     }
 
     let resp = client
-        .post(format!("{API}/repos/{owner}/{repo}/pulls/{number}/comments"))
+        .post(format!(
+            "{API}/repos/{owner}/{repo}/pulls/{number}/comments"
+        ))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
         .json(&payload)
@@ -1152,7 +1156,9 @@ async fn graphql<T: serde::de::DeserializeOwned>(
     }
     let parsed: GqlResp<T> = resp.json().await?;
     if let Some(errors) = parsed.errors {
-        return Err(AppError::Other(format!("GitHub GraphQL ({context}): {errors}")));
+        return Err(AppError::Other(format!(
+            "GitHub GraphQL ({context}): {errors}"
+        )));
     }
     parsed
         .data
@@ -1435,7 +1441,9 @@ pub async fn github_pr_details(
     let mut reviewers: Vec<Reviewer> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for req in pr.review_requests.nodes {
-        let Some(rv) = req.requested_reviewer else { continue };
+        let Some(rv) = req.requested_reviewer else {
+            continue;
+        };
         let login = match (rv.login, rv.name) {
             (Some(l), _) => l,
             (None, Some(n)) => n,
@@ -1443,10 +1451,17 @@ pub async fn github_pr_details(
         };
         let prior = reviewed.get(&login);
         let re_requested = prior.is_some();
-        let state = prior.map(|p| p.0.clone()).unwrap_or_else(|| "PENDING".into());
+        let state = prior
+            .map(|p| p.0.clone())
+            .unwrap_or_else(|| "PENDING".into());
         let avatar = rv.avatar_url.or_else(|| prior.and_then(|p| p.1.clone()));
         seen.insert(login.clone());
-        reviewers.push(Reviewer { login, avatar, state, re_requested });
+        reviewers.push(Reviewer {
+            login,
+            avatar,
+            state,
+            re_requested,
+        });
     }
     for login in review_order {
         if seen.contains(&login) {

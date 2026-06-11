@@ -108,9 +108,8 @@ fn ref_labels(repo: &Repository) -> HashMap<Oid, Vec<RefLabel>> {
             };
 
             let (label, kind) = if let Some(b) = name.strip_prefix("refs/heads/") {
-                let is_head = head_target == Some(oid) && repo.head().ok().and_then(|h| {
-                    h.shorthand().map(|s| s == b)
-                }) == Some(true);
+                let is_head = head_target == Some(oid)
+                    && repo.head().ok().and_then(|h| h.shorthand().map(|s| s == b)) == Some(true);
                 (b.to_string(), if is_head { "head" } else { "branch" })
             } else if let Some(b) = name.strip_prefix("refs/remotes/") {
                 (b.to_string(), "remote")
@@ -232,7 +231,10 @@ pub async fn log(
             author_email: author.email().unwrap_or("").to_string(),
             timestamp: commit.time().seconds(),
             subject: commit.summary().unwrap_or("").to_string(),
-            refs: labels.get(&oid).map(|v| clone_labels(v)).unwrap_or_default(),
+            refs: labels
+                .get(&oid)
+                .map(|v| clone_labels(v))
+                .unwrap_or_default(),
             node_col: 0,
             color: 0,
             paths: Vec::new(),
@@ -376,7 +378,10 @@ pub async fn file_history(
                 author_email: author.email().unwrap_or("").to_string(),
                 timestamp: commit.time().seconds(),
                 subject: commit.summary().unwrap_or("").to_string(),
-                refs: labels.get(&oid).map(|v| clone_labels(v)).unwrap_or_default(),
+                refs: labels
+                    .get(&oid)
+                    .map(|v| clone_labels(v))
+                    .unwrap_or_default(),
                 node_col: 0,
                 color: 0,
                 paths: Vec::new(),

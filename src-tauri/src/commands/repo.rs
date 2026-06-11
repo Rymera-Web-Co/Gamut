@@ -68,7 +68,11 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
         last_opened,
         created_at,
         tag_ids: ids_for(conn, "SELECT tag_id FROM repo_tags WHERE repo_id = ?1", id)?,
-        group_ids: ids_for(conn, "SELECT group_id FROM repo_groups WHERE repo_id = ?1", id)?,
+        group_ids: ids_for(
+            conn,
+            "SELECT group_id FROM repo_groups WHERE repo_id = ?1",
+            id,
+        )?,
     })
 }
 
@@ -76,8 +80,7 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
 pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
     let conn = lock(&state)?;
     let ids: Vec<i64> = {
-        let mut stmt =
-            conn.prepare("SELECT id FROM repos ORDER BY sort, name COLLATE NOCASE")?;
+        let mut stmt = conn.prepare("SELECT id FROM repos ORDER BY sort, name COLLATE NOCASE")?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -216,10 +219,7 @@ pub struct BranchInfo {
 
 /// List local and remote branches; the current branch is flagged `is_head`.
 #[tauri::command]
-pub async fn list_branches(
-    state: State<'_, AppState>,
-    repo_id: i64,
-) -> AppResult<Vec<BranchInfo>> {
+pub async fn list_branches(state: State<'_, AppState>, repo_id: i64) -> AppResult<Vec<BranchInfo>> {
     let repo = open_repo(&state, repo_id)?;
     let mut out = Vec::new();
     for kind in [BranchType::Local, BranchType::Remote] {
@@ -239,10 +239,7 @@ pub async fn list_branches(
 
 /// List tag names in the repository.
 #[tauri::command]
-pub async fn list_git_tags(
-    state: State<'_, AppState>,
-    repo_id: i64,
-) -> AppResult<Vec<String>> {
+pub async fn list_git_tags(state: State<'_, AppState>, repo_id: i64) -> AppResult<Vec<String>> {
     let repo = open_repo(&state, repo_id)?;
     let mut names: Vec<String> = repo
         .tag_names(None)?

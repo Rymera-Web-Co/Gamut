@@ -2,6 +2,8 @@
 
 A local git desktop app for **reviewing changes** and **browsing history**, built with Tauri 2 (Rust) + React + TypeScript.
 
+> **Gamut** comes from the Cebuano word *gamut*, meaning "root of a tree" — a nod to digging through a repository's roots and history.
+
 ## What it does
 
 - **Code review** — self-review the current branch's local changes (working tree + branch-vs-base diff) and review GitHub pull requests, with inline diffs and comments.
@@ -39,8 +41,19 @@ pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/relea
 
 ## Keyboard shortcuts
 
-- `⌘/Ctrl+1` History · `⌘/Ctrl+2` Review · `⌘/Ctrl+J` toggle theme
+- `⌘/Ctrl+1` History · `⌘/Ctrl+2` Review · `⌘/Ctrl+3` Pull Requests
+- `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme
 
 ## Status
 
 Milestones: **M0 scaffold** ✅ · **M1 repos** ✅ · **M2 history** ✅ · **M3 review** ✅ · **M4 polish** ✅
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up
+your environment, the project layout, and coding conventions. For a deeper tour of how
+the app is wired together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). © 2026 Rymera.

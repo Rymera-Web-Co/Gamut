@@ -46,7 +46,10 @@ pub fn layout(commits: &[CommitNode]) -> (Vec<GraphRow>, usize) {
         let node_col = match lanes.iter().position(|l| *l == Some(oid)) {
             Some(i) => i,
             None => {
-                let i = lanes.iter().position(|l| l.is_none()).unwrap_or(lanes.len());
+                let i = lanes
+                    .iter()
+                    .position(|l| l.is_none())
+                    .unwrap_or(lanes.len());
                 if i == lanes.len() {
                     lanes.push(None);
                 }
@@ -107,7 +110,10 @@ pub fn layout(commits: &[CommitNode]) -> (Vec<GraphRow>, usize) {
             let k = match lanes.iter().position(|l| *l == Some(*pk)) {
                 Some(k) => k,
                 None => {
-                    let k = lanes.iter().position(|l| l.is_none()).unwrap_or(lanes.len());
+                    let k = lanes
+                        .iter()
+                        .position(|l| l.is_none())
+                        .unwrap_or(lanes.len());
                     if k == lanes.len() {
                         lanes.push(None);
                     }
@@ -157,9 +163,18 @@ mod tests {
     fn linear_history_stays_in_one_lane() {
         // C -> B -> A (newest first)
         let commits = vec![
-            CommitNode { oid: oid(3), parents: vec![oid(2)] },
-            CommitNode { oid: oid(2), parents: vec![oid(1)] },
-            CommitNode { oid: oid(1), parents: vec![] },
+            CommitNode {
+                oid: oid(3),
+                parents: vec![oid(2)],
+            },
+            CommitNode {
+                oid: oid(2),
+                parents: vec![oid(1)],
+            },
+            CommitNode {
+                oid: oid(1),
+                parents: vec![],
+            },
         ];
         let (rows, width) = layout(&commits);
         assert_eq!(width, 1);
@@ -170,10 +185,22 @@ mod tests {
     fn merge_commit_spawns_a_second_lane() {
         // M has two parents (P1, P2); P2 lives in a second lane.
         let commits = vec![
-            CommitNode { oid: oid(10), parents: vec![oid(9), oid(8)] },
-            CommitNode { oid: oid(9), parents: vec![oid(7)] },
-            CommitNode { oid: oid(8), parents: vec![oid(7)] },
-            CommitNode { oid: oid(7), parents: vec![] },
+            CommitNode {
+                oid: oid(10),
+                parents: vec![oid(9), oid(8)],
+            },
+            CommitNode {
+                oid: oid(9),
+                parents: vec![oid(7)],
+            },
+            CommitNode {
+                oid: oid(8),
+                parents: vec![oid(7)],
+            },
+            CommitNode {
+                oid: oid(7),
+                parents: vec![],
+            },
         ];
         let (rows, width) = layout(&commits);
         assert!(width >= 2, "a merge should use at least two lanes");

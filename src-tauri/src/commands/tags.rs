@@ -141,7 +141,10 @@ pub fn update_group(
 ) -> AppResult<()> {
     let conn = lock(&state)?;
     if let Some(name) = name {
-        conn.execute("UPDATE groups SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])?;
+        conn.execute(
+            "UPDATE groups SET name = ?1 WHERE id = ?2",
+            rusqlite::params![name, id],
+        )?;
     }
     // icon is always set (Some(key) to set, None to clear).
     conn.execute(
@@ -177,7 +180,9 @@ pub fn delete_group(state: State<AppState>, id: i64) -> AppResult<()> {
         .map(|v| v != 0)
         .unwrap_or(false);
     if is_default {
-        return Err(AppError::Other("the default group cannot be deleted".into()));
+        return Err(AppError::Other(
+            "the default group cannot be deleted".into(),
+        ));
     }
     conn.execute("DELETE FROM groups WHERE id = ?1", [id])?;
     Ok(())
