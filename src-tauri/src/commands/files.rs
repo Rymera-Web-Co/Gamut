@@ -25,12 +25,16 @@ pub struct DirEntry {
 }
 
 /// A working-tree file's contents for the editor. `text` is `None` when the
-/// file is binary or too large — the UI shows a placeholder in those cases.
+/// file is binary, too large, or not valid UTF-8 — the UI shows a placeholder
+/// in those cases rather than risk corrupting the file on save.
 #[derive(Serialize)]
 pub struct FileContent {
     pub text: Option<String>,
     pub is_binary: bool,
     pub too_large: bool,
+    /// Set when the file isn't valid UTF-8 (e.g. Latin-1, UTF-16). Editing
+    /// would lossily re-encode it, so it's presented read-only.
+    pub encoding_error: bool,
 }
 
 /// Resolve a repo-relative path against the repo root, rejecting traversal
@@ -159,7 +163,7 @@ pub fn list_dir(
 
 /// Read a working-tree file for editing. Distinct from the blob reads in
 /// `history`/`worktree` (which come from the index/HEAD) — this is the file as
-/// it sits on disk. Binary or oversized files return `text: None`.
+/// it sits on disk. Binary, oversized, or non-UTF-8 files return `text: None`.
 #[tauri::command]
 pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<FileContent> {
     let root = repo_path(&state, repo_id)?;
@@ -174,6 +178,7 @@ pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppR
             text: None,
             is_binary: false,
             too_large: true,
+            encoding_error: false,
         });
     }
 
@@ -185,14 +190,26 @@ pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppR
             text: None,
             is_binary: true,
             too_large: false,
+            encoding_error: false,
         });
     }
 
-    Ok(FileContent {
-        text: Some(String::from_utf8_lossy(&bytes).into_owned()),
-        is_binary: false,
-        too_large: false,
-    })
+    // Only present a file as editable if it's valid UTF-8. Lossily decoding
+    // (e.g. Latin-1/UTF-16) would silently corrupt it the moment it's saved.
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(FileContent {
+            text: Some(text),
+            is_binary: false,
+            too_large: false,
+            encoding_error: false,
+        }),
+        Err(_) => Ok(FileContent {
+            text: None,
+            is_binary: false,
+            too_large: false,
+            encoding_error: true,
+        }),
+    }
 }
 
 /// Write edited contents back to a working-tree file.

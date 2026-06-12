@@ -127,6 +127,7 @@ export interface FileContent {
   text: string | null;
   is_binary: boolean;
   too_large: boolean;
+  encoding_error: boolean;
 }
 
 export interface BlameHunk {

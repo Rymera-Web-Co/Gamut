@@ -1,12 +1,14 @@
 //! Filesystem watcher over each registered repo's working tree, so changes made
 //! outside the app — a branch switch or commit in a terminal, *and* a file
-//! edited in another editor/IDE — are reflected live. Each repo's working tree
-//! is watched recursively (which also covers its `.git`); a debounced batch
-//! emits a single `repos-changed` event to the frontend. Events are filtered so
-//! `.git` object/log churn doesn't trigger needless refreshes — only working-
-//! tree files and the refs/HEAD/index that reflect repo state count.
+//! edited in another editor/IDE — are reflected live. A non-bare repo's working
+//! tree is watched recursively (which also covers its `.git`); a debounced
+//! batch emits a single `repos-changed` event to the frontend. Events are
+//! filtered so `.git` object/log churn doesn't trigger needless refreshes —
+//! only working-tree files and the refs/HEAD/index that reflect repo state
+//! count. Bare repos have no work tree, so we watch only their `refs/` and
+//! top-level git-state files, never the object store.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -26,9 +28,9 @@ pub const REPOS_CHANGED: &str = "repos-changed";
 
 pub struct RepoWatcher {
     debouncer: Debouncer<RecommendedWatcher>,
-    /// The directories currently watched recursively (each repo's working tree,
-    /// or its git dir for bare repos).
-    watched: HashSet<PathBuf>,
+    /// The directories currently watched, each with its recursion mode (a repo's
+    /// working tree recursively, or a bare repo's git-state paths).
+    watched: HashMap<PathBuf, RecursiveMode>,
 }
 
 /// Whether a changed path warrants a UI refresh. Working-tree files always
@@ -72,19 +74,23 @@ impl RepoWatcher {
         )?;
         Ok(Self {
             debouncer,
-            watched: HashSet::new(),
+            watched: HashMap::new(),
         })
     }
 
-    /// Watch exactly the given set of directories recursively (add new, drop
-    /// removed).
-    pub fn sync(&mut self, desired: HashSet<PathBuf>) {
+    /// Watch exactly the given set of directories (add new, drop removed), each
+    /// with its requested recursion mode.
+    pub fn sync(&mut self, desired: HashMap<PathBuf, RecursiveMode>) {
         let watcher = self.debouncer.watcher();
-        for dir in desired.difference(&self.watched) {
-            let _ = watcher.watch(dir, RecursiveMode::Recursive);
+        for (dir, mode) in &desired {
+            if !self.watched.contains_key(dir) {
+                let _ = watcher.watch(dir, *mode);
+            }
         }
-        for dir in self.watched.difference(&desired) {
-            let _ = watcher.unwatch(dir);
+        for dir in self.watched.keys() {
+            if !desired.contains_key(dir) {
+                let _ = watcher.unwatch(dir);
+            }
         }
         self.watched = desired;
     }
@@ -104,17 +110,21 @@ pub fn resync(state: &AppState) {
         rows
     };
 
-    // Watch each repo's working tree (recursive watch also covers its `.git`).
-    // Bare repos have no work tree — fall back to watching the git dir.
-    let desired: HashSet<PathBuf> = paths
-        .iter()
-        .filter_map(|p| git::open(Path::new(p)).ok())
-        .map(|repo| {
-            repo.workdir()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| repo.path().to_path_buf())
-        })
-        .collect();
+    let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
+    for repo in paths.iter().filter_map(|p| git::open(Path::new(p)).ok()) {
+        if let Some(work) = repo.workdir() {
+            // Non-bare: watch the whole working tree (also covers its `.git`).
+            desired.insert(work.to_path_buf(), RecursiveMode::Recursive);
+        } else {
+            // Bare: no work tree. Watch `refs/` (recursive) for branch/tag
+            // changes and the git dir non-recursively for HEAD/packed-refs/
+            // index — but NOT the object store, which would flood on every
+            // loose object written during a fetch.
+            let git_dir = repo.path().to_path_buf();
+            desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
+            desired.insert(git_dir, RecursiveMode::NonRecursive);
+        }
+    }
 
     if let Ok(mut guard) = state.watcher.lock() {
         if let Some(w) = guard.as_mut() {

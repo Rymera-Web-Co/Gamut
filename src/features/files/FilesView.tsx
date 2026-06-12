@@ -271,6 +271,10 @@ export function FilesView() {
             <div className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--color-muted-foreground)]">
               Binary file — not shown.
             </div>
+          ) : content.data?.encoding_error ? (
+            <div className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--color-muted-foreground)]">
+              Not a UTF-8 text file — not shown to avoid corrupting it on save.
+            </div>
           ) : (
             <Editor
               height="100%"
