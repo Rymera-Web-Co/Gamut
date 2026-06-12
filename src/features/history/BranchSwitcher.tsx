@@ -5,6 +5,7 @@ import {
   ChevronDown,
   GitBranch,
   Loader2,
+  Sparkles,
   Tag as TagIcon,
 } from "lucide-react";
 
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
+import { CleanupStaleDialog } from "./CleanupStaleDialog";
 
 export function BranchSwitcher({
   repoId,
@@ -25,6 +27,7 @@ export function BranchSwitcher({
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [filter, setFilter] = useState("");
 
   // Branch/tag lists are only needed when the dropdown is open, so they load
@@ -64,6 +67,7 @@ export function BranchSwitcher({
   const empty = branchList.length === 0 && tagList.length === 0;
 
   return (
+    <>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
@@ -147,7 +151,25 @@ export function BranchSwitcher({
             <Loader2 className="size-3.5 animate-spin" /> Checking out…
           </div>
         )}
+        <button
+          onClick={() => {
+            setOpen(false);
+            setFilter("");
+            setCleanupOpen(true);
+          }}
+          className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+        >
+          <Sparkles className="size-3.5 shrink-0" />
+          Clean up stale branches…
+        </button>
       </PopoverContent>
     </Popover>
+
+    <CleanupStaleDialog
+      repoId={repoId}
+      open={cleanupOpen}
+      onOpenChange={setCleanupOpen}
+    />
+    </>
   );
 }
