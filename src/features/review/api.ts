@@ -82,6 +82,10 @@ function useInvalidateWorktree(repoId: number) {
       "log",
       "branches",
       "sync-status",
+      // Files tab: discarding/committing can change file contents on disk and
+      // the set of files present, so refresh its listings and open file too.
+      "file",
+      "dir",
     ]) {
       qc.invalidateQueries({ queryKey: [key, repoId] });
     }

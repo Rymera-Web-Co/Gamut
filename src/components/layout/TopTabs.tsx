@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  FolderTree,
   GitBranch,
   GitCompare,
   GitPullRequestArrow,
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
 
 const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
+  { view: "files", label: "Files", icon: FolderTree },
   { view: "history", label: "History", icon: GitBranch },
   { view: "review", label: "Review", icon: GitCompare },
   { view: "pulls", label: "Pull Requests", icon: GitPullRequestArrow },

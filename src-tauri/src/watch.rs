@@ -1,10 +1,14 @@
-//! Filesystem watcher over each registered repo's `.git`, so changes made
-//! outside the app (branch switch in a terminal, commits, fetches) are
-//! reflected live. Relevant paths (`HEAD`, `refs/`, `packed-refs`) are watched;
-//! a debounced batch emits a single `repos-changed` event to the frontend.
+//! Filesystem watcher over each registered repo's working tree, so changes made
+//! outside the app — a branch switch or commit in a terminal, *and* a file
+//! edited in another editor/IDE — are reflected live. Each repo's working tree
+//! is watched recursively (which also covers its `.git`); a debounced batch
+//! emits a single `repos-changed` event to the frontend. Events are filtered so
+//! `.git` object/log churn doesn't trigger needless refreshes — only working-
+//! tree files and the refs/HEAD/index that reflect repo state count.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use notify_debouncer_mini::{
@@ -22,18 +26,33 @@ pub const REPOS_CHANGED: &str = "repos-changed";
 
 pub struct RepoWatcher {
     debouncer: Debouncer<RecommendedWatcher>,
-    /// The git directories currently watched (e.g. `…/repo/.git`).
+    /// The directories currently watched recursively (each repo's working tree,
+    /// or its git dir for bare repos).
     watched: HashSet<PathBuf>,
 }
 
-/// The paths inside a git dir worth watching for branch/ref changes.
-/// The git dir itself (non-recursive) catches `HEAD`/`packed-refs` being swapped
-/// on a branch switch; `refs/` (recursive) catches commits and fetched refs.
-fn watch_targets(git_dir: &Path) -> [(PathBuf, RecursiveMode); 2] {
-    [
-        (git_dir.to_path_buf(), RecursiveMode::NonRecursive),
-        (git_dir.join("refs"), RecursiveMode::Recursive),
-    ]
+/// Whether a changed path warrants a UI refresh. Working-tree files always
+/// count. Inside `.git`, only the entries that reflect repo state do — `HEAD`,
+/// `refs/`, `packed-refs`, `index` — so object/log churn (which fires
+/// constantly during fetches and gc) doesn't spam the frontend.
+fn is_interesting(path: &Path) -> bool {
+    let comps: Vec<Component> = path.components().collect();
+    let git_at = comps.iter().position(|c| match c {
+        Component::Normal(name) => *name == OsStr::new(".git"),
+        _ => false,
+    });
+    let Some(i) = git_at else {
+        return true; // no `.git` component -> a working-tree file
+    };
+    match comps.get(i + 1) {
+        // `.git` itself (HEAD/packed-refs swapped on a branch switch).
+        None => true,
+        Some(Component::Normal(name)) => matches!(
+            name.to_str(),
+            Some("HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "packed-refs" | "index" | "refs")
+        ),
+        Some(_) => false,
+    }
 }
 
 impl RepoWatcher {
@@ -41,9 +60,13 @@ impl RepoWatcher {
         let debouncer = new_debouncer(
             Duration::from_millis(400),
             move |res: DebounceEventResult| {
-                // Any debounced batch of changes -> tell the UI to refetch.
-                if res.is_ok() {
-                    let _ = app.emit(REPOS_CHANGED, ());
+                // Emit only when a debounced batch touched something worth a
+                // refresh (a working-tree file or a git-state ref), not on
+                // internal `.git` object/log noise.
+                if let Ok(events) = res {
+                    if events.iter().any(|e| is_interesting(&e.path)) {
+                        let _ = app.emit(REPOS_CHANGED, ());
+                    }
                 }
             },
         )?;
@@ -53,18 +76,15 @@ impl RepoWatcher {
         })
     }
 
-    /// Watch exactly the given set of git directories (add new, drop removed).
+    /// Watch exactly the given set of directories recursively (add new, drop
+    /// removed).
     pub fn sync(&mut self, desired: HashSet<PathBuf>) {
         let watcher = self.debouncer.watcher();
-        for git_dir in desired.difference(&self.watched) {
-            for (target, mode) in watch_targets(git_dir) {
-                let _ = watcher.watch(&target, mode);
-            }
+        for dir in desired.difference(&self.watched) {
+            let _ = watcher.watch(dir, RecursiveMode::Recursive);
         }
-        for git_dir in self.watched.difference(&desired) {
-            for (target, _) in watch_targets(git_dir) {
-                let _ = watcher.unwatch(&target);
-            }
+        for dir in self.watched.difference(&desired) {
+            let _ = watcher.unwatch(dir);
         }
         self.watched = desired;
     }
@@ -84,10 +104,16 @@ pub fn resync(state: &AppState) {
         rows
     };
 
+    // Watch each repo's working tree (recursive watch also covers its `.git`).
+    // Bare repos have no work tree — fall back to watching the git dir.
     let desired: HashSet<PathBuf> = paths
         .iter()
         .filter_map(|p| git::open(Path::new(p)).ok())
-        .map(|repo| repo.path().to_path_buf())
+        .map(|repo| {
+            repo.workdir()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| repo.path().to_path_buf())
+        })
         .collect();
 
     if let Ok(mut guard) = state.watcher.lock() {

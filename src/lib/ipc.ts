@@ -116,6 +116,19 @@ export interface FileDiff {
   is_binary: boolean;
 }
 
+export interface DirEntry {
+  name: string;
+  kind: "dir" | "file";
+  is_symlink: boolean;
+  is_ignored: boolean;
+}
+
+export interface FileContent {
+  text: string | null;
+  is_binary: boolean;
+  too_large: boolean;
+}
+
 export interface BlameHunk {
   start_line: number;
   line_count: number;
@@ -400,6 +413,16 @@ export const ipc = {
     invoke<CommitRow[]>("file_history", { repoId, path, limit }),
   blame: (repoId: number, sha: string, path: string) =>
     invoke<BlameHunk[]>("blame", { repoId, sha, path }),
+
+  // working-tree files (browse / edit)
+  listDir: (repoId: number, relPath: string) =>
+    invoke<DirEntry[]>("list_dir", { repoId, relPath }),
+  readFile: (repoId: number, relPath: string) =>
+    invoke<FileContent>("read_file", { repoId, relPath }),
+  writeFile: (repoId: number, relPath: string, contents: string) =>
+    invoke<void>("write_file", { repoId, relPath, contents }),
+  revealInFileManager: (repoId: number, relPath?: string | null) =>
+    invoke<void>("reveal_in_file_manager", { repoId, relPath: relPath ?? null }),
 
   // local review
   reviewFiles: (repoId: number, source: ReviewSource, base?: string) =>

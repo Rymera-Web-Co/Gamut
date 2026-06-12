@@ -5,6 +5,7 @@ import { RepoSidebar } from "@/features/repos/RepoSidebar";
 import { TopTabs } from "@/components/layout/TopTabs";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/toaster";
+import { FilesView } from "@/features/files/FilesView";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
@@ -69,6 +70,7 @@ export default function App() {
             <main className="flex h-full min-w-0 flex-col">
               <TopTabs />
               <div className="min-h-0 flex-1 overflow-hidden">
+                {view === "files" && <FilesView />}
                 {view === "history" && <HistoryView />}
                 {view === "review" && <ReviewView />}
                 {view === "pulls" && <PullsView />}
