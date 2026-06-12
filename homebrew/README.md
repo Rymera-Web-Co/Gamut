@@ -4,15 +4,22 @@ Gamut is distributed for macOS through a **Homebrew Cask** in our own tap,
 [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut).
 
 ```bash
-brew install --cask rymera-web-co/gamut/gamut
+brew install --cask --no-quarantine rymera-web-co/gamut/gamut
 brew upgrade --cask gamut
 ```
 
-This is **Option A** from [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3): it
-removes the Gatekeeper "damaged app" friction at zero cost and with no Apple
-Developer Program. Homebrew downloads the `.dmg` without setting the
-`com.apple.quarantine` flag, so the unsigned (ad-hoc-signed) build launches
-normally — no Settings dance, no `xattr` command.
+This is **Option A** from [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3):
+ship via Homebrew at zero cost and with no Apple Developer Program.
+
+> **The `--no-quarantine` flag is required.** Contrary to the original premise in
+> #3, modern Homebrew Cask **does** apply `com.apple.quarantine` by default, so an
+> unsigned build still trips Gatekeeper's "damaged app" block without the flag.
+> A cask **cannot** opt out of quarantine itself — Homebrew dropped
+> `quarantine false` for casks years ago — so it has to be a user-side flag.
+> `--no-quarantine` tells Homebrew to skip the flag and the ad-hoc-signed app
+> then launches normally. The only way to make a plain `brew install --cask`
+> (and double-click) work flag-free is Developer ID signing + notarization
+> (Option B).
 
 ## Why our own tap (not `homebrew/cask`)
 
@@ -99,9 +106,12 @@ for our own tap these are informational.)
 
 ## Notes
 
-- **Ad-hoc signing is required on Apple Silicon** — Tauri does this automatically
-  during `tauri build`, so it's already covered. The cask intentionally does not
-  set `quarantine`.
-- **Auto-update (#1)** and a double-click-friendly notarized `.dmg` still require
-  Developer ID signing + notarization (Option B in #3). The cask path does not
-  block that — it's an independent, lower-cost first step.
+- **Ad-hoc signing on Apple Silicon** — Tauri ad-hoc signs the binary during
+  `tauri build`, which satisfies the kernel's "must be signed to run" rule. Note
+  the bundle is only `linker-signed` (`Sealed Resources=none`), so Gatekeeper
+  still rejects it *when quarantined* — hence `--no-quarantine`. Proper bundle
+  signing comes with Option B.
+- **Auto-update (#1)** and a flag-free `brew install --cask` / double-click `.dmg`
+  both require Developer ID signing + notarization (Option B in #3). The cask
+  path doesn't block that — it's an independent, lower-cost first step, but it
+  does not by itself remove the `--no-quarantine` requirement.

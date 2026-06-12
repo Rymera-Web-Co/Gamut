@@ -16,28 +16,34 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask rymera-web-co/gamut/gamut
+brew install --cask --no-quarantine rymera-web-co/gamut/gamut
 ```
 
-This installs the latest release with **no Gatekeeper prompts**: Homebrew downloads the app without the quarantine flag, so the (unsigned) build launches normally. Upgrade later with `brew upgrade --cask gamut`.
-
-The command above also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut); afterwards you can refer to the cask as just `gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
-
-### Manual `.dmg`
-
-Prefer not to use Homebrew? Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
-
-The app is not yet signed with an Apple Developer ID or notarized, so a browser download sets the quarantine flag and on first launch macOS may report:
+The `--no-quarantine` flag is required because Gamut isn't yet signed with an Apple Developer ID or notarized. Homebrew quarantines downloaded apps by default, and on an unsigned build that makes Gatekeeper report:
 
 > "Gamut" is damaged and can't be opened. You should move it to the Trash.
 
-This is Gatekeeper reacting to that quarantine flag on an unsigned app — the app is not actually damaged. To run it, remove the flag once after installing:
+`--no-quarantine` tells Homebrew to skip the quarantine flag, so the app launches normally. (The flag can't be baked into the cask — Homebrew only honours it as a user-side option.) Upgrade later with `brew upgrade --cask gamut`.
+
+The command above also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut); afterwards you can refer to the cask as just `gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
+
+If you already installed without the flag, clear quarantine on the installed app once:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Gamut.app
 ```
 
-Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required. The Homebrew install avoids this entirely.)
+### Manual `.dmg`
+
+Prefer not to use Homebrew? Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+
+Because the build is unsigned, a browser download sets the quarantine flag and on first launch macOS gives the same "damaged" message. Remove the flag once after installing:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Gamut.app
+```
+
+Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required.)
 
 ## Stack
 
