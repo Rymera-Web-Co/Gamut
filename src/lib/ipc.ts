@@ -44,6 +44,21 @@ export interface RepoStatus {
   behind: number;
 }
 
+/** A local branch whose upstream tracking ref is gone (merged & deleted on remote). */
+export interface StaleBranch {
+  name: string;
+  upstream: string | null;
+  last_commit_sha: string | null;
+  last_commit_subject: string | null;
+  last_commit_time: number | null;
+}
+
+export interface DeleteResult {
+  name: string;
+  deleted: boolean;
+  error: string | null;
+}
+
 export interface Tag {
   id: number;
   name: string;
@@ -346,6 +361,10 @@ export const ipc = {
     invoke<string[]>("list_git_tags", { repoId }),
   checkoutBranch: (repoId: number, name: string) =>
     invoke<void>("checkout_branch", { repoId, name }),
+  listStaleBranches: (repoId: number) =>
+    invoke<StaleBranch[]>("list_stale_branches", { repoId }),
+  deleteBranches: (repoId: number, names: string[]) =>
+    invoke<DeleteResult[]>("delete_branches", { repoId, names }),
 
   // sync (network ops via git CLI)
   gitSyncStatus: (repoId: number) =>
