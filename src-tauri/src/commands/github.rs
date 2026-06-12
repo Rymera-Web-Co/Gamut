@@ -195,21 +195,77 @@ async fn validate_token(client: &reqwest::Client, token: &str) -> AppResult<Stri
 
 // ---- Remote parsing ----
 
-fn parse_owner_repo(url: &str) -> Option<(String, String)> {
+/// Whether `host` is GitHub, including custom SSH host aliases that resolve to
+/// `github.com` (a common multi-identity setup, e.g. `rymera.github.com` or
+/// `github.com-work` in `~/.ssh/config`). Non-GitHub hosts like `gitlab.com`
+/// are rejected.
+fn is_github_host(host: &str) -> bool {
+    host == "github.com" || host.ends_with(".github.com") || host.starts_with("github.com-")
+}
+
+/// Split a git remote URL into its `(host, owner, repo)` components, supporting
+/// the generic forms rather than keying on a literal `github.com` host:
+///   https://host/owner/repo[.git]
+///   ssh://[user@]host[:port]/owner/repo[.git]
+///   git://host/owner/repo[.git]
+///   [user@]host:owner/repo[.git]            (scp-like)
+fn split_remote(url: &str) -> Option<(String, String, String)> {
     let u = url.trim();
-    let rest = u
-        .strip_prefix("https://github.com/")
-        .or_else(|| u.strip_prefix("git@github.com:"))
-        .or_else(|| u.strip_prefix("ssh://git@github.com/"))?;
-    let rest = rest.strip_suffix(".git").unwrap_or(rest);
-    let mut parts = rest.splitn(2, '/');
+
+    let (host, path) = if let Some(rest) = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .or_else(|| u.strip_prefix("ssh://"))
+        .or_else(|| u.strip_prefix("git://"))
+    {
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority.rsplit('@').next()?; // drop optional user@
+        let host = host.split(':').next()?; // drop optional :port
+        (host, path)
+    } else {
+        // scp-like: [user@]host:owner/repo
+        let (authority, path) = u.split_once(':')?;
+        let host = authority.rsplit('@').next()?; // drop optional user@
+        (host, path)
+    };
+
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = path.trim_matches('/').splitn(2, '/');
     let owner = parts.next()?.to_string();
     let repo = parts.next()?.trim_end_matches('/').to_string();
-    if owner.is_empty() || repo.is_empty() {
+    if host.is_empty() || owner.is_empty() || repo.is_empty() {
         None
     } else {
-        Some((owner, repo))
+        Some((host.to_string(), owner, repo))
     }
+}
+
+fn parse_owner_repo(url: &str) -> Option<(String, String)> {
+    let (host, owner, repo) = split_remote(url)?;
+    is_github_host(&host).then_some((owner, repo))
+}
+
+/// Resolve an SSH host alias to its effective `HostName` via `ssh -G`, returning
+/// true if that resolves to a GitHub host. This handles arbitrarily-named
+/// aliases (e.g. `Host mygit` → `HostName github.com`) that the `is_github_host`
+/// name heuristic can't recognise. Returns false if `ssh` is unavailable or the
+/// alias doesn't resolve to GitHub — callers fall back to the name heuristic.
+fn ssh_alias_resolves_to_github(host: &str) -> bool {
+    let Ok(output) = std::process::Command::new("ssh")
+        .arg("-G")
+        .arg(host)
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        let mut it = line.split_whitespace();
+        // `ssh -G` lowercases keys, e.g. `hostname github.com`.
+        matches!(it.next(), Some("hostname")) && it.next().is_some_and(is_github_host)
+    })
 }
 
 /// Resolve the GitHub owner/repo from the repo's `origin` remote.
@@ -221,8 +277,19 @@ fn owner_repo(state: &State<AppState>, repo_id: i64) -> AppResult<(String, Strin
     let url = remote
         .url()
         .ok_or_else(|| AppError::Other("origin remote has no URL".into()))?;
-    parse_owner_repo(url)
-        .ok_or_else(|| AppError::Other(format!("origin is not a GitHub remote: {url}")))
+    let not_github = || AppError::Other(format!("origin is not a GitHub remote: {url}"));
+    // Fast path: host is obviously GitHub by name.
+    if let Some(owner_repo) = parse_owner_repo(url) {
+        return Ok(owner_repo);
+    }
+    // Otherwise the host may be a custom SSH alias (e.g. `Host mygit` →
+    // `HostName github.com`); resolve it via `ssh -G` before giving up.
+    let (host, owner, repo) = split_remote(url).ok_or_else(not_github)?;
+    if ssh_alias_resolves_to_github(&host) {
+        Ok((owner, repo))
+    } else {
+        Err(not_github())
+    }
 }
 
 // ---- Serializable types ----
@@ -1539,7 +1606,30 @@ pub async fn github_merge_pr(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_owner_repo;
+    use super::{parse_owner_repo, split_remote};
+
+    #[test]
+    fn splits_arbitrary_host_aliases() {
+        // split_remote is host-agnostic: it extracts owner/repo even for an
+        // arbitrarily-named SSH alias. owner_repo then resolves the alias via
+        // `ssh -G` to decide whether it's really GitHub.
+        assert_eq!(
+            split_remote("mygit:rymera/gamut.git"),
+            Some((
+                "mygit".to_string(),
+                "rymera".to_string(),
+                "gamut".to_string()
+            ))
+        );
+        assert_eq!(
+            split_remote("ssh://git@mygit/rymera/gamut.git"),
+            Some((
+                "mygit".to_string(),
+                "rymera".to_string(),
+                "gamut".to_string()
+            ))
+        );
+    }
 
     #[test]
     fn parses_github_remotes() {
@@ -1548,6 +1638,12 @@ mod tests {
             "https://github.com/rymera/gamut",
             "git@github.com:rymera/gamut.git",
             "ssh://git@github.com/rymera/gamut.git",
+            // Custom SSH host aliases that resolve to github.com (issue #4).
+            "rymera.github.com:rymera/gamut.git",
+            "rymera.github.com:rymera/gamut",
+            "git@rymera.github.com:rymera/gamut.git",
+            "ssh://git@rymera.github.com/rymera/gamut.git",
+            "github.com-work:rymera/gamut.git",
         ];
         for c in cases {
             assert_eq!(
@@ -1556,6 +1652,9 @@ mod tests {
                 "failed for {c}"
             );
         }
+        // Genuinely non-GitHub remotes must still be rejected.
         assert_eq!(parse_owner_repo("https://gitlab.com/x/y.git"), None);
+        assert_eq!(parse_owner_repo("git@gitlab.com:x/y.git"), None);
+        assert_eq!(parse_owner_repo("rymera.gitlab.com:x/y.git"), None);
     }
 }
