@@ -10,6 +10,22 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 - **History** — browse the commit graph with branch/tag refs, inspect commits, view per-file diffs, file history, and blame.
 - **Repositories** — register local repos, auto-detect repos under a directory, and organise them with groups and tags.
 
+## Install (macOS)
+
+Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+
+The app is not yet signed with an Apple Developer ID or notarized, so on first launch macOS may report:
+
+> "Gamut" is damaged and can't be opened. You should move it to the Trash.
+
+This is Gatekeeper reacting to the download quarantine flag on an unsigned app — the app is not actually damaged. To run it, remove the quarantine flag once after installing:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Gamut.app
+```
+
+Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required.)
+
 ## Stack
 
 - **Backend:** Rust / Tauri 2 — owns all git operations, the GitHub API, persistence (SQLite via `rusqlite`), and secrets (OS keychain). Frontend never touches a token or the filesystem directly.
