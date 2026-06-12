@@ -6,6 +6,7 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 
 ## What it does
 
+- **Files** — browse the repo's full working tree, open any file in an editor with syntax highlighting, and save edits in place (⌘/Ctrl+S). Reveal files in Finder/Explorer or jump straight to their changes.
 - **Code review** — self-review the current branch's local changes (working tree + branch-vs-base diff) and review GitHub pull requests, with inline diffs and comments.
 - **History** — browse the commit graph with branch/tag refs, inspect commits, view per-file diffs, file history, and blame.
 - **Repositories** — register local repos, auto-detect repos under a directory, and organise them with groups and tags.
@@ -57,7 +58,8 @@ pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/relea
 
 ## Keyboard shortcuts
 
-- `⌘/Ctrl+1` History · `⌘/Ctrl+2` Review · `⌘/Ctrl+3` Pull Requests
+- `⌘/Ctrl+1` Files · `⌘/Ctrl+2` History · `⌘/Ctrl+3` Review · `⌘/Ctrl+4` Pull Requests
+- `⌘/Ctrl+S` save the open file (Files tab)
 - `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme
 
 ## Status

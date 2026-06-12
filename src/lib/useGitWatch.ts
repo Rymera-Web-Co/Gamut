@@ -5,8 +5,9 @@ import { queryClient } from "@/lib/queryClient";
 
 /**
  * Listen for the backend's `repos-changed` event (emitted when a watched repo's
- * `.git` changes outside the app — e.g. a branch switch or commit in a terminal)
- * and refetch the git-derived queries so the UI stays live.
+ * working tree changes outside the app — a branch switch or commit in a
+ * terminal, or a file edited in another editor/IDE) and refetch the
+ * git-derived queries so the UI stays live.
  */
 export function useGitWatch() {
   useEffect(() => {
@@ -20,6 +21,9 @@ export function useGitWatch() {
       "worktree-file-diff",
       "stash-list",
       "sync-status",
+      // Files tab: directory listings and open-file contents.
+      "dir",
+      "file",
     ];
     const unlisten = listen("repos-changed", () => {
       for (const key of keys) {

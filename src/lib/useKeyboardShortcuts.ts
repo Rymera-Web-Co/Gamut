@@ -5,7 +5,8 @@ import { useUiStore } from "@/store/ui";
 
 /**
  * Global shortcuts:
- *   ⌘/Ctrl+1 → History   ⌘/Ctrl+2 → Review   ⌘/Ctrl+3 → Pull Requests
+ *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
+ *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
  */
 export function useKeyboardShortcuts() {
@@ -19,13 +20,17 @@ export function useKeyboardShortcuts() {
       switch (e.key) {
         case "1":
           e.preventDefault();
-          setView("history");
+          setView("files");
           break;
         case "2":
           e.preventDefault();
-          setView("review");
+          setView("history");
           break;
         case "3":
+          e.preventDefault();
+          setView("review");
+          break;
+        case "4":
           e.preventDefault();
           setView("pulls");
           break;

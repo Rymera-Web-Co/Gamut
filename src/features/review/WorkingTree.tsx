@@ -7,6 +7,7 @@ import {
   FileCheck2,
   Loader2,
   Minus,
+  Pencil,
   Plus,
   Trash2,
   Undo2,
@@ -24,6 +25,7 @@ import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
+import { useUiStore } from "@/store/ui";
 import {
   useCommit,
   useDiscard,
@@ -438,6 +440,8 @@ export function WorkingTree({ repoId }: { repoId: number }) {
   const stage = useStage(repoId);
   const unstage = useUnstage(repoId);
   const discard = useDiscard(repoId);
+  const setView = useUiStore((s) => s.setView);
+  const setFilesPath = useUiStore((s) => s.setFilesPath);
   const [selected, setSelected] = useState<Selected | null>(null);
 
   useEffect(() => {
@@ -570,34 +574,61 @@ export function WorkingTree({ repoId }: { repoId: number }) {
       <ResizeHandle />
 
       <Panel className="min-w-0">
-        {!selected ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
-            Select a file to see its diff.
+        <div className="flex h-full flex-col">
+          {selected && (
+            <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
+                {selected.file.path}
+              </span>
+              {/* Deleted files no longer exist on disk, so there's nothing to edit. */}
+              {selected.file.status !== "deleted" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1.5"
+                  title="Edit this file in the Files tab"
+                  onClick={() => {
+                    setFilesPath(selected.file.path);
+                    setView("files");
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                  Edit
+                </Button>
+              )}
+            </div>
+          )}
+          <div className="min-h-0 flex-1">
+            {!selected ? (
+              <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+                Select a file to see its diff.
+              </div>
+            ) : diff.isLoading || !diff.data ? (
+              <div className="flex h-full items-center justify-center">
+                <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
+              </div>
+            ) : diff.data.is_binary ? (
+              <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+                Binary file — diff not shown.
+              </div>
+            ) : (
+              <DiffEditor
+                height="100%"
+                theme={isDarkTheme() ? GITHUB_DARK : "light"}
+                language={languageFor(selected.file.path)}
+                original={diff.data.old_text ?? ""}
+                modified={diff.data.new_text ?? ""}
+                options={{
+                  readOnly: true,
+                  renderSideBySide: true,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 12,
+                }}
+              />
+            )}
           </div>
-        ) : diff.isLoading || !diff.data ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
-          </div>
-        ) : diff.data.is_binary ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
-            Binary file — diff not shown.
-          </div>
-        ) : (
-          <DiffEditor
-            height="100%"
-            theme={isDarkTheme() ? GITHUB_DARK : "light"}
-            language={languageFor(selected.file.path)}
-            original={diff.data.old_text ?? ""}
-            modified={diff.data.new_text ?? ""}
-            options={{
-              readOnly: true,
-              renderSideBySide: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              fontSize: 12,
-            }}
-          />
-        )}
+        </div>
       </Panel>
     </PanelGroup>
   );

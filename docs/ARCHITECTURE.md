@@ -34,7 +34,8 @@ only thing with real privileges.
 | Module | Responsibility |
 | --- | --- |
 | `src/lib.rs` | App setup — opens the SQLite DB, manages `AppState`, registers commands, starts the repo watcher |
-| `src/commands/` | Tauri command handlers, grouped by feature: `repo`, `history`, `review`, `github`, `sync`, `tags`, `worktree`, `system` |
+| `src/commands/` | Tauri command handlers, grouped by feature: `repo`, `history`, `review`, `github`, `sync`, `tags`, `worktree`, `files`, `system` |
+| `src/commands/files.rs` | Working-tree file browser/editor: `list_dir` (lazy, one level, honors `.gitignore` and skips `.git/`), `read_file`, `write_file`, `reveal_in_file_manager`. The one command module that **writes** to the working tree — every path is canonicalized and confirmed to stay inside the repo root, rejecting `..` traversal and symlink escapes |
 | `src/git/` | Git operations via `git2` (libgit2, vendored) plus the commit-graph builder; network fetch shells out to the `git` CLI |
 | `src/db/` | SQLite access and ordered SQL migrations under `db/migrations/` |
 | `src/watch.rs` | Watches each registered repo's `.git` so external branch switches and commits reflect live in the UI |
