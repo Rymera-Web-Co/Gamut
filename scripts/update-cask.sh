@@ -78,6 +78,19 @@ cask "gamut" do
     "~/Library/Saved Application State/com.rymera.gamut.savedState",
     "~/Library/WebKit/com.rymera.gamut",
   ]
+
+  # Gamut is not yet signed/notarized. Homebrew 6 quarantines all cask downloads
+  # with no opt-out flag, so Gatekeeper blocks the first launch. We don't strip
+  # quarantine for the user (that would silently bypass Gatekeeper); instead we
+  # print the one-time fix. A notarized build (issue #3, Option B) removes this.
+  caveats <<~CAVEATS
+    Gamut is not yet signed or notarized, so on first launch macOS Gatekeeper
+    reports: "Gamut is damaged and can't be opened."
+
+    It is not damaged. Clear the quarantine flag once to run it:
+
+      xattr -dr com.apple.quarantine /Applications/Gamut.app
+  CAVEATS
 end
 EOF
 

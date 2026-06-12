@@ -4,22 +4,26 @@ Gamut is distributed for macOS through a **Homebrew Cask** in our own tap,
 [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut).
 
 ```bash
-brew install --cask --no-quarantine rymera-web-co/gamut/gamut
+brew install --cask rymera-web-co/gamut/gamut
+xattr -dr com.apple.quarantine /Applications/Gamut.app   # one-time, see below
 brew upgrade --cask gamut
 ```
 
 This is **Option A** from [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3):
 ship via Homebrew at zero cost and with no Apple Developer Program.
 
-> **The `--no-quarantine` flag is required.** Contrary to the original premise in
-> #3, modern Homebrew Cask **does** apply `com.apple.quarantine` by default, so an
-> unsigned build still trips Gatekeeper's "damaged app" block without the flag.
-> A cask **cannot** opt out of quarantine itself — Homebrew dropped
-> `quarantine false` for casks years ago — so it has to be a user-side flag.
-> `--no-quarantine` tells Homebrew to skip the flag and the ad-hoc-signed app
-> then launches normally. The only way to make a plain `brew install --cask`
-> (and double-click) work flag-free is Developer ID signing + notarization
-> (Option B).
+> **Reality check (the original #3 premise was wrong).** Modern Homebrew Cask
+> applies `com.apple.quarantine` by default, and **Homebrew 6 removed the
+> `--no-quarantine` opt-out entirely** — there is no install flag or env var to
+> disable it anymore. So on an unsigned build, `brew install` is quarantined just
+> like a browser download, and Gatekeeper blocks the first launch. The cask ships
+> a `caveats` stanza that prints the one-time `xattr` fix after install.
+>
+> We deliberately **do not** auto-strip quarantine from a `postflight` hook: that
+> would silently bypass Gatekeeper for every user. The only way to make a plain
+> `brew install --cask` (and double-click) work with no extra step *and* keep
+> Gatekeeper intact is Developer ID signing + notarization (Option B). Until then,
+> Homebrew buys easy install/upgrade/removal — not a frictionless first launch.
 
 ## Why our own tap (not `homebrew/cask`)
 
@@ -109,9 +113,9 @@ for our own tap these are informational.)
 - **Ad-hoc signing on Apple Silicon** — Tauri ad-hoc signs the binary during
   `tauri build`, which satisfies the kernel's "must be signed to run" rule. Note
   the bundle is only `linker-signed` (`Sealed Resources=none`), so Gatekeeper
-  still rejects it *when quarantined* — hence `--no-quarantine`. Proper bundle
-  signing comes with Option B.
-- **Auto-update (#1)** and a flag-free `brew install --cask` / double-click `.dmg`
+  still rejects it *when quarantined* — hence the one-time `xattr` step. Proper
+  bundle signing comes with Option B.
+- **Auto-update (#1)** and a step-free `brew install --cask` / double-click `.dmg`
   both require Developer ID signing + notarization (Option B in #3). The cask
   path doesn't block that — it's an independent, lower-cost first step, but it
-  does not by itself remove the `--no-quarantine` requirement.
+  does not by itself remove the one-time `xattr` requirement.
