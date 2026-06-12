@@ -5,10 +5,17 @@ use tauri::State;
 use crate::commands::history::{open_repo, repo_path};
 use crate::commands::sync::run_git;
 use crate::error::AppResult;
+use crate::git;
 use crate::state::AppState;
 
 /// Local branches we never delete, even if their upstream is gone.
 const PROTECTED: &[&str] = &["main", "master"];
+
+/// A branch we must never report or delete: a protected branch, or the branch
+/// currently checked out.
+fn is_protected(name: &str, current: Option<&str>) -> bool {
+    Some(name) == current || PROTECTED.contains(&name)
+}
 
 #[derive(Serialize)]
 pub struct StaleBranch {
@@ -49,11 +56,7 @@ pub async fn list_stale_branches(
     run_git(&dir.to_string_lossy(), &["fetch", "--all", "--prune"]).await?;
 
     let repo = open_repo(&state, repo_id)?;
-    let current = repo
-        .head()
-        .ok()
-        .filter(|h| h.is_branch())
-        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    let current = git::current_branch(&repo);
 
     let mut out = Vec::new();
     for b in repo.branches(Some(BranchType::Local))? {
@@ -61,7 +64,7 @@ pub async fn list_stale_branches(
         let Some(name) = branch.name()?.map(|s| s.to_string()) else {
             continue;
         };
-        if Some(&name) == current.as_ref() || PROTECTED.contains(&name.as_str()) {
+        if is_protected(&name, current.as_deref()) {
             continue;
         }
         if !upstream_is_gone(&repo, &branch) {
@@ -111,15 +114,11 @@ pub async fn delete_branches(
     names: Vec<String>,
 ) -> AppResult<Vec<DeleteResult>> {
     let repo = open_repo(&state, repo_id)?;
-    let current = repo
-        .head()
-        .ok()
-        .filter(|h| h.is_branch())
-        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    let current = git::current_branch(&repo);
 
     let mut results = Vec::with_capacity(names.len());
     for name in names {
-        if Some(&name) == current.as_ref() || PROTECTED.contains(&name.as_str()) {
+        if is_protected(&name, current.as_deref()) {
             results.push(DeleteResult {
                 name,
                 deleted: false,
@@ -176,7 +175,11 @@ mod tests {
     /// are not.
     #[test]
     fn detects_only_gone_upstreams() {
-        let root = std::env::temp_dir().join("gamut_cleanup_test");
+        // Unique per process so concurrent `cargo test` runs don't collide.
+        let root = std::env::temp_dir().join(format!(
+            "gamut_cleanup_test_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let remote = root.join("remote.git");
         let local = root.join("local");

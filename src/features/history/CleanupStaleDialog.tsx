@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Loader2, Trash2 } from "lucide-react";
 
@@ -32,6 +32,10 @@ export function CleanupStaleDialog({
 }) {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Whether we've applied the default (all-selected) for the current open. A ref
+  // so a refetch after a partial-failure retry doesn't clobber the user's
+  // explicit deselections.
+  const initialized = useRef(false);
 
   // Opening the dialog runs the prune fetch + scan. Always refetch on reopen so
   // the list reflects the current remote state.
@@ -43,10 +47,18 @@ export function CleanupStaleDialog({
     staleTime: 0,
   });
 
-  // Default to everything selected once results arrive.
+  // Default to everything selected, but only once per open — later refetches
+  // (e.g. after a partial deletion failure) must preserve the user's choices.
   useEffect(() => {
-    if (scan.data) setSelected(new Set(scan.data.map((b) => b.name)));
-  }, [scan.data]);
+    if (!open) {
+      initialized.current = false;
+      return;
+    }
+    if (scan.data && !initialized.current) {
+      setSelected(new Set(scan.data.map((b) => b.name)));
+      initialized.current = true;
+    }
+  }, [open, scan.data]);
 
   const del = useMutation({
     mutationFn: (names: string[]) => ipc.deleteBranches(repoId, names),
