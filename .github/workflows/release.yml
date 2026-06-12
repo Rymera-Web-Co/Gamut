@@ -95,3 +95,49 @@ jobs:
           # Linux/Windows layout (target/release/bundle).
           path: src-tauri/target/**/release/bundle/**/*
           if-no-files-found: error
+
+  # Publish the macOS Homebrew cask to the tap repo (Option A in #3). Runs only
+  # on tag pushes, after the build job has attached the .dmg assets to the
+  # release. Regenerates the cask from the published artifacts and pushes it to
+  # Rymera-Web-Co/homebrew-gamut, so `brew install --cask gamut` always points
+  # at the latest release.
+  #
+  # One-time setup (see homebrew/README.md):
+  #   1. Create the public tap repo Rymera-Web-Co/homebrew-gamut.
+  #   2. Add a HOMEBREW_TAP_TOKEN secret — a token with contents:write on the
+  #      tap repo (the default GITHUB_TOKEN can't push to another repo).
+  publish-cask:
+    name: Publish Homebrew Cask
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate cask for ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/update-cask.sh "${{ github.ref_name }}" cask-out/Casks/gamut.rb
+
+      - name: Push cask to tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set — see homebrew/README.md for setup."
+            exit 1
+          fi
+          tap_dir="$(mktemp -d)"
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/Rymera-Web-Co/homebrew-gamut.git" "$tap_dir"
+          mkdir -p "$tap_dir/Casks"
+          cp cask-out/Casks/gamut.rb "$tap_dir/Casks/gamut.rb"
+          cd "$tap_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Cask already up to date for ${{ github.ref_name }}."
+            exit 0
+          fi
+          git add Casks/gamut.rb
+          git commit -m "gamut ${{ github.ref_name }}"
+          git push

@@ -13,19 +13,31 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 
 ## Install (macOS)
 
-Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+### Homebrew (recommended)
 
-The app is not yet signed with an Apple Developer ID or notarized, so on first launch macOS may report:
+```bash
+brew install --cask rymera-web-co/gamut/gamut
+```
+
+This installs the latest release with **no Gatekeeper prompts**: Homebrew downloads the app without the quarantine flag, so the (unsigned) build launches normally. Upgrade later with `brew upgrade --cask gamut`.
+
+The command above also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut); afterwards you can refer to the cask as just `gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
+
+### Manual `.dmg`
+
+Prefer not to use Homebrew? Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+
+The app is not yet signed with an Apple Developer ID or notarized, so a browser download sets the quarantine flag and on first launch macOS may report:
 
 > "Gamut" is damaged and can't be opened. You should move it to the Trash.
 
-This is Gatekeeper reacting to the download quarantine flag on an unsigned app — the app is not actually damaged. To run it, remove the quarantine flag once after installing:
+This is Gatekeeper reacting to that quarantine flag on an unsigned app — the app is not actually damaged. To run it, remove the flag once after installing:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Gamut.app
 ```
 
-Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required.)
+Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required. The Homebrew install avoids this entirely.)
 
 ## Stack
 
