@@ -88,10 +88,13 @@ pub fn set_repo_tags(state: State<AppState>, repo_id: i64, tag_ids: Vec<i64>) ->
 #[tauri::command]
 pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
     let conn = lock(&state)?;
-    // Default group first, then by sort/name.
+    // Ordered purely by the persisted sort (then name as a tie-break), so
+    // drag-and-drop reordering applies to every group including the default
+    // one. The default group ships with sort = -1, so it starts first but can
+    // be moved like any other.
     let mut stmt = conn.prepare(
         "SELECT id, name, parent_id, sort, icon, is_default FROM groups
-         ORDER BY is_default DESC, sort, name COLLATE NOCASE",
+         ORDER BY sort, name COLLATE NOCASE",
     )?;
     let groups = stmt
         .query_map([], |row| {
@@ -154,8 +157,9 @@ pub fn update_group(
     Ok(())
 }
 
-/// Persist a new ordering for groups (drag-and-drop in the rail). The default
-/// group always sorts first regardless, since list_groups orders by is_default.
+/// Persist a new ordering for groups (drag-and-drop in the rail). Every group,
+/// including the default one, can be placed anywhere; list_groups returns rows
+/// in this persisted `sort` order.
 #[tauri::command]
 pub fn reorder_groups(state: State<AppState>, group_ids: Vec<i64>) -> AppResult<()> {
     let mut conn = lock(&state)?;
