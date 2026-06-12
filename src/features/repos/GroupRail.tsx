@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { Plus } from "lucide-react";
 
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
-import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
+import { clearDrag, getDrag, moveAdjacent, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
@@ -21,15 +21,30 @@ function GroupButton({
   active: boolean;
   onSelect: () => void;
   onRepoDrop: (repoId: number) => void;
-  onGroupReorder: (srcId: number, targetId: number) => void;
+  onGroupReorder: (srcId: number, targetId: number, position: "before" | "after") => void;
 }) {
   const Icon = group.icon ? GROUP_ICONS[group.icon] : null;
-  const [dropOver, setDropOver] = useState(false);
+  // `repoOver` = a repo is hovering to be assigned into this group (ring).
+  // `reorderEdge` = a group is hovering to be reordered next to this one; the
+  // edge (the rail is a vertical stack) shows a between-items line instead.
+  const [repoOver, setRepoOver] = useState(false);
+  const [reorderEdge, setReorderEdge] = useState<"top" | "bottom" | null>(null);
+
+  // Which side of this button the cursor is on — before (top) or after (bottom).
+  function edgeFor(e: DragEvent<HTMLButtonElement>): "top" | "bottom" {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientY > rect.top + rect.height / 2 ? "bottom" : "top";
+  }
+
+  function reset() {
+    setRepoOver(false);
+    setReorderEdge(null);
+  }
 
   return (
     <button
       title={group.name}
-      draggable={!group.is_default}
+      draggable
       onDragStart={(e) => {
         setDrag({ kind: "group", id: group.id });
         e.dataTransfer.setData("text/plain", group.name);
@@ -37,37 +52,44 @@ function GroupButton({
       }}
       onDragEnd={() => {
         clearDrag();
-        setDropOver(false);
+        reset();
       }}
       onDragOver={(e) => {
         const d = getDrag();
-        const acceptGroup = d?.kind === "group" && !group.is_default && d.id !== group.id;
-        if (d?.kind === "repo" || acceptGroup) {
+        if (d?.kind === "repo") {
           e.preventDefault();
-          setDropOver(true);
+          setRepoOver(true);
+        } else if (d?.kind === "group" && d.id !== group.id) {
+          e.preventDefault();
+          setReorderEdge(edgeFor(e));
         }
       }}
-      onDragLeave={() => setDropOver(false)}
+      onDragLeave={reset}
       onDrop={(e) => {
-        setDropOver(false);
         const d = getDrag();
         if (d?.kind === "repo") {
           e.preventDefault();
           onRepoDrop(d.id);
-        } else if (d?.kind === "group" && !group.is_default) {
+        } else if (d?.kind === "group" && d.id !== group.id) {
           e.preventDefault();
-          onGroupReorder(d.id, group.id);
+          onGroupReorder(d.id, group.id, edgeFor(e) === "bottom" ? "after" : "before");
         }
+        reset();
         clearDrag();
       }}
       onClick={onSelect}
       className={cn(
         "flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
-        dropOver
+        repoOver
           ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]"
           : active
             ? "border-[var(--color-primary)] bg-[var(--color-accent)] text-[var(--color-foreground)]"
             : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+        // Reorder uses a line on the edge between buttons (distinct from the
+        // repo-assignment ring), matching the repo list's between-items style.
+        // Listed last so the edge colour wins over the all-sides border colour.
+        reorderEdge === "top" && "border-t-2 border-t-[var(--color-primary)]",
+        reorderEdge === "bottom" && "border-b-2 border-b-[var(--color-primary)]",
       )}
     >
       {Icon ? <Icon className="size-5" /> : groupInitials(group.name)}
@@ -102,11 +124,16 @@ export function GroupRail() {
     });
   }
 
-  function handleGroupReorder(srcId: number, targetId: number) {
-    const order = moveBefore(
+  function handleGroupReorder(
+    srcId: number,
+    targetId: number,
+    position: "before" | "after",
+  ) {
+    const order = moveAdjacent(
       list.map((g) => g.id),
       srcId,
       targetId,
+      position,
     );
     reorderGroups.mutate(order);
   }
