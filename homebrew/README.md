@@ -80,9 +80,22 @@ git add Casks/gamut.rb && git commit -m "gamut alpha-0.3" && git push
 Validate the generated cask before pushing:
 
 ```bash
-brew style /path/to/homebrew-gamut/Casks/gamut.rb
-brew audit --cask --online /path/to/homebrew-gamut/Casks/gamut.rb
+brew style Casks/gamut.rb                 # run from inside the tap repo
+brew audit --cask --online rymera-web-co/gamut/gamut
 ```
+
+`brew style` passes clean. Two `brew audit --online` advisories are **expected**
+and not worth chasing while we ship unsigned alphas:
+
+- *"Version '…' differs from '…' retrieved by livecheck"* — the cask version is
+  `<app-version>,<release-tag>` to handle the decoupled `.dmg`-name vs URL-tag.
+  `brew upgrade` compares against the CI-bumped version in the tap, not
+  livecheck, so upgrades work regardless.
+- *"… is a GitHub pre-release"* — all releases are prereleases during the alpha.
+  Goes away once we cut a stable, non-prerelease tag.
+
+(`brew audit` is the strict gate for submitting to the official `homebrew/cask`;
+for our own tap these are informational.)
 
 ## Notes
 

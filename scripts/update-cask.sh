@@ -59,11 +59,16 @@ cask "gamut" do
   sha256 arm:   "${arm_sha}",
          intel: "${x64_sha}"
 
-  url "https://github.com/Rymera-Web-Co/Gamut/releases/download/#{version.csv.second}/Gamut_#{version.csv.first}_#{arch}.dmg",
-      verified: "github.com/Rymera-Web-Co/Gamut/"
+  url "https://github.com/Rymera-Web-Co/Gamut/releases/download/#{version.csv.second}/Gamut_#{version.csv.first}_#{arch}.dmg"
   name "Gamut"
   desc "Local git desktop app for reviewing changes and browsing history"
   homepage "https://github.com/Rymera-Web-Co/Gamut"
+
+  # No macOS minimum is declared. The app's real floor is 10.13 (High Sierra,
+  # per its Info.plist), but Homebrew has dropped that symbol -- the oldest it
+  # still accepts is :catalina, which would falsely gate out valid older-macOS
+  # users. Modern Homebrew can't run on pre-Catalina anyway, so omitting the
+  # gate is both more accurate and lower-maintenance than asserting a wrong one.
 
   app "Gamut.app"
 
