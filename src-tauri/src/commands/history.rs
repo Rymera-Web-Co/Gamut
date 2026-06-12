@@ -245,7 +245,7 @@ pub async fn log(
     let (graph_rows, width) = graph::layout(&nodes);
 
     // Attach graph layout to each commit.
-    for (meta, row) in metas.iter_mut().zip(graph_rows.into_iter()) {
+    for (meta, row) in metas.iter_mut().zip(graph_rows) {
         meta.node_col = row.node_col;
         meta.color = row.color;
         meta.paths = row.paths;
