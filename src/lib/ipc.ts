@@ -184,6 +184,8 @@ export interface PrSummary {
   url: string;
   updated_at: string;
   author_avatar?: string | null;
+  /** Logins with a pending review request — matches "needs review from". */
+  requested_reviewers: string[];
 }
 
 /** An inline review comment anchored to a line (or range) of the diff. */

@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -1291,14 +1291,75 @@ function MergeBar({
   );
 }
 
+/** Which slice of the PR list to show. */
+type PrFilter = "all" | "needs-review";
+
+/** Segmented control above the PR list: All | Needs my review (with a count). */
+function PrFilterBar({
+  filter,
+  onChange,
+  reviewCount,
+  disabled,
+}: {
+  filter: PrFilter;
+  onChange: (f: PrFilter) => void;
+  reviewCount: number;
+  disabled: boolean;
+}) {
+  const options: { value: PrFilter; label: string; badge?: number }[] = [
+    { value: "all", label: "All" },
+    { value: "needs-review", label: "Needs my review", badge: reviewCount },
+  ];
+  return (
+    <div className="flex shrink-0 gap-1 border-b px-2 py-1.5">
+      {options.map((opt) => {
+        // The "needs my review" filter is meaningless when signed out; fall
+        // back to All and disable the option rather than showing an empty list.
+        const isDisabled = disabled && opt.value === "needs-review";
+        const active = filter === opt.value;
+        return (
+          <button
+            key={opt.value}
+            disabled={isDisabled}
+            onClick={() => onChange(opt.value)}
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-[var(--color-accent)] text-[var(--color-foreground)]"
+                : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+              isDisabled && "cursor-not-allowed opacity-50 hover:text-[var(--color-muted-foreground)]",
+            )}
+          >
+            {opt.label}
+            {opt.badge != null && opt.badge > 0 && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 text-[10px] leading-4",
+                  active
+                    ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
+                    : "bg-[var(--color-accent)] text-[var(--color-muted-foreground)]",
+                )}
+              >
+                {opt.badge}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function PrList({
   prs,
   selected,
   onSelect,
+  emptyMessage = "No open pull requests.",
 }: {
   prs: PrSummary[];
   selected: number | null;
   onSelect: (n: number) => void;
+  emptyMessage?: string;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto py-1">
@@ -1332,7 +1393,7 @@ function PrList({
       ))}
       {prs.length === 0 && (
         <p className="px-3 py-6 text-center text-sm text-[var(--color-muted-foreground)]">
-          No open pull requests.
+          {emptyMessage}
         </p>
       )}
     </div>
@@ -1350,6 +1411,26 @@ export function GitHubReview({ repoId }: { repoId: number }) {
   const setView = useUiStore((s) => s.setView);
   const setReviewMode = useUiStore((s) => s.setReviewMode);
   const qc = useQueryClient();
+  const [filter, setFilter] = useState<PrFilter>("all");
+
+  // PRs requesting the current user's review (pending or re-requested), with
+  // their own PRs excluded. `requested_reviewers` already drops reviewers who've
+  // submitted, so it captures exactly the PRs waiting on this user.
+  const login = auth.data?.login ?? null;
+  const allPrs = prs.data ?? [];
+  const needsReview = useMemo(
+    () =>
+      login == null
+        ? []
+        : allPrs.filter(
+            (p) =>
+              p.author !== login && p.requested_reviewers.includes(login),
+          ),
+    [allPrs, login],
+  );
+  // Guard against a stale "needs-review" selection when signing out.
+  const activeFilter = login == null ? "all" : filter;
+  const visiblePrs = activeFilter === "needs-review" ? needsReview : allPrs;
 
   // Pull fresh data for the open PR (new comments, reviews, commits, …).
   function refresh() {
@@ -1395,11 +1476,24 @@ export function GitHubReview({ repoId }: { repoId: number }) {
               {String(prs.error)}
             </p>
           ) : (
-            <PrList
-              prs={prs.data ?? []}
-              selected={selected}
-              onSelect={setSelected}
-            />
+            <>
+              <PrFilterBar
+                filter={activeFilter}
+                onChange={setFilter}
+                reviewCount={needsReview.length}
+                disabled={login == null}
+              />
+              <PrList
+                prs={visiblePrs}
+                selected={selected}
+                onSelect={setSelected}
+                emptyMessage={
+                  activeFilter === "needs-review"
+                    ? "No PRs waiting on your review."
+                    : "No open pull requests."
+                }
+              />
+            </>
           )}
         </Panel>
 

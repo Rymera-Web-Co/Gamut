@@ -444,6 +444,11 @@ pub struct PrSummary {
     pub url: String,
     pub updated_at: String,
     pub author_avatar: Option<String>,
+    /// Logins with a currently-pending review request on this PR. GitHub drops a
+    /// reviewer from this list once they submit a review and re-adds them when a
+    /// re-review is requested, so it matches "needs review from" exactly — no
+    /// per-PR fetch needed to filter the list.
+    pub requested_reviewers: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -499,6 +504,8 @@ struct GhPull {
     head: GhRef,
     base: GhRef,
     updated_at: String,
+    #[serde(default)]
+    requested_reviewers: Vec<GhUser>,
 }
 
 #[derive(Deserialize)]
@@ -595,6 +602,7 @@ pub async fn github_list_prs(
             url: p.html_url,
             updated_at: p.updated_at,
             author_avatar: p.user.avatar_url,
+            requested_reviewers: p.requested_reviewers.into_iter().map(|u| u.login).collect(),
         })
         .collect())
 }
