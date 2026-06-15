@@ -423,8 +423,8 @@ export const ipc = {
   createGroup: (
     name: string,
     icon: string | null,
-    folderPath: string | null = null,
     parentId: number | null = null,
+    folderPath: string | null = null,
   ) => invoke<Group>("create_group", { name, parentId, icon, folderPath }),
   updateGroup: (id: number, name: string | null, icon: string | null) =>
     invoke<void>("update_group", { id, name, icon }),

@@ -200,7 +200,7 @@ export function DiscoverDialog({
               <span className="mt-0.5 block text-xs text-[var(--color-muted-foreground)]">
                 {keepSynced
                   ? "All repos here are added now, and new ones added later are too."
-                  : "New repos added here will be automatically added to this group."}
+                  : "Only the repos you select above are added to this group."}
               </span>
             </span>
           </label>

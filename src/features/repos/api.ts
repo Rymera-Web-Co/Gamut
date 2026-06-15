@@ -63,7 +63,7 @@ export function useCreateGroup() {
       name: string;
       icon: string | null;
       folderPath?: string | null;
-    }) => ipc.createGroup(name, icon, folderPath),
+    }) => ipc.createGroup(name, icon, null, folderPath),
     // A folder-bound group runs its initial scan right after creation so its
     // repos appear immediately; manual groups skip straight to invalidation.
     onSuccess: async (group) => {
