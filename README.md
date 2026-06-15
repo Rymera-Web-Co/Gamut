@@ -6,10 +6,13 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 
 ## What it does
 
-- **Files** — browse the repo's full working tree, open any file in an editor with syntax highlighting, and save edits in place (⌘/Ctrl+S). Reveal files in Finder/Explorer or jump straight to their changes.
-- **Code review** — self-review the current branch's local changes (working tree + branch-vs-base diff) and review GitHub pull requests, with inline diffs and comments.
-- **History** — browse the commit graph with branch/tag refs, inspect commits, view per-file diffs, file history, and blame.
-- **Repositories** — register local repos, auto-detect repos under a directory, and organise them with groups and tags.
+- **[Files](docs/features/files.md)** — browse the repo's full working tree, open any file in an editor with syntax highlighting, and save edits in place (⌘/Ctrl+S). Reveal files in Finder/Explorer or jump straight to their changes.
+- **[Code review](docs/features/review.md)** — self-review the current branch's local changes (working tree + branch-vs-base diff) and review GitHub pull requests, with inline diffs and comments.
+- **[History](docs/features/history.md)** — browse the commit graph with branch/tag refs, inspect commits, view per-file diffs, file history, and blame.
+- **[Repositories](docs/features/repositories.md)** — register local repos, auto-detect repos under a directory, and organise them with groups and tags.
+- **[Sync](docs/features/sync.md)** · **[GitHub](docs/features/github.md)** · **[Terminal](docs/features/terminal.md)** — one-click fetch/pull/push, connect a GitHub account, and an integrated per-group terminal.
+
+Full feature docs live in [`docs/`](docs/README.md).
 
 ## Install (macOS)
 
@@ -74,8 +77,10 @@ pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/relea
 ## Keyboard shortcuts
 
 - `⌘/Ctrl+1` Files · `⌘/Ctrl+2` History · `⌘/Ctrl+3` Review · `⌘/Ctrl+4` Pull Requests
-- `⌘/Ctrl+S` save the open file (Files tab)
-- `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme
+- `⌘/Ctrl+S` save the open file (Files tab) · `⌘/Ctrl+Enter` commit (Review working tree)
+- `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme · <code>⌘/Ctrl+&#96;</code> toggle terminal
+
+See [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md) for the full list.
 
 ## Status
 
@@ -85,7 +90,8 @@ Milestones: **M0 scaffold** ✅ · **M1 repos** ✅ · **M2 history** ✅ · **M
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up
 your environment, the project layout, and coding conventions. For a deeper tour of how
-the app is wired together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+the app is wired together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the
+[documentation hub](docs/README.md) for per-feature docs.
 
 ## License
 

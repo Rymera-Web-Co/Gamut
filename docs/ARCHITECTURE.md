@@ -1,3 +1,5 @@
+<!-- See the [documentation hub](README.md) for per-feature docs. -->
+
 # Architecture
 
 Gamut is a [Tauri 2](https://tauri.app/) desktop app: a Rust backend that owns all
@@ -88,3 +90,7 @@ of stringly-typed `invoke("...")`. Adding a feature usually means:
 where `useGitWatch` invalidates the affected queries. The result is that branch switches
 or commits made outside Gamut (in a terminal, another tool) show up without a manual
 refresh.
+
+---
+
+See also: [documentation hub](README.md) · [Keyboard shortcuts](keyboard-shortcuts.md)
