@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderSearch, Loader2 } from "lucide-react";
+import { FolderSearch, FolderSync, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,12 @@ import {
 import { ipc, pickDirectory, type DiscoveredRepo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
-import { useGroups, useRegisterRepo, useSetRepoGroups } from "./api";
+import {
+  useBindGroupFolder,
+  useGroups,
+  useRegisterRepo,
+  useSetRepoGroups,
+} from "./api";
 
 export function DiscoverDialog({
   open,
@@ -26,16 +31,27 @@ export function DiscoverDialog({
   const [candidates, setCandidates] = useState<DiscoveredRepo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
+  const [keepSynced, setKeepSynced] = useState(false);
   const registerRepo = useRegisterRepo();
   const setRepoGroups = useSetRepoGroups();
+  const bindFolder = useBindGroupFolder();
   const groups = useGroups();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const activeGroup = groups.data?.find((g) => g.id === activeGroupId);
+
+  // The active group can be bound to the scanned folder as long as it isn't
+  // already bound (the path is immutable once set). The default group is
+  // bindable too — it just auto-registers repos as ungrouped rather than as
+  // explicit members.
+  const canSync =
+    activeGroup != null &&
+    !(activeGroup.folder_path && activeGroup.folder_path !== "");
 
   function reset() {
     setRoot(null);
     setCandidates([]);
     setSelected(new Set());
+    setKeepSynced(false);
   }
 
   async function chooseAndScan() {
@@ -69,13 +85,20 @@ export function DiscoverDialog({
     const assignToGroup =
       activeGroupId != null && activeGroup != null && !activeGroup.is_default;
     try {
-      for (const path of selected) {
-        const repo = await registerRepo.mutateAsync(path);
-        if (assignToGroup) {
-          await setRepoGroups.mutateAsync({
-            repoId: repo.id,
-            groupIds: [activeGroupId],
-          });
+      if (keepSynced && canSync && root && activeGroupId != null) {
+        // Bind the active group to this folder; its initial scan add-adds every
+        // discovered repo (selection is moot — a bound folder syncs them all)
+        // and it keeps auto-adding new repos that appear here later.
+        await bindFolder.mutateAsync({ id: activeGroupId, folderPath: root });
+      } else {
+        for (const path of selected) {
+          const repo = await registerRepo.mutateAsync(path);
+          if (assignToGroup) {
+            await setRepoGroups.mutateAsync({
+              repoId: repo.id,
+              groupIds: [activeGroupId],
+            });
+          }
         }
       }
       onOpenChange(false);
@@ -161,15 +184,44 @@ export function DiscoverDialog({
           )}
         </div>
 
+        {canSync && root && !scanning && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={keepSynced}
+              onChange={(e) => setKeepSynced(e.target.checked)}
+            />
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <FolderSync className="size-3.5 text-[var(--color-muted-foreground)]" />
+                Keep “{activeGroup!.name}” in sync with this folder
+              </span>
+              <span className="mt-0.5 block text-xs text-[var(--color-muted-foreground)]">
+                {keepSynced
+                  ? "All repos here are added now, and new ones added later are too."
+                  : "Only the repos you select above are added to this group."}
+              </span>
+            </span>
+          </label>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={addSelected} disabled={selected.size === 0 || adding}>
-            {adding && <Loader2 className="animate-spin" />}
-            Add {selected.size > 0 ? selected.size : ""} repo
-            {selected.size === 1 ? "" : "s"}
-          </Button>
+          {keepSynced ? (
+            <Button onClick={addSelected} disabled={adding}>
+              {adding ? <Loader2 className="animate-spin" /> : <FolderSync />}
+              Sync folder
+            </Button>
+          ) : (
+            <Button onClick={addSelected} disabled={selected.size === 0 || adding}>
+              {adding && <Loader2 className="animate-spin" />}
+              Add {selected.size > 0 ? selected.size : ""} repo
+              {selected.size === 1 ? "" : "s"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

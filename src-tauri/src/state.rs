@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -13,4 +14,9 @@ pub struct AppState {
     pub gh_token: Mutex<Option<String>>,
     /// Filesystem watcher over registered repos' `.git` (set up after launch).
     pub watcher: Mutex<Option<RepoWatcher>>,
+    /// Canonicalized paths of folder-bound groups, refreshed on each watcher
+    /// resync. Lets the debounced watch callback cheaply tell whether a change
+    /// landed under a bound folder (and thus warrants an auto-sync) without
+    /// hitting the DB on every event.
+    pub bound_folders: Mutex<Vec<PathBuf>>,
 }

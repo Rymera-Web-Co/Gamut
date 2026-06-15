@@ -28,6 +28,7 @@ pub fn run() {
                 db: Mutex::new(conn),
                 gh_token: Mutex::new(None),
                 watcher: Mutex::new(None),
+                bound_folders: Mutex::new(Vec::new()),
             });
 
             // Watch registered repos' .git so external changes reflect live.
@@ -51,6 +52,7 @@ pub fn run() {
             commands::repo::touch_repo,
             commands::repo::reorder_repos,
             commands::repo::discover_repos,
+            commands::repo::sync_group_folder,
             commands::repo::list_branches,
             commands::repo::list_git_tags,
             commands::repo::checkout_branch,
@@ -65,6 +67,8 @@ pub fn run() {
             commands::tags::update_group,
             commands::tags::reorder_groups,
             commands::tags::delete_group,
+            commands::tags::bind_group_folder,
+            commands::tags::unbind_group_folder,
             commands::tags::set_repo_groups,
             commands::history::log,
             commands::history::commit_detail,

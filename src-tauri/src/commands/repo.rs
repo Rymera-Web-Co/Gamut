@@ -20,6 +20,10 @@ pub struct Repo {
     pub created_at: String,
     pub tag_ids: Vec<i64>,
     pub group_ids: Vec<i64>,
+    /// True when the repo's directory no longer exists on disk (e.g. it was
+    /// deleted or moved out of a bound folder). Surfaced as a "missing" flag in
+    /// the UI; folder sync never auto-removes such repos.
+    pub missing: bool,
 }
 
 #[derive(Serialize)]
@@ -60,6 +64,8 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
         },
     )?;
 
+    let missing = !std::path::Path::new(&path).exists();
+
     Ok(Repo {
         id,
         path,
@@ -73,7 +79,130 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
             "SELECT group_id FROM repo_groups WHERE repo_id = ?1",
             id,
         )?,
+        missing,
     })
+}
+
+/// Register a repo path into the DB (idempotent). Returns its row id and whether
+/// the row was newly inserted (false = it already existed). Shared by the manual
+/// `register_repo` command and folder auto-sync. Errors if not a git repo.
+fn register_path(conn: &Connection, path: &std::path::Path) -> AppResult<(i64, bool)> {
+    let repo = git::open(path)?;
+    let name = git::repo_name(path);
+    let branch = git::current_branch(&repo);
+    let canonical = path
+        .canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string());
+    let existed: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM repos WHERE path = ?1)",
+        [&canonical],
+        |r| r.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO repos (path, name, default_branch) VALUES (?1, ?2, ?3)
+         ON CONFLICT(path) DO UPDATE SET name = excluded.name, default_branch = excluded.default_branch",
+        rusqlite::params![canonical, name, branch],
+    )?;
+    let id = conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
+        r.get(0)
+    })?;
+    Ok((id, !existed))
+}
+
+/// Default recursion depth for folder discovery (matches the manual scan).
+const SYNC_DEPTH: usize = 6;
+
+/// Scan a bound group's folder and add (never remove) every discovered repo to
+/// the group. Add-only and idempotent: repos already registered/assigned are
+/// untouched. Honors the scanner's prune list. Stamps `last_scan_at`.
+///
+/// The default group is special: it surfaces *ungrouped* repos (no explicit
+/// membership), so binding it auto-registers discovered repos without creating
+/// `repo_groups` rows — registration alone makes them appear there. For any
+/// other group, discovered repos are added as explicit members.
+///
+/// Returns the count of newly-surfaced repos (new memberships for a normal
+/// group; newly-registered repos for the default group).
+pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppResult<usize> {
+    let is_default: bool = conn
+        .query_row(
+            "SELECT is_default FROM groups WHERE id = ?1",
+            [group_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v != 0)
+        .unwrap_or(false);
+
+    let mut added = 0usize;
+    for d in git::discover(&PathBuf::from(folder), SYNC_DEPTH) {
+        let Ok((repo_id, inserted)) = register_path(conn, &d.path) else {
+            continue;
+        };
+        if is_default {
+            if inserted {
+                added += 1;
+            }
+        } else {
+            added += conn.execute(
+                "INSERT OR IGNORE INTO repo_groups (repo_id, group_id) VALUES (?1, ?2)",
+                rusqlite::params![repo_id, group_id],
+            )?;
+        }
+    }
+    conn.execute(
+        "UPDATE groups SET last_scan_at = datetime('now') WHERE id = ?1",
+        [group_id],
+    )?;
+    Ok(added)
+}
+
+/// Sync every folder-bound group. Used by the filesystem watcher when a change
+/// is seen under a bound folder. Returns the total number of new memberships
+/// added across all groups. Does not resync the watcher — bound folders are
+/// already watched recursively, so any new repo under them is already covered.
+pub fn sync_all_bound_groups(state: &AppState) -> usize {
+    let Ok(conn) = state.db.lock() else {
+        return 0;
+    };
+    let bound: Vec<(i64, String)> = {
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT id, folder_path FROM groups
+             WHERE folder_path IS NOT NULL AND folder_path != ''",
+        ) else {
+            return 0;
+        };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(|it| it.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    };
+    let mut total = 0;
+    for (id, folder) in bound {
+        total += sync_folder_group(&conn, id, &folder).unwrap_or(0);
+    }
+    total
+}
+
+/// Scan a single folder-bound group's folder now and add any new repos. Used
+/// for the initial scan on bind and the "Rescan now" button. Returns the count
+/// of newly-added repos.
+#[tauri::command]
+pub fn sync_group_folder(state: State<AppState>, group_id: i64) -> AppResult<usize> {
+    let added = {
+        let conn = lock(&state)?;
+        let folder: Option<String> = conn.query_row(
+            "SELECT folder_path FROM groups WHERE id = ?1",
+            [group_id],
+            |r| r.get(0),
+        )?;
+        match folder.filter(|p| !p.trim().is_empty()) {
+            Some(folder) => sync_folder_group(&conn, group_id, &folder)?,
+            None => return Ok(0),
+        }
+    };
+    // Pick up newly-registered repos (and the folder itself) for watching.
+    crate::watch::resync(&state);
+    Ok(added)
 }
 
 #[tauri::command]
@@ -93,25 +222,8 @@ pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
 /// current branch. If the path is already registered, returns the existing row.
 #[tauri::command]
 pub fn register_repo(state: State<AppState>, path: String) -> AppResult<Repo> {
-    let pb = PathBuf::from(&path);
-    let repo = git::open(&pb)?;
-    let name = git::repo_name(&pb);
-    let branch = git::current_branch(&repo);
-
     let conn = lock(&state)?;
-    let canonical = pb
-        .canonicalize()
-        .map(|p| p.display().to_string())
-        .unwrap_or(path);
-
-    conn.execute(
-        "INSERT INTO repos (path, name, default_branch) VALUES (?1, ?2, ?3)
-         ON CONFLICT(path) DO UPDATE SET name = excluded.name, default_branch = excluded.default_branch",
-        rusqlite::params![canonical, name, branch],
-    )?;
-    let id: i64 = conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
-        r.get(0)
-    })?;
+    let (id, _) = register_path(&conn, &PathBuf::from(&path))?;
     let repo = load_repo(&conn, id)?;
     drop(conn); // release the DB lock before resync re-reads it
     crate::watch::resync(&state);
@@ -305,4 +417,115 @@ pub fn discover_repos(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Repository;
+
+    /// Minimal schema for exercising folder sync without the full migration runner.
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repos (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 name TEXT NOT NULL,
+                 default_branch TEXT
+             );
+             CREATE TABLE groups (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL,
+                 is_default INTEGER NOT NULL DEFAULT 0,
+                 last_scan_at TEXT
+             );
+             CREATE TABLE repo_groups (
+                 repo_id INTEGER NOT NULL,
+                 group_id INTEGER NOT NULL,
+                 PRIMARY KEY (repo_id, group_id)
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn folder_sync_adds_repos_once_and_is_idempotent() {
+        let root = std::env::temp_dir().join("gamut_sync_test");
+        let _ = std::fs::remove_dir_all(&root);
+        Repository::init(root.join("a")).unwrap();
+        Repository::init(root.join("sub/b")).unwrap();
+        Repository::init(root.join("node_modules/c")).unwrap(); // pruned
+
+        let conn = test_conn();
+        conn.execute("INSERT INTO groups (id, name) VALUES (1, 'G')", [])
+            .unwrap();
+
+        let folder = root.to_string_lossy().to_string();
+        let added = sync_folder_group(&conn, 1, &folder).unwrap();
+        assert_eq!(added, 2, "a and b added; node_modules pruned");
+
+        // Re-running is add-only: nothing new, no duplicates.
+        let again = sync_folder_group(&conn, 1, &folder).unwrap();
+        assert_eq!(again, 0, "second scan adds nothing");
+        let members: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repo_groups WHERE group_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(members, 2);
+
+        // last_scan_at is stamped.
+        let stamped: Option<String> = conn
+            .query_row("SELECT last_scan_at FROM groups WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(stamped.is_some());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn default_group_sync_registers_without_membership() {
+        let root = std::env::temp_dir().join("gamut_default_sync_test");
+        let _ = std::fs::remove_dir_all(&root);
+        Repository::init(root.join("a")).unwrap();
+        Repository::init(root.join("b")).unwrap();
+
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO groups (id, name, is_default) VALUES (1, 'Default', 1)",
+            [],
+        )
+        .unwrap();
+
+        let folder = root.to_string_lossy().to_string();
+        let added = sync_folder_group(&conn, 1, &folder).unwrap();
+        assert_eq!(added, 2, "both repos newly registered");
+
+        // Repos are registered...
+        let repos: i64 = conn
+            .query_row("SELECT COUNT(*) FROM repos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(repos, 2);
+        // ...but the default group never gets explicit memberships (they show
+        // as ungrouped instead).
+        let members: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repo_groups WHERE group_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(members, 0);
+
+        // Re-running surfaces nothing new.
+        assert_eq!(sync_folder_group(&conn, 1, &folder).unwrap(), 0);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

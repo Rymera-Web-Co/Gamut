@@ -55,8 +55,55 @@ export function useRemoveRepo() {
 export function useCreateGroup() {
   const invalidate = useInvalidateTree();
   return useMutation({
-    mutationFn: ({ name, icon }: { name: string; icon: string | null }) =>
-      ipc.createGroup(name, icon),
+    mutationFn: ({
+      name,
+      icon,
+      folderPath = null,
+    }: {
+      name: string;
+      icon: string | null;
+      folderPath?: string | null;
+    }) => ipc.createGroup(name, icon, null, folderPath),
+    // A folder-bound group runs its initial scan right after creation so its
+    // repos appear immediately; manual groups skip straight to invalidation.
+    onSuccess: async (group) => {
+      if (group.folder_path) {
+        try {
+          await ipc.syncGroupFolder(group.id);
+        } catch {
+          // Initial scan failure is non-fatal — the watcher will still pick up
+          // repos as they appear; surface nothing here.
+        }
+      }
+      invalidate();
+    },
+  });
+}
+
+export function useSyncGroupFolder() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: (groupId: number) => ipc.syncGroupFolder(groupId),
+    onSuccess: invalidate,
+  });
+}
+
+/** First-bind an existing group to a folder, then run its initial scan. */
+export function useBindGroupFolder() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: async ({ id, folderPath }: { id: number; folderPath: string }) => {
+      await ipc.bindGroupFolder(id, folderPath);
+      return ipc.syncGroupFolder(id);
+    },
+    onSuccess: invalidate,
+  });
+}
+
+export function useUnbindGroupFolder() {
+  const invalidate = useInvalidateTree();
+  return useMutation({
+    mutationFn: (id: number) => ipc.unbindGroupFolder(id),
     onSuccess: invalidate,
   });
 }
