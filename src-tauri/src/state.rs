@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+use crate::commands::terminal::Session;
 use crate::watch::RepoWatcher;
 
 /// Shared application state, managed by Tauri and injected into commands via `State`.
@@ -19,4 +21,8 @@ pub struct AppState {
     /// landed under a bound folder (and thus warrants an auto-sync) without
     /// hitting the DB on every event.
     pub bound_folders: Mutex<Vec<PathBuf>>,
+    /// Live PTY-backed terminal sessions, keyed by an opaque scope id
+    /// (`repo:<id>` / `group:<id>`). Persist across tab switches so background
+    /// processes keep running; see `commands::terminal`.
+    pub terminals: Mutex<HashMap<String, Session>>,
 }

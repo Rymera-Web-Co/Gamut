@@ -5,9 +5,10 @@ mod git;
 mod state;
 mod watch;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 use state::AppState;
 
@@ -29,6 +30,7 @@ pub fn run() {
                 gh_token: Mutex::new(None),
                 watcher: Mutex::new(None),
                 bound_folders: Mutex::new(Vec::new()),
+                terminals: Mutex::new(HashMap::new()),
             });
 
             // Watch registered repos' .git so external changes reflect live.
@@ -116,7 +118,21 @@ pub fn run() {
             commands::github::github_resolve_thread,
             commands::github::github_pr_details,
             commands::github::github_merge_pr,
+            commands::terminal::terminal_spawn,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_kill,
         ])
+        .on_window_event(|window, event| {
+            // Tear down all PTYs when the main window closes so no shell is left
+            // orphaned (the OS would reap them on process exit, but be explicit).
+            if matches!(
+                event,
+                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+            ) {
+                commands::terminal::kill_all(&window.state::<AppState>());
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 /**
@@ -557,6 +557,36 @@ export const ipc = {
     invoke<void>("github_merge_pr", { repoId, number, method }),
   githubPrDetails: (repoId: number, number: number) =>
     invoke<PrDetails>("github_pr_details", { repoId, number }),
+
+  // integrated terminal (PTY sessions keyed by an opaque scope id)
+  /**
+   * Spawn (or reuse) a shell for `sessionId` rooted at `cwd`, streaming its raw
+   * output bytes to `onOutput`. Idempotent on the backend, so calling twice for
+   * the same id is safe.
+   */
+  terminalSpawn: (
+    sessionId: string,
+    cwd: string,
+    cols: number,
+    rows: number,
+    onOutput: (bytes: Uint8Array) => void,
+  ) => {
+    const channel = new Channel<number[]>();
+    channel.onmessage = (msg) => onOutput(new Uint8Array(msg));
+    return invoke<void>("terminal_spawn", {
+      sessionId,
+      cwd,
+      cols,
+      rows,
+      onOutput: channel,
+    });
+  },
+  terminalWrite: (sessionId: string, data: Uint8Array) =>
+    invoke<void>("terminal_write", { sessionId, data: Array.from(data) }),
+  terminalResize: (sessionId: string, cols: number, rows: number) =>
+    invoke<void>("terminal_resize", { sessionId, cols, rows }),
+  terminalKill: (sessionId: string) =>
+    invoke<void>("terminal_kill", { sessionId }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

@@ -1,6 +1,11 @@
 import { useEffect, useState, type DragEvent } from "react";
-import { Plus } from "lucide-react";
+import { Pencil, Plus, SquareTerminal } from "lucide-react";
 
+import {
+  ContextMenu,
+  ContextMenuItem,
+  type ContextMenuPosition,
+} from "@/components/ui/context-menu";
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
 import { clearDrag, getDrag, moveAdjacent, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
@@ -16,12 +21,14 @@ function GroupButton({
   onSelect,
   onRepoDrop,
   onGroupReorder,
+  onContextMenu,
 }: {
   group: Group;
   active: boolean;
   onSelect: () => void;
   onRepoDrop: (repoId: number) => void;
   onGroupReorder: (srcId: number, targetId: number, position: "before" | "after") => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const Icon = group.icon ? GROUP_ICONS[group.icon] : null;
   // `repoOver` = a repo is hovering to be assigned into this group (ring).
@@ -78,6 +85,7 @@ function GroupButton({
         clearDrag();
       }}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       className={cn(
         "flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
         repoOver
@@ -103,9 +111,15 @@ export function GroupRail() {
   const reorderGroups = useReorderGroups();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const toggleTerminal = useUiStore((s) => s.toggleTerminal);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
+  const [menu, setMenu] = useState<{ at: ContextMenuPosition; group: Group } | null>(
+    null,
+  );
 
   const list = groups.data ?? [];
   const defaultGroup = list.find((g) => g.is_default) ?? list[0];
@@ -152,6 +166,10 @@ export function GroupRail() {
           onSelect={() => setActiveGroup(g.id)}
           onRepoDrop={(repoId) => handleRepoDrop(g, repoId)}
           onGroupReorder={handleGroupReorder}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ at: { x: e.clientX, y: e.clientY }, group: g });
+          }}
         />
       ))}
 
@@ -167,7 +185,20 @@ export function GroupRail() {
         <Plus className="size-5" />
       </button>
 
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col items-center gap-1.5">
+        <button
+          aria-label={terminalOpen ? "Hide terminal" : "Show terminal"}
+          title={terminalOpen ? "Hide terminal (⌘`)" : "Show terminal (⌘`)"}
+          onClick={toggleTerminal}
+          className={cn(
+            "flex size-10 items-center justify-center rounded-lg border transition-colors",
+            terminalOpen
+              ? "border-[var(--color-primary)] bg-[var(--color-accent)] text-[var(--color-foreground)]"
+              : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+          )}
+        >
+          <SquareTerminal className="size-5" />
+        </button>
         <GitHubConnect />
       </div>
 
@@ -178,6 +209,43 @@ export function GroupRail() {
         onCreated={(g) => setActiveGroup(g.id)}
         onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
       />
+
+      <ContextMenu at={menu?.at ?? null} onClose={() => setMenu(null)}>
+        {menu && (
+          <>
+            {menu.group.folder_path ? (
+              <ContextMenuItem
+                onClick={() => {
+                  setActiveGroup(menu.group.id);
+                  addTerminalTab(
+                    menu.group.id,
+                    menu.group.folder_path ?? "",
+                    menu.group.name,
+                  );
+                  setMenu(null);
+                }}
+              >
+                <SquareTerminal />
+                Open terminal
+              </ContextMenuItem>
+            ) : (
+              <div className="px-3 py-1.5 text-xs text-[var(--color-muted-foreground)]">
+                Bind a folder to open a terminal
+              </div>
+            )}
+            <ContextMenuItem
+              onClick={() => {
+                setEditing(menu.group);
+                setDialogOpen(true);
+                setMenu(null);
+              }}
+            >
+              <Pencil />
+              Edit group
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenu>
     </nav>
   );
 }

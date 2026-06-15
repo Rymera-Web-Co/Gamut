@@ -6,6 +6,7 @@ import {
   Pencil,
   Plus,
   FolderSearch,
+  SquareTerminal,
   Trash2,
 } from "lucide-react";
 
@@ -46,6 +47,8 @@ function RepoRow({
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const [dropOver, setDropOver] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const active = activeRepoId === repo.id;
@@ -121,6 +124,21 @@ function RepoRow({
           >
             {repo.name}
           </span>
+          {!repo.missing && (
+            <button
+              aria-label="Open terminal here"
+              title="Open terminal here"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (activeGroupId != null) {
+                  addTerminalTab(activeGroupId, repo.path, repo.name);
+                }
+              }}
+              className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
+            >
+              <SquareTerminal className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]" />
+            </button>
+          )}
           <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
             <PopoverTrigger asChild>
               <button
@@ -193,6 +211,7 @@ export function RepoSidebar() {
   const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
 
   const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
 
@@ -203,6 +222,9 @@ export function RepoSidebar() {
   const allGroups = groups.data ?? [];
   const activeGroup = allGroups.find((g) => g.id === activeGroupId);
   const defaultGroup = allGroups.find((g) => g.is_default) ?? allGroups[0];
+  // A folder-bound group can open a terminal at its parent directory — useful
+  // for operating across all the repos under that folder at once.
+  const groupFolder = activeGroup?.folder_path ?? null;
 
   // Default group = repos with no explicit group; others = repos assigned to it.
   const visible = activeGroup?.is_default
@@ -253,6 +275,19 @@ export function RepoSidebar() {
           )}
         </div>
         <div className="flex shrink-0 items-center">
+          {groupFolder && activeGroup && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              title={`Open terminal at ${activeGroup.name} folder`}
+              onClick={() =>
+                addTerminalTab(activeGroup.id, groupFolder, activeGroup.name)
+              }
+            >
+              <SquareTerminal />
+            </Button>
+          )}
           <Button size="icon" variant="ghost" className="size-7" title="Add repository" onClick={addRepo}>
             <Plus />
           </Button>

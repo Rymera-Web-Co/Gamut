@@ -26,6 +26,11 @@ A few things worth knowing about Gamut's security model:
   raw token; all authenticated GitHub calls happen in the Rust backend.
 - **Git operations** are performed by the Rust backend against local repositories you
   explicitly register. The frontend has no direct filesystem access.
+- **Integrated terminal** — Gamut includes an opt-in per-repo/per-group terminal that
+  spawns your real login shell (a PTY) rooted at the repo or bound folder. This is
+  arbitrary local command execution with your user's privileges, by design — the same
+  trust level as opening a terminal yourself. Sessions run only for repositories/folders
+  you've registered, and are terminated when the repo is removed or the app is closed.
 - **Network** — GitHub REST calls go out over `rustls` TLS.
 
 Reports about the bundled third-party dependencies are welcome too; we track upstream

@@ -8,10 +8,12 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
  *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
+ *   ⌘/Ctrl+` → toggle integrated terminal
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
+  const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const toggleTheme = useTheme((s) => s.toggle);
 
   useEffect(() => {
@@ -42,9 +44,13 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           toggleTheme();
           break;
+        case "`":
+          e.preventDefault();
+          toggleTerminal();
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setView, toggleRepoSidebar, toggleTheme]);
+  }, [setView, toggleRepoSidebar, toggleTerminal, toggleTheme]);
 }
