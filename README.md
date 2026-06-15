@@ -45,6 +45,47 @@ xattr -dr com.apple.quarantine /Applications/Gamut.app
 
 Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required.)
 
+## Install (Windows)
+
+Download the installer from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases) — either `Gamut_<version>_x64-setup.exe` (NSIS) or `Gamut_<version>_x64_en-US.msi` (MSI). Both install the same app; pick whichever you prefer.
+
+Because the build isn't signed with a code-signing certificate, Windows SmartScreen shows:
+
+> Windows protected your PC
+
+Click **More info → Run anyway** to continue. Then follow the installer and launch **Gamut** from the Start menu.
+
+> Network operations (fetch / pull / push) shell out to the `git` CLI, so install [Git for Windows](https://git-scm.com/download/win) and make sure `git` is on your `PATH`. Browsing history and reviewing local changes work without it.
+
+## Install (Linux)
+
+Download the package that matches your distro from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases).
+
+### AppImage (any distro)
+
+```bash
+chmod +x Gamut_<version>_amd64.AppImage
+./Gamut_<version>_amd64.AppImage
+```
+
+The AppImage is self-contained and needs FUSE (preinstalled on most desktops; on newer distros install `libfuse2` if it won't launch).
+
+### Debian / Ubuntu (`.deb`)
+
+```bash
+sudo apt install ./Gamut_<version>_amd64.deb
+```
+
+### Fedora / RHEL (`.rpm`)
+
+```bash
+sudo dnf install ./Gamut-<version>-1.x86_64.rpm
+```
+
+The `.deb`/`.rpm` packages declare their runtime dependencies (WebKitGTK 4.1, GTK 3), so your package manager pulls them in. For the AppImage you may need WebKitGTK installed yourself — e.g. `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora.
+
+> As on Windows, fetch / pull / push shell out to the `git` CLI — install `git` from your package manager if it isn't already present.
+
 ## Stack
 
 - **Backend:** Rust / Tauri 2 — owns all git operations, the GitHub API, persistence (SQLite via `rusqlite`), and secrets (OS keychain). Frontend never touches a token or the filesystem directly.
