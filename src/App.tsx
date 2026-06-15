@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 
 import { GroupRail } from "@/features/repos/GroupRail";
 import { RepoSidebar } from "@/features/repos/RepoSidebar";
@@ -9,6 +11,7 @@ import { FilesView } from "@/features/files/FilesView";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
+import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { ipc } from "@/lib/ipc";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
@@ -41,41 +44,76 @@ function StatusBar() {
 export default function App() {
   const view = useUiStore((s) => s.view);
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
+  const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   useKeyboardShortcuts();
   useGitWatch();
+
+  // Imperatively collapse/expand the terminal panel to match `terminalOpen`,
+  // which can change from the keyboard shortcut, the close button, or opening a
+  // group terminal. The guard avoids a feedback loop with onCollapse/onExpand.
+  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
+  useEffect(() => {
+    const panel = terminalPanelRef.current;
+    if (!panel) return;
+    if (terminalOpen && panel.isCollapsed()) panel.expand();
+    else if (!terminalOpen && panel.isExpanded()) panel.collapse();
+  }, [terminalOpen]);
 
   return (
     <div className="flex h-full w-full flex-col">
       <div className="flex min-h-0 flex-1">
         <GroupRail />
-        <PanelGroup
-          direction="horizontal"
-          autoSaveId="gamut.layout.main"
-          className="min-w-0 flex-1"
-        >
-          {!repoSidebarHidden && (
-            <Panel
-              id="repos"
-              order={1}
-              defaultSize={20}
-              minSize={12}
-              maxSize={40}
+        {/* Vertical split to the right of the group rail: main content on top,
+            the integrated terminal pinned to the bottom. The rail stays outside
+            so the terminal spans the full width minus the rail. */}
+        <PanelGroup direction="vertical" className="min-w-0 flex-1">
+          <Panel id="content" order={1} minSize={20} className="min-h-0">
+            <PanelGroup
+              direction="horizontal"
+              autoSaveId="gamut.layout.main"
               className="min-w-0"
             >
-              <RepoSidebar />
-            </Panel>
-          )}
-          {!repoSidebarHidden && <ResizeHandle />}
-          <Panel id="main" order={2} className="min-w-0">
-            <main className="flex h-full min-w-0 flex-col">
-              <TopTabs />
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {view === "files" && <FilesView />}
-                {view === "history" && <HistoryView />}
-                {view === "review" && <ReviewView />}
-                {view === "pulls" && <PullsView />}
-              </div>
-            </main>
+              {!repoSidebarHidden && (
+                <Panel
+                  id="repos"
+                  order={1}
+                  defaultSize={20}
+                  minSize={12}
+                  maxSize={40}
+                  className="min-w-0"
+                >
+                  <RepoSidebar />
+                </Panel>
+              )}
+              {!repoSidebarHidden && <ResizeHandle />}
+              <Panel id="main" order={2} className="min-w-0">
+                <main className="flex h-full min-w-0 flex-col">
+                  <TopTabs />
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    {view === "files" && <FilesView />}
+                    {view === "history" && <HistoryView />}
+                    {view === "review" && <ReviewView />}
+                    {view === "pulls" && <PullsView />}
+                  </div>
+                </main>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <ResizeHandle horizontal className={terminalOpen ? "" : "hidden"} />
+          <Panel
+            id="terminal"
+            order={2}
+            ref={terminalPanelRef}
+            collapsible
+            collapsedSize={0}
+            defaultSize={terminalOpen ? 32 : 0}
+            minSize={12}
+            onCollapse={() => setTerminalOpen(false)}
+            onExpand={() => setTerminalOpen(true)}
+            className="min-h-0"
+          >
+            <TerminalPane />
           </Panel>
         </PanelGroup>
       </div>

@@ -3,10 +3,38 @@ import { create } from "zustand";
 export type View = "files" | "history" | "review" | "pulls";
 export type ReviewMode = "working" | "branch";
 
+/**
+ * Integrated-terminal model. Terminals are scoped to a **group**: each group
+ * keeps its own set of tabs, so switching repos never disturbs them and
+ * switching groups swaps the whole set. A tab holds one or more side-by-side
+ * panes (a split); each pane is an independent PTY session keyed by `pane.id`.
+ */
+export interface TermPane {
+  /** Opaque, process-unique PTY session id (the backend treats it as a key). */
+  id: string;
+  /** Working directory the shell is rooted at. */
+  cwd: string;
+}
+export interface TermTab {
+  id: string;
+  title: string;
+  panes: TermPane[];
+  activePaneId: string;
+}
+export interface GroupTerminals {
+  tabs: TermTab[];
+  activeTabId: string | null;
+}
+
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
+const TERMINAL_OPEN_KEY = "gamut.terminalOpen";
 
 function storedRepoSidebarHidden(): boolean {
   return localStorage.getItem(REPO_SIDEBAR_KEY) === "1";
+}
+
+function storedTerminalOpen(): boolean {
+  return localStorage.getItem(TERMINAL_OPEN_KEY) === "1";
 }
 
 interface UiState {
@@ -17,6 +45,12 @@ interface UiState {
   selectedPrNumber: number | null;
   // Whether the repo sidebar column is hidden. Persisted to localStorage.
   repoSidebarHidden: boolean;
+  // Integrated terminal pane. `terminalOpen` (persisted) toggles the bottom
+  // pane; `terminals` holds each group's tabs/panes (in-memory, by group id).
+  terminalOpen: boolean;
+  terminals: Record<number, GroupTerminals>;
+  // Monotonic counter for minting unique pane/tab ids.
+  nextTermId: number;
   // One-shot navigation target: a commit to reveal in the History tab. The
   // History view consumes it (selects + scrolls to it) and clears it.
   historySha: string | null;
@@ -31,6 +65,18 @@ interface UiState {
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
   toggleRepoSidebar: () => void;
+  setTerminalOpen: (open: boolean) => void;
+  toggleTerminal: () => void;
+  /** Open a new terminal tab in a group rooted at `cwd`, and reveal the pane. */
+  addTerminalTab: (groupId: number, cwd: string, title: string) => void;
+  /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
+  splitTerminal: (groupId: number, cwd: string) => void;
+  selectTerminalTab: (groupId: number, tabId: string) => void;
+  setActivePane: (groupId: number, tabId: string, paneId: string) => void;
+  /** Remove a tab (caller kills its panes' PTYs first). */
+  closeTerminalTab: (groupId: number, tabId: string) => void;
+  /** Remove one split pane; removes the tab if it was the last pane. */
+  closeTerminalPane: (groupId: number, tabId: string, paneId: string) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -40,6 +86,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeGroupId: null,
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
+  terminalOpen: storedTerminalOpen(),
+  terminals: {},
+  nextTermId: 1,
   historySha: null,
   filesPath: null,
   setView: (view) => set({ view }),
@@ -55,4 +104,101 @@ export const useUiStore = create<UiState>((set, get) => ({
     localStorage.setItem(REPO_SIDEBAR_KEY, repoSidebarHidden ? "1" : "0");
     set({ repoSidebarHidden });
   },
+  setTerminalOpen: (open) => {
+    localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
+    set({ terminalOpen: open });
+  },
+  toggleTerminal: () => get().setTerminalOpen(!get().terminalOpen),
+  addTerminalTab: (groupId, cwd, title) => {
+    const n = get().nextTermId;
+    const tab: TermTab = {
+      id: `tab-${n}`,
+      title,
+      panes: [{ id: `term-${n}`, cwd }],
+      activePaneId: `term-${n}`,
+    };
+    get().setTerminalOpen(true);
+    set((s) => {
+      const g = s.terminals[groupId] ?? { tabs: [], activeTabId: null };
+      return {
+        nextTermId: n + 1,
+        terminals: {
+          ...s.terminals,
+          [groupId]: { tabs: [...g.tabs, tab], activeTabId: tab.id },
+        },
+      };
+    });
+  },
+  splitTerminal: (groupId, cwd) => {
+    const n = get().nextTermId;
+    const paneId = `term-${n}`;
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g || !g.activeTabId) return {};
+      const tabs = g.tabs.map((t) =>
+        t.id === g.activeTabId
+          ? { ...t, panes: [...t.panes, { id: paneId, cwd }], activePaneId: paneId }
+          : t,
+      );
+      return {
+        nextTermId: n + 1,
+        terminals: { ...s.terminals, [groupId]: { ...g, tabs } },
+      };
+    });
+  },
+  selectTerminalTab: (groupId, tabId) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      return { terminals: { ...s.terminals, [groupId]: { ...g, activeTabId: tabId } } };
+    }),
+  setActivePane: (groupId, tabId, paneId) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      const tabs = g.tabs.map((t) =>
+        t.id === tabId ? { ...t, activePaneId: paneId } : t,
+      );
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+    }),
+  closeTerminalTab: (groupId, tabId) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      const idx = g.tabs.findIndex((t) => t.id === tabId);
+      if (idx < 0) return {};
+      const tabs = g.tabs.filter((t) => t.id !== tabId);
+      const activeTabId =
+        g.activeTabId === tabId
+          ? tabs.length
+            ? tabs[Math.min(idx, tabs.length - 1)].id
+            : null
+          : g.activeTabId;
+      return { terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
+    }),
+  closeTerminalPane: (groupId, tabId, paneId) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      const tab = g.tabs.find((t) => t.id === tabId);
+      if (!tab) return {};
+      const panes = tab.panes.filter((p) => p.id !== paneId);
+      if (panes.length === 0) {
+        const idx = g.tabs.findIndex((t) => t.id === tabId);
+        const tabs = g.tabs.filter((t) => t.id !== tabId);
+        const activeTabId =
+          g.activeTabId === tabId
+            ? tabs.length
+              ? tabs[Math.min(idx, tabs.length - 1)].id
+              : null
+            : g.activeTabId;
+        return { terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
+      }
+      const activePaneId =
+        tab.activePaneId === paneId ? panes[panes.length - 1].id : tab.activePaneId;
+      const tabs = g.tabs.map((t) =>
+        t.id === tabId ? { ...t, panes, activePaneId } : t,
+      );
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+    }),
 }));

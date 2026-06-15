@@ -36,3 +36,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Watch each repo's .git so external branch switches/commits reflect live.
 notify = "7"
 notify-debouncer-mini = "0.5"
+# Cross-platform PTY backing the per-repo integrated terminal. A real TTY is
+# required for resize, colors, line discipline and interactive apps (vim/htop);
+# bare piped stdio can't provide those.
+portable-pty = "0.8"
