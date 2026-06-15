@@ -176,10 +176,7 @@ mod tests {
     #[test]
     fn detects_only_gone_upstreams() {
         // Unique per process so concurrent `cargo test` runs don't collide.
-        let root = std::env::temp_dir().join(format!(
-            "gamut_cleanup_test_{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("gamut_cleanup_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let remote = root.join("remote.git");
         let local = root.join("local");
@@ -192,7 +189,10 @@ mod tests {
             .status()
             .unwrap();
         let seed = root.join("seed");
-        git(&root, &["clone", remote.to_str().unwrap(), seed.to_str().unwrap()]);
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), seed.to_str().unwrap()],
+        );
         std::fs::write(seed.join("a.txt"), "a").unwrap();
         git(&seed, &["add", "."]);
         git(&seed, &["commit", "-m", "init"]);
@@ -203,7 +203,10 @@ mod tests {
         git(&seed, &["push", "-u", "origin", "feature-live"]);
 
         // Fresh clone that tracks all three remote branches.
-        git(&root, &["clone", remote.to_str().unwrap(), local.to_str().unwrap()]);
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), local.to_str().unwrap()],
+        );
         git(&local, &["checkout", "feature-gone"]);
         git(&local, &["checkout", "feature-live"]);
         git(&local, &["checkout", "-b", "local-only"]); // no upstream

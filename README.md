@@ -13,13 +13,28 @@ A local git desktop app for **reviewing changes** and **browsing history**, buil
 
 ## Install (macOS)
 
-Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+### Homebrew (recommended)
 
-The app is not yet signed with an Apple Developer ID or notarized, so on first launch macOS may report:
+```bash
+brew install --cask rymera-web-co/gamut/gamut
+xattr -dr com.apple.quarantine /Applications/Gamut.app
+```
+
+The second command is required because Gamut isn't yet signed with an Apple Developer ID or notarized. Homebrew quarantines downloaded apps (Homebrew 6 removed the old `--no-quarantine` opt-out), so on first launch Gatekeeper reports:
 
 > "Gamut" is damaged and can't be opened. You should move it to the Trash.
 
-This is Gatekeeper reacting to the download quarantine flag on an unsigned app — the app is not actually damaged. To run it, remove the quarantine flag once after installing:
+It isn't damaged — that's just Gatekeeper reacting to the quarantine flag on an unsigned app. The `xattr` command clears it once and the app launches normally. (`brew install` also prints this command as a caveat after installing.) Upgrade later with `brew upgrade --cask gamut`.
+
+The install command also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut); afterwards you can refer to the cask as just `gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
+
+> Homebrew is the recommended path for easy upgrades/removal, but on an unsigned build it doesn't avoid the `xattr` step — a notarized build would (see [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3)).
+
+### Manual `.dmg`
+
+Prefer not to use Homebrew? Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+
+Because the build is unsigned, this needs the same one-time step:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Gamut.app
