@@ -126,7 +126,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Tear down all PTYs when the main window closes so no shell is left
             // orphaned (the OS would reap them on process exit, but be explicit).
-            if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+            if matches!(
+                event,
+                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+            ) {
                 commands::terminal::kill_all(&window.state::<AppState>());
             }
         })
