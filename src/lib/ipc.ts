@@ -22,6 +22,8 @@ export interface Repo {
   created_at: string;
   tag_ids: number[];
   group_ids: number[];
+  /** The repo's directory no longer exists on disk (deleted/moved away). */
+  missing: boolean;
 }
 
 export interface DiscoveredRepo {
@@ -72,6 +74,10 @@ export interface Group {
   sort: number;
   icon: string | null;
   is_default: boolean;
+  /** When set, the group is bound to this folder and auto-synced. Immutable. */
+  folder_path: string | null;
+  /** UTC SQLite timestamp of the last folder scan, or null if never scanned. */
+  last_scan_at: string | null;
 }
 
 export interface RefLabel {
@@ -414,10 +420,23 @@ export const ipc = {
 
   // groups
   listGroups: () => invoke<Group[]>("list_groups"),
-  createGroup: (name: string, icon: string | null, parentId: number | null = null) =>
-    invoke<Group>("create_group", { name, parentId, icon }),
+  createGroup: (
+    name: string,
+    icon: string | null,
+    folderPath: string | null = null,
+    parentId: number | null = null,
+  ) => invoke<Group>("create_group", { name, parentId, icon, folderPath }),
   updateGroup: (id: number, name: string | null, icon: string | null) =>
     invoke<void>("update_group", { id, name, icon }),
+  /** Scan a folder-bound group's folder now; returns the count of new repos. */
+  syncGroupFolder: (groupId: number) =>
+    invoke<number>("sync_group_folder", { groupId }),
+  /** Bind a currently-unbound group to a folder (first bind; immutable after). */
+  bindGroupFolder: (id: number, folderPath: string) =>
+    invoke<void>("bind_group_folder", { id, folderPath }),
+  /** Detach a group from its bound folder (keeps existing members). */
+  unbindGroupFolder: (id: number) =>
+    invoke<void>("unbind_group_folder", { id }),
   reorderGroups: (groupIds: number[]) =>
     invoke<void>("reorder_groups", { groupIds }),
   deleteGroup: (id: number) => invoke<void>("delete_group", { id }),

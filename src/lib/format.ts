@@ -41,3 +41,13 @@ export function relativeTime(unixSeconds: number, now = Date.now()): string {
 export function formatDate(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
+
+/**
+ * Relative time from a SQLite `datetime('now')` string ("YYYY-MM-DD HH:MM:SS",
+ * UTC with no zone). Returns "" if it can't be parsed.
+ */
+export function relativeTimeSqlite(utc: string, now = Date.now()): string {
+  const ms = Date.parse(`${utc.replace(" ", "T")}Z`);
+  if (Number.isNaN(ms)) return "";
+  return relativeTime(Math.floor(ms / 1000), now);
+}

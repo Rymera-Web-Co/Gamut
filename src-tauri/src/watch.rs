@@ -18,7 +18,7 @@ use notify_debouncer_mini::{
     notify::{RecommendedWatcher, RecursiveMode},
     DebounceEventResult, Debouncer,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::git;
 use crate::state::AppState;
@@ -62,13 +62,36 @@ impl RepoWatcher {
         let debouncer = new_debouncer(
             Duration::from_millis(400),
             move |res: DebounceEventResult| {
-                // Emit only when a debounced batch touched something worth a
+                let Ok(events) = res else { return };
+
+                // If a batch touched anything under a folder-bound group, a new
+                // repo may have appeared — run an add-only sync. Bound folders
+                // are watched recursively, so newly-added repos are already
+                // covered; no watcher resync is needed here.
+                let bound: Vec<PathBuf> = app
+                    .state::<AppState>()
+                    .bound_folders
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+                let under_bound = !bound.is_empty()
+                    && events
+                        .iter()
+                        .any(|e| bound.iter().any(|b| e.path.starts_with(b)));
+                if under_bound {
+                    let added =
+                        crate::commands::repo::sync_all_bound_groups(&app.state::<AppState>());
+                    if added > 0 {
+                        let _ = app.emit(REPOS_CHANGED, ());
+                        return;
+                    }
+                }
+
+                // Otherwise emit only when the batch touched something worth a
                 // refresh (a working-tree file or a git-state ref), not on
                 // internal `.git` object/log noise.
-                if let Ok(events) = res {
-                    if events.iter().any(|e| is_interesting(&e.path)) {
-                        let _ = app.emit(REPOS_CHANGED, ());
-                    }
+                if events.iter().any(|e| is_interesting(&e.path)) {
+                    let _ = app.emit(REPOS_CHANGED, ());
                 }
             },
         )?;
@@ -98,16 +121,21 @@ impl RepoWatcher {
 
 /// Recompute the set of repo git dirs from the DB and update the watcher.
 pub fn resync(state: &AppState) {
-    let paths: Vec<String> = {
+    let (paths, bound): (Vec<String>, Vec<String>) = {
         let Ok(conn) = state.db.lock() else { return };
-        let Ok(mut stmt) = conn.prepare("SELECT path FROM repos") else {
-            return;
+        let read = |sql: &str| -> Vec<String> {
+            conn.prepare(sql)
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |r| r.get::<_, String>(0))
+                        .map(|it| it.filter_map(Result::ok).collect::<Vec<_>>())
+                })
+                .unwrap_or_default()
         };
-        let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .map(|it| it.filter_map(Result::ok).collect::<Vec<_>>())
-            .unwrap_or_default();
-        rows
+        let paths = read("SELECT path FROM repos");
+        let bound = read(
+            "SELECT folder_path FROM groups WHERE folder_path IS NOT NULL AND folder_path != ''",
+        );
+        (paths, bound)
     };
 
     let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
@@ -124,6 +152,23 @@ pub fn resync(state: &AppState) {
             desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
             desired.insert(git_dir, RecursiveMode::NonRecursive);
         }
+    }
+
+    // Watch each folder-bound group's folder recursively so newly-cloned repos
+    // anywhere beneath it are detected. The prune list is honored at scan time,
+    // not here, so heavy dirs (node_modules, …) are skipped when we re-discover.
+    let mut bound_canonical: Vec<PathBuf> = Vec::new();
+    for folder in &bound {
+        let pb = PathBuf::from(folder);
+        if !pb.is_dir() {
+            continue;
+        }
+        let canonical = pb.canonicalize().unwrap_or_else(|_| pb.clone());
+        desired.insert(canonical.clone(), RecursiveMode::Recursive);
+        bound_canonical.push(canonical);
+    }
+    if let Ok(mut g) = state.bound_folders.lock() {
+        *g = bound_canonical;
     }
 
     if let Ok(mut guard) = state.watcher.lock() {

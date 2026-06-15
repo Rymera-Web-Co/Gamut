@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  AlertTriangle,
   FolderGit2,
   GripVertical,
   Pencil,
@@ -87,21 +88,39 @@ function RepoRow({
       className={cn(
         "group flex cursor-pointer items-start gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
         dropOver && "border-t-2 border-t-[var(--color-primary)]",
+        repo.missing && "opacity-60",
         active
           ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
           : "border-l-transparent hover:bg-[var(--color-accent)]",
       )}
     >
       <GripVertical className="mt-0.5 size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
-      <FolderGit2
-        className={cn(
-          "mt-0.5 size-4 shrink-0",
-          active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
-        )}
-      />
+      {repo.missing ? (
+        <AlertTriangle
+          className="mt-0.5 size-4 shrink-0 text-[var(--color-destructive)]"
+          aria-label="Folder no longer exists"
+        >
+          <title>Folder no longer exists on disk</title>
+        </AlertTriangle>
+      ) : (
+        <FolderGit2
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+          )}
+        />
+      )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1">
-          <span className="min-w-0 flex-1 truncate leading-tight">{repo.name}</span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate leading-tight",
+              repo.missing && "line-through decoration-[var(--color-destructive)]/60",
+            )}
+            title={repo.missing ? "Folder no longer exists on disk" : undefined}
+          >
+            {repo.name}
+          </span>
           <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
             <PopoverTrigger asChild>
               <button

@@ -20,6 +20,11 @@ pub struct Group {
     pub sort: i64,
     pub icon: Option<String>,
     pub is_default: bool,
+    /// When set, the group is bound to this folder and auto-synced with it.
+    /// NULL/empty = a normal manual group. Immutable once set.
+    pub folder_path: Option<String>,
+    /// UTC timestamp of the last folder scan (NULL until first scan).
+    pub last_scan_at: Option<String>,
 }
 
 fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -93,8 +98,8 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
     // one. The default group ships with sort = -1, so it starts first but can
     // be moved like any other.
     let mut stmt = conn.prepare(
-        "SELECT id, name, parent_id, sort, icon, is_default FROM groups
-         ORDER BY sort, name COLLATE NOCASE",
+        "SELECT id, name, parent_id, sort, icon, is_default, folder_path, last_scan_at
+         FROM groups ORDER BY sort, name COLLATE NOCASE",
     )?;
     let groups = stmt
         .query_map([], |row| {
@@ -105,6 +110,8 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
                 sort: row.get(3)?,
                 icon: row.get(4)?,
                 is_default: row.get::<_, i64>(5)? != 0,
+                folder_path: row.get(6)?,
+                last_scan_at: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -117,13 +124,23 @@ pub fn create_group(
     name: String,
     parent_id: Option<i64>,
     icon: Option<String>,
+    folder_path: Option<String>,
 ) -> AppResult<Group> {
-    let conn = lock(&state)?;
-    conn.execute(
-        "INSERT INTO groups (name, parent_id, icon) VALUES (?1, ?2, ?3)",
-        rusqlite::params![name, parent_id, icon],
-    )?;
-    let id = conn.last_insert_rowid();
+    // Treat an empty string as "no folder" so a blank picker doesn't bind.
+    let folder_path = folder_path.filter(|p| !p.trim().is_empty());
+    let id = {
+        let conn = lock(&state)?;
+        conn.execute(
+            "INSERT INTO groups (name, parent_id, icon, folder_path) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![name, parent_id, icon, folder_path],
+        )?;
+        conn.last_insert_rowid()
+    };
+    // A freshly bound folder should start being watched even before its first
+    // scan completes, so new repos are picked up immediately.
+    if folder_path.is_some() {
+        crate::watch::resync(&state);
+    }
     Ok(Group {
         id,
         name,
@@ -131,6 +148,8 @@ pub fn create_group(
         sort: 0,
         icon,
         is_default: false,
+        folder_path,
+        last_scan_at: None,
     })
 }
 
@@ -154,6 +173,45 @@ pub fn update_group(
         "UPDATE groups SET icon = ?1 WHERE id = ?2",
         rusqlite::params![icon, id],
     )?;
+    // Note: `folder_path` is intentionally not updatable here — a bound folder
+    // is immutable. Use `unbind_group_folder` to detach it entirely.
+    Ok(())
+}
+
+/// Bind a currently-unbound group to a folder (first bind). No-op if the group
+/// is already bound — the path is immutable once set. The caller should follow
+/// up with `sync_group_folder` to run the initial scan.
+#[tauri::command]
+pub fn bind_group_folder(state: State<AppState>, id: i64, folder_path: String) -> AppResult<()> {
+    let folder = folder_path.trim();
+    if folder.is_empty() {
+        return Ok(());
+    }
+    {
+        let conn = lock(&state)?;
+        conn.execute(
+            "UPDATE groups SET folder_path = ?1
+             WHERE id = ?2 AND (folder_path IS NULL OR folder_path = '')",
+            rusqlite::params![folder, id],
+        )?;
+    }
+    crate::watch::resync(&state);
+    Ok(())
+}
+
+/// Detach a group from its bound folder, converting it back to a plain manual
+/// group. Existing members are kept; the folder is simply no longer watched.
+#[tauri::command]
+pub fn unbind_group_folder(state: State<AppState>, id: i64) -> AppResult<()> {
+    {
+        let conn = lock(&state)?;
+        conn.execute(
+            "UPDATE groups SET folder_path = NULL, last_scan_at = NULL WHERE id = ?1",
+            [id],
+        )?;
+    }
+    // Stop watching the now-detached folder.
+    crate::watch::resync(&state);
     Ok(())
 }
 
