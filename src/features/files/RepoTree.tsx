@@ -362,6 +362,7 @@ export function RepoTree({
 
       <ContextMenu at={menu?.pos ?? null} onClose={() => setMenu(null)}>
         <ContextMenuItem
+          className="text-xs"
           onClick={() => {
             setDialog({ mode: "file", dir: targetDir });
             setMenu(null);
@@ -371,6 +372,7 @@ export function RepoTree({
           New File…
         </ContextMenuItem>
         <ContextMenuItem
+          className="text-xs"
           onClick={() => {
             setDialog({ mode: "folder", dir: targetDir });
             setMenu(null);
@@ -381,6 +383,7 @@ export function RepoTree({
         </ContextMenuItem>
         <div className="my-1 border-t border-[var(--color-border)]" />
         <ContextMenuItem
+          className="text-xs"
           onClick={() => {
             const path = menu!.path;
             setMenu(null);
@@ -394,6 +397,7 @@ export function RepoTree({
           Copy Path
         </ContextMenuItem>
         <ContextMenuItem
+          className="text-xs"
           onClick={() => {
             void copy(menu!.path, "Copied relative path");
             setMenu(null);
