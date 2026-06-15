@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -14,15 +20,6 @@ import {
   ContextMenuItem,
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { copy } from "@/lib/clipboard";
 import { fileIcon } from "@/lib/fileIcons";
 import { ipc, type DirEntry } from "@/lib/ipc";
@@ -56,6 +53,13 @@ interface MenuTarget {
   pos: ContextMenuPosition;
 }
 
+/** An in-progress New File / New Folder, rendered as an inline input row inside
+ * directory `dir` (root = ""). */
+interface Pending {
+  mode: "file" | "folder";
+  dir: string;
+}
+
 // Mirrors the status palette used by the diff FileTree.
 function statusColor(status: string): string {
   switch (status) {
@@ -80,6 +84,10 @@ interface NodeProps {
   openPaths: Set<string>;
   onToggle: (path: string) => void;
   onContextMenu: (target: MenuTarget) => void;
+  pending: Pending | null;
+  creating: boolean;
+  onCreate: (name: string) => void;
+  onCancelCreate: () => void;
 }
 
 function Entry({
@@ -87,7 +95,6 @@ function Entry({
   ...props
 }: NodeProps & { entry: DirEntry }) {
   const {
-    repoId,
     parentPath,
     depth,
     selectedPath,
@@ -139,19 +146,7 @@ function Entry({
             />
           )}
         </button>
-        {open && (
-          <Children
-            repoId={repoId}
-            parentPath={path}
-            depth={depth + 1}
-            selectedPath={selectedPath}
-            onSelect={onSelect}
-            changes={changes}
-            openPaths={openPaths}
-            onToggle={onToggle}
-            onContextMenu={onContextMenu}
-          />
-        )}
+        {open && <Children {...props} parentPath={path} depth={depth + 1} />}
       </div>
     );
   }
@@ -193,85 +188,103 @@ function Entry({
   );
 }
 
+/** Inline name input for a New File / New Folder, rendered as a tree row. */
+function CreateRow({
+  mode,
+  depth,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  mode: "file" | "folder";
+  depth: number;
+  busy: boolean;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const Icon = mode === "file" ? FilePlus : FolderPlus;
+  const trimmed = name.trim();
+  return (
+    <div
+      className="flex items-center gap-2 py-0.5 pr-3"
+      style={{ paddingLeft: depth * 14 + 8 }}
+    >
+      <Icon className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
+      <input
+        autoFocus
+        value={name}
+        placeholder={mode === "file" ? "filename.ext" : "folder name"}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            if (trimmed && !busy) onSubmit(trimmed);
+          } else if (e.key === "Escape") {
+            onCancel();
+          }
+        }}
+        // Click-away cancels, matching an inline rename. Skipped while a create
+        // is in flight so the row doesn't vanish mid-submit.
+        onBlur={() => {
+          if (!busy) onCancel();
+        }}
+        className="min-w-0 flex-1 rounded-sm border border-[var(--color-primary)] bg-[var(--color-background)] px-1 py-0.5 font-mono text-xs outline-none"
+      />
+    </div>
+  );
+}
+
 function Children(props: NodeProps) {
-  const { repoId, parentPath, depth } = props;
+  const { repoId, parentPath, depth, pending, creating, onCreate, onCancelCreate } =
+    props;
   const { data, isLoading, isError } = useDirChildren(repoId, parentPath, true);
 
+  const showCreate = pending != null && pending.dir === parentPath;
+  const createRow = showCreate ? (
+    <CreateRow
+      mode={pending.mode}
+      depth={depth}
+      busy={creating}
+      onSubmit={onCreate}
+      onCancel={onCancelCreate}
+    />
+  ) : null;
+
   const indent = { paddingLeft: depth * 14 + 22 } as const;
+  let body: ReactNode = null;
   if (isLoading) {
-    return (
+    body = (
       <p style={indent} className="py-1 text-xs text-[var(--color-muted-foreground)]">
         Loading…
       </p>
     );
-  }
-  if (isError) {
-    return (
+  } else if (isError) {
+    body = (
       <p style={indent} className="py-1 text-xs text-[var(--color-destructive)]">
         Failed to load
       </p>
     );
+  } else {
+    const entries = data ?? [];
+    if (entries.length === 0) {
+      // Suppress the "empty" hint while the inline create row holds the spot.
+      body = showCreate ? null : (
+        <p style={indent} className="py-1 text-xs italic text-[var(--color-muted-foreground)]">
+          empty
+        </p>
+      );
+    } else {
+      body = entries.map((entry) => (
+        <Entry key={entry.name} entry={entry} {...props} />
+      ));
+    }
   }
-  const entries = data ?? [];
-  if (entries.length === 0) {
-    return (
-      <p style={indent} className="py-1 text-xs italic text-[var(--color-muted-foreground)]">
-        empty
-      </p>
-    );
-  }
+
   return (
     <>
-      {entries.map((entry) => (
-        <Entry key={entry.name} entry={entry} {...props} />
-      ))}
+      {createRow}
+      {body}
     </>
-  );
-}
-
-/** Inline name prompt for New File / New Folder. */
-function CreateDialog({
-  mode,
-  dir,
-  busy,
-  onCancel,
-  onSubmit,
-}: {
-  mode: "file" | "folder";
-  dir: string;
-  busy: boolean;
-  onCancel: () => void;
-  onSubmit: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const trimmed = name.trim();
-  const label = mode === "file" ? "New file" : "New folder";
-  return (
-    <Dialog open onOpenChange={(o) => !o && onCancel()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{label}</DialogTitle>
-        </DialogHeader>
-        <p className="truncate font-mono text-xs text-[var(--color-muted-foreground)]">
-          in {dir === "" ? "/" : dir}
-        </p>
-        <Input
-          autoFocus
-          placeholder={mode === "file" ? "filename.ext" : "folder name"}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && trimmed && !busy && onSubmit(trimmed)}
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={onCancel} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={() => onSubmit(trimmed)} disabled={!trimmed || busy}>
-            Create
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -292,15 +305,15 @@ export function RepoTree({
   // new entry becomes visible immediately.
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuTarget | null>(null);
-  const [dialog, setDialog] = useState<{ mode: "file" | "folder"; dir: string } | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Expansion is path-keyed, so drop it when switching repos to avoid carrying
-  // one repo's open dirs into another.
+  // Path-keyed state, so drop it when switching repos to avoid carrying one
+  // repo's open dirs / in-progress create into another.
   useEffect(() => {
     setOpenPaths(new Set());
     setMenu(null);
-    setDialog(null);
+    setPending(null);
   }, [repoId]);
 
   const onToggle = useCallback((path: string) => {
@@ -319,27 +332,34 @@ export function RepoTree({
       : parentDir(menu.path)
     : "";
 
+  function startCreate(mode: "file" | "folder") {
+    // Force the target dir open so its inline input row is visible.
+    if (targetDir) setOpenPaths((prev) => new Set(prev).add(targetDir));
+    setPending({ mode, dir: targetDir });
+    setMenu(null);
+  }
+
   async function submitCreate(name: string) {
-    if (!dialog) return;
+    if (!pending) return;
     if (name.includes("/")) {
       toast.error("Name can't contain a slash");
       return;
     }
-    const path = join(dialog.dir, name);
+    const path = join(pending.dir, name);
     setBusy(true);
     try {
-      if (dialog.mode === "file") {
+      if (pending.mode === "file") {
         await ipc.createFile(repoId, path);
       } else {
         await ipc.createDir(repoId, path);
       }
-      // Refresh the affected directory and force it open so the entry shows.
-      await queryClient.invalidateQueries({ queryKey: ["dir", repoId, dialog.dir] });
-      setOpenPaths((prev) => new Set(prev).add(dialog.dir));
-      if (dialog.mode === "file") onSelect(path);
+      // Refresh the affected directory; it's already open from startCreate.
+      await queryClient.invalidateQueries({ queryKey: ["dir", repoId, pending.dir] });
+      if (pending.mode === "file") onSelect(path);
       toast.success(`Created ${path}`);
-      setDialog(null);
+      setPending(null);
     } catch (e) {
+      // Keep the row open (name preserved) so the user can fix and retry.
       toast.error(String(e));
     } finally {
       setBusy(false);
@@ -358,26 +378,18 @@ export function RepoTree({
         openPaths={openPaths}
         onToggle={onToggle}
         onContextMenu={setMenu}
+        pending={pending}
+        creating={busy}
+        onCreate={submitCreate}
+        onCancelCreate={() => setPending(null)}
       />
 
       <ContextMenu at={menu?.pos ?? null} onClose={() => setMenu(null)}>
-        <ContextMenuItem
-          className="text-xs"
-          onClick={() => {
-            setDialog({ mode: "file", dir: targetDir });
-            setMenu(null);
-          }}
-        >
+        <ContextMenuItem className="text-xs" onClick={() => startCreate("file")}>
           <FilePlus />
           New File…
         </ContextMenuItem>
-        <ContextMenuItem
-          className="text-xs"
-          onClick={() => {
-            setDialog({ mode: "folder", dir: targetDir });
-            setMenu(null);
-          }}
-        >
+        <ContextMenuItem className="text-xs" onClick={() => startCreate("folder")}>
           <FolderPlus />
           New Folder…
         </ContextMenuItem>
@@ -407,16 +419,6 @@ export function RepoTree({
           Copy Relative Path
         </ContextMenuItem>
       </ContextMenu>
-
-      {dialog && (
-        <CreateDialog
-          mode={dialog.mode}
-          dir={dialog.dir}
-          busy={busy}
-          onCancel={() => setDialog(null)}
-          onSubmit={submitCreate}
-        />
-      )}
     </>
   );
 }
