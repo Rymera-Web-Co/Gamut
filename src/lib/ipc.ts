@@ -462,6 +462,15 @@ export const ipc = {
     invoke<FileContent>("read_file", { repoId, relPath }),
   writeFile: (repoId: number, relPath: string, contents: string) =>
     invoke<void>("write_file", { repoId, relPath, contents }),
+  /** Create an empty file; rejects if the path already exists. */
+  createFile: (repoId: number, relPath: string) =>
+    invoke<void>("create_file", { repoId, relPath }),
+  /** Create a directory; rejects if the path already exists. */
+  createDir: (repoId: number, relPath: string) =>
+    invoke<void>("create_dir", { repoId, relPath }),
+  /** Resolve a repo-relative tree path to its absolute filesystem path. */
+  resolvePath: (repoId: number, relPath: string) =>
+    invoke<string>("resolve_path", { repoId, relPath }),
   revealInFileManager: (repoId: number, relPath?: string | null) =>
     invoke<void>("reveal_in_file_manager", { repoId, relPath: relPath ?? null }),
 

@@ -226,6 +226,52 @@ pub fn write_file(
     Ok(())
 }
 
+/// Create an empty file at `rel_path`. Fails (rather than overwriting) if a
+/// file or directory already exists there. Used by the Files-tab "New File…"
+/// action.
+#[tauri::command]
+pub fn create_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<()> {
+    let root = repo_path(&state, repo_id)?;
+    let path = safe_join(&root, &rel_path)?;
+    if path.exists() {
+        return Err(AppError::Other(
+            "a file or folder with that name already exists".into(),
+        ));
+    }
+    // `create_new` makes this atomic: it errors if the path appears between the
+    // check above and the write, so we never clobber an existing file.
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    Ok(())
+}
+
+/// Create a directory at `rel_path`. Fails (rather than reusing) if anything
+/// already exists there. Used by the Files-tab "New Folder…" action.
+#[tauri::command]
+pub fn create_dir(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<()> {
+    let root = repo_path(&state, repo_id)?;
+    let path = safe_join(&root, &rel_path)?;
+    if path.exists() {
+        return Err(AppError::Other(
+            "a file or folder with that name already exists".into(),
+        ));
+    }
+    fs::create_dir(&path)?;
+    Ok(())
+}
+
+/// Resolve a repo-relative tree path to its absolute filesystem path. Used by
+/// the Files-tab "Copy Path" action (Copy Relative Path uses the tree path
+/// directly and needs no backend round-trip).
+#[tauri::command]
+pub fn resolve_path(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<String> {
+    let root = repo_path(&state, repo_id)?;
+    let path = safe_join(&root, &rel_path)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Reveal the repo (or a file within it) in the OS file manager — Finder on
 /// macOS, Explorer on Windows, the default manager on Linux.
 #[tauri::command]
