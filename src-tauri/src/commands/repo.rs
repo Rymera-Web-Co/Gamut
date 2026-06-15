@@ -470,13 +470,19 @@ mod tests {
         let again = sync_folder_group(&conn, 1, &folder).unwrap();
         assert_eq!(again, 0, "second scan adds nothing");
         let members: i64 = conn
-            .query_row("SELECT COUNT(*) FROM repo_groups WHERE group_id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM repo_groups WHERE group_id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(members, 2);
 
         // last_scan_at is stamped.
         let stamped: Option<String> = conn
-            .query_row("SELECT last_scan_at FROM groups WHERE id = 1", [], |r| r.get(0))
+            .query_row("SELECT last_scan_at FROM groups WHERE id = 1", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(stamped.is_some());
 
@@ -509,7 +515,11 @@ mod tests {
         // ...but the default group never gets explicit memberships (they show
         // as ungrouped instead).
         let members: i64 = conn
-            .query_row("SELECT COUNT(*) FROM repo_groups WHERE group_id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM repo_groups WHERE group_id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(members, 0);
 
