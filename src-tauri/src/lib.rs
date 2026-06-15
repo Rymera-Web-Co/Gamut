@@ -82,6 +82,7 @@ pub fn run() {
             commands::files::write_file,
             commands::files::create_file,
             commands::files::create_dir,
+            commands::files::delete_path,
             commands::files::resolve_path,
             commands::files::reveal_in_file_manager,
             commands::review::review_files,

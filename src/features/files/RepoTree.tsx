@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FolderPlus,
   Link as LinkIcon,
+  Trash2,
 } from "lucide-react";
 
 import {
@@ -293,11 +294,14 @@ export function RepoTree({
   repoId,
   selectedPath,
   onSelect,
+  onDeleted,
   changes,
 }: {
   repoId: number;
   selectedPath: string | null;
   onSelect: (path: string) => void;
+  /** A path (file or directory) was deleted — lets the editor drop it if open. */
+  onDeleted: (path: string) => void;
   changes: TreeChanges;
 }) {
   const queryClient = useQueryClient();
@@ -366,6 +370,33 @@ export function RepoTree({
     }
   }
 
+  async function deleteTarget(target: MenuTarget) {
+    const ok = window.confirm(
+      target.kind === "dir"
+        ? `Delete folder "${target.path}" and everything inside it? This cannot be undone.`
+        : `Delete "${target.path}"? This cannot be undone.`,
+    );
+    if (!ok) return;
+    try {
+      await ipc.deletePath(repoId, target.path);
+      await queryClient.invalidateQueries({
+        queryKey: ["dir", repoId, parentDir(target.path)],
+      });
+      // Drop the deleted dir (and any of its descendants) from the open set.
+      setOpenPaths((prev) => {
+        const next = new Set<string>();
+        for (const p of prev) {
+          if (p !== target.path && !p.startsWith(`${target.path}/`)) next.add(p);
+        }
+        return next;
+      });
+      onDeleted(target.path);
+      toast.success(`Deleted ${target.path}`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }
+
   return (
     <>
       <Children
@@ -417,6 +448,18 @@ export function RepoTree({
         >
           <LinkIcon />
           Copy Relative Path
+        </ContextMenuItem>
+        <div className="my-1 border-t border-[var(--color-border)]" />
+        <ContextMenuItem
+          className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+          onClick={() => {
+            const target = menu!;
+            setMenu(null);
+            void deleteTarget(target);
+          }}
+        >
+          <Trash2 />
+          Delete
         </ContextMenuItem>
       </ContextMenu>
     </>

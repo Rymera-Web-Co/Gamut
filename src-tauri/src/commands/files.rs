@@ -262,6 +262,29 @@ pub fn create_dir(state: State<AppState>, repo_id: i64, rel_path: String) -> App
     Ok(())
 }
 
+/// Delete a file or directory at `rel_path`; directories are removed
+/// recursively. Refuses to delete the working-tree root. Used by the Files-tab
+/// "Delete" action.
+#[tauri::command]
+pub fn delete_path(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<()> {
+    if rel_path.trim().is_empty() {
+        return Err(AppError::Other(
+            "refusing to delete the repository root".into(),
+        ));
+    }
+    let root = repo_path(&state, repo_id)?;
+    let path = safe_join(&root, &rel_path)?;
+    // `safe_join` resolves symlinks, so `path` is the real target and is
+    // guaranteed to live inside the repo root.
+    let meta = fs::symlink_metadata(&path)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(&path)?;
+    } else {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
 /// Resolve a repo-relative tree path to its absolute filesystem path. Used by
 /// the Files-tab "Copy Path" action (Copy Relative Path uses the tree path
 /// directly and needs no backend round-trip).

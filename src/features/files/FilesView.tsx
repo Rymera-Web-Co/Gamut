@@ -160,6 +160,19 @@ export function FilesView() {
     if (repoId != null) rememberFile(repoId, path);
   }
 
+  // A file/dir was deleted from the tree: if the open file lived there, drop
+  // the buffer so the editor doesn't dangle on a gone path.
+  function onTreeDeleted(path: string) {
+    if (repoId == null || selectedPath == null) return;
+    if (selectedPath === path || selectedPath.startsWith(`${path}/`)) {
+      loadedRef.current = null;
+      setSelectedPath(null);
+      setValue("");
+      setBaseline("");
+      rememberFile(repoId, null);
+    }
+  }
+
   function viewChanges() {
     setReviewMode("working");
     setView("review");
@@ -243,6 +256,7 @@ export function FilesView() {
               repoId={repoId}
               selectedPath={selectedPath}
               onSelect={selectFile}
+              onDeleted={onTreeDeleted}
               changes={changes}
             />
           </div>
