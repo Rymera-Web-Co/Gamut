@@ -7,7 +7,6 @@ import {
   Moon,
   PanelLeft,
   PanelLeftClose,
-  Settings,
   Sun,
 } from "lucide-react";
 
@@ -33,7 +32,6 @@ export function TopTabs() {
   const setView = useUiStore((s) => s.setView);
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
-  const toggleSettings = useUiStore((s) => s.toggleSettings);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
   const [menu, setMenu] = useState<ContextMenuPosition | null>(null);
@@ -84,15 +82,6 @@ export function TopTabs() {
           onClick={toggleTheme}
         >
           {theme === "dark" ? <Sun /> : <Moon />}
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          title="Settings (⌘,)"
-          onClick={toggleSettings}
-        >
-          <Settings />
         </Button>
       </div>
 
