@@ -14,6 +14,7 @@ anywhere in the app; the rest apply within a specific view or input.
 | `⌘/Ctrl+B` | Toggle the repository sidebar |
 | `⌘/Ctrl+J` | Toggle light / dark theme |
 | <code>⌘/Ctrl+&#96;</code> | Toggle the integrated terminal |
+| <code>⌘/Ctrl+⇧+&#96;</code> | Maximize / restore the integrated terminal |
 
 These are registered globally — see [`useKeyboardShortcuts`](../src/lib/useKeyboardShortcuts.ts).
 
