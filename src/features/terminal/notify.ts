@@ -96,7 +96,7 @@ async function playCustom(path: string) {
   if (!ac) return;
   try {
     if (!customCache || customCache.path !== path) {
-      const buf = await ipc.readFileBytes(path);
+      const buf = await ipc.readAudioFile(path);
       // decodeAudioData detaches the buffer; we cache the decoded result.
       const buffer = await ac.decodeAudioData(buf);
       customCache = { path, buffer };

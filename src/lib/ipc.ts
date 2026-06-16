@@ -682,8 +682,9 @@ export const ipc = {
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalKill: (sessionId: string) =>
     invoke<void>("terminal_kill", { sessionId }),
-  /** Read an arbitrary file's raw bytes by absolute path (custom sounds, #28). */
-  readFileBytes: (path: string) => invoke<ArrayBuffer>("read_file_bytes", { path }),
+  /** Read a custom notification sound file's raw bytes by path (#28). The
+   * backend rejects non-audio extensions, so this isn't a general file read. */
+  readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */

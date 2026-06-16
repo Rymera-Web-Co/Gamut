@@ -101,8 +101,9 @@ group rail (`src/features/terminal/activity.tsx`).
 
 The same bell/exit events drive notifications via `src/features/terminal/notify.ts`:
 built-in sounds are synthesized with the Web Audio API (no bundled assets), while a custom
-sound file is read through the `read_file_bytes` command (`src-tauri/src/commands/files.rs`)
-and played from a Blob URL — so no asset-protocol scope is needed. Desktop notifications go
+sound file is read through the `read_audio_file` command (`src-tauri/src/commands/files.rs`,
+which rejects non-audio extensions and caps the size) and decoded with the Web Audio API —
+so no asset-protocol scope is needed. Desktop notifications go
 through [`tauri-plugin-notification`](https://v2.tauri.app/plugin/notification/) (registered
 in `src-tauri/src/lib.rs` with the `notification:default` capability). Preferences live in
 `src/lib/settings.ts` (`terminalNotify*` keys) and are edited in the **Notifications** pane
