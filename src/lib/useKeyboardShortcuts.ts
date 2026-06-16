@@ -8,9 +8,13 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
  *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
+ *   ⌘/Ctrl+⇧+F → repo-wide search (Files view)
  *   ⌘/Ctrl+` → toggle integrated terminal
  *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
  *   ⌘/Ctrl+, → settings
+ *
+ * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view,
+ * where the Monaco instance lives.
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
@@ -18,6 +22,7 @@ export function useKeyboardShortcuts() {
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
+  const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
   const toggleTheme = useTheme((s) => s.toggle);
 
   useEffect(() => {
@@ -43,6 +48,12 @@ export function useKeyboardShortcuts() {
         case "b":
           e.preventDefault();
           toggleRepoSidebar();
+          break;
+        // ⇧+F arrives as "F"; opens repo-wide search (plain ⌘/Ctrl+F is the
+        // editor's per-file find, handled in the Files view).
+        case "F":
+          e.preventDefault();
+          focusRepoSearch();
           break;
         case "j":
           e.preventDefault();
@@ -71,6 +82,7 @@ export function useKeyboardShortcuts() {
     toggleTerminal,
     toggleTerminalMaximized,
     toggleSettings,
+    focusRepoSearch,
     toggleTheme,
   ]);
 }

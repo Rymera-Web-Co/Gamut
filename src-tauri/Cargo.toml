@@ -40,3 +40,8 @@ notify-debouncer-mini = "0.5"
 # required for resize, colors, line discipline and interactive apps (vim/htop);
 # bare piped stdio can't provide those.
 portable-pty = "0.8"
+# Repo-wide find & replace: `ignore` is ripgrep's gitignore-aware directory
+# walker (with glob overrides); `regex` powers the match/replace engine and
+# backs the case-sensitive / whole-word / regex toggles.
+ignore = "0.4"
+regex = "1"

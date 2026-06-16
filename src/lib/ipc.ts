@@ -347,6 +347,65 @@ export interface SyncStatus {
   behind: number;
 }
 
+/** Repo-wide find & replace query. `includes`/`excludes` are gitignore-style
+ * globs (e.g. `src/**`, `*.rs`); empty `includes` means "everything". */
+export interface SearchQuery {
+  query: string;
+  isRegex: boolean;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  includes: string[];
+  excludes: string[];
+  includeIgnored: boolean;
+}
+
+/** A match's span within a line preview, as UTF-16 offsets (slice the JS
+ * string directly). */
+export interface MatchRange {
+  start: number;
+  end: number;
+}
+
+export interface LineHit {
+  line: number;
+  preview: string;
+  matches: MatchRange[];
+  previewTruncated: boolean;
+}
+
+export interface FileHits {
+  path: string;
+  hits: LineHit[];
+  matchCount: number;
+  /** More matches in this file than were returned. */
+  truncated: boolean;
+}
+
+export interface SearchResults {
+  files: FileHits[];
+  totalMatches: number;
+  filesWithMatches: number;
+  /** A global cap was hit; results are partial. */
+  truncated: boolean;
+}
+
+/** Which lines of one file to replace (post opt-out). */
+export interface ReplaceTarget {
+  path: string;
+  lines: number[];
+}
+
+export interface SkippedFile {
+  path: string;
+  reason: string;
+}
+
+export interface ReplaceResult {
+  filesChanged: number;
+  replacements: number;
+  skipped: SkippedFile[];
+}
+
 export const ipc = {
   ping: (name?: string) => invoke<string>("ping", { name }),
   dbHealth: () => invoke<DbHealth>("db_health"),
@@ -484,6 +543,22 @@ export const ipc = {
     invoke<string>("resolve_path", { repoId, relPath }),
   revealInFileManager: (repoId: number, relPath?: string | null) =>
     invoke<void>("reveal_in_file_manager", { repoId, relPath: relPath ?? null }),
+
+  // repo-wide find & replace (per-file find is Monaco's native widget)
+  searchRepo: (repoId: number, query: SearchQuery) =>
+    invoke<SearchResults>("search_repo", { repoId, query }),
+  replaceInFiles: (
+    repoId: number,
+    query: SearchQuery,
+    replacement: string,
+    targets: ReplaceTarget[],
+  ) =>
+    invoke<ReplaceResult>("replace_in_files", {
+      repoId,
+      query,
+      replacement,
+      targets,
+    }),
 
   // local review
   reviewFiles: (repoId: number, source: ReviewSource, base?: string) =>
