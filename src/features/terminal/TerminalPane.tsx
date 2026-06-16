@@ -18,6 +18,7 @@ import {
   type TermTab,
 } from "@/store/ui";
 import { ActivityDot } from "./activity";
+import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
@@ -49,6 +50,23 @@ function xtermTheme(theme: Theme) {
 }
 
 const encoder = new TextEncoder();
+
+/**
+ * Find which group/tab a pane belongs to (a background pane firing an event may
+ * live in any group/tab, not the active one). Used to build the notification's
+ * click-to-focus target and pick a human title.
+ */
+function locatePane(paneId: string): { target: NotifyTarget; title: string } | null {
+  const { terminals } = useUiStore.getState();
+  for (const [gid, gt] of Object.entries(terminals)) {
+    for (const tab of gt.tabs) {
+      if (tab.panes.some((p) => p.id === paneId)) {
+        return { target: { groupId: Number(gid), tabId: tab.id, paneId }, title: tab.title };
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * The integrated terminal pane: a per-group set of tabs, each with one or more
@@ -134,9 +152,14 @@ export function TerminalPane() {
     term.onData((data) => {
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
     });
-    // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity.
+    // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity,
+    // and fires the audible/desktop cue. The focused pane is exempt from both.
     term.onBell(() => {
-      if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "bell");
+      if (pane.id !== visiblePaneRef.current) {
+        markTermActivity(pane.id, "bell");
+        const loc = locatePane(pane.id);
+        if (loc) notifyTerminalEvent({ kind: "bell", title: loc.title, target: loc.target });
+      }
     });
     el.addEventListener("mousedown", () => {
       const { groupId, tabId } = ctxRef.current;
@@ -239,7 +262,11 @@ export function TerminalPane() {
       const e = sessionsRef.current.get(key);
       if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
       setDeadKeys((prev) => new Set(prev).add(key));
-      if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
+      if (key !== visiblePaneRef.current) {
+        markTermActivity(key, "exit");
+        const loc = locatePane(key);
+        if (loc) notifyTerminalEvent({ kind: "exit", title: loc.title, target: loc.target });
+      }
     });
     return () => {
       unlisten.then((off) => off());

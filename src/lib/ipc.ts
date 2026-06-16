@@ -682,10 +682,27 @@ export const ipc = {
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalKill: (sessionId: string) =>
     invoke<void>("terminal_kill", { sessionId }),
+  /** Read a custom notification sound file's raw bytes by path (#28). The
+   * backend rejects non-audio extensions, so this isn't a general file read. */
+  readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),
 };
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */
 export async function pickDirectory(title?: string): Promise<string | null> {
   const result = await openDialog({ directory: true, multiple: false, title });
+  return typeof result === "string" ? result : null;
+}
+
+/** Audio file extensions a custom notification sound may use. */
+export const AUDIO_EXTENSIONS = ["wav", "mp3", "ogg", "m4a", "aac", "flac"];
+
+/** Open the native file picker filtered to audio files. Returns a path or null. */
+export async function pickAudioFile(title?: string): Promise<string | null> {
+  const result = await openDialog({
+    directory: false,
+    multiple: false,
+    title: title ?? "Choose a notification sound",
+    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
+  });
   return typeof result === "string" ? result : null;
 }

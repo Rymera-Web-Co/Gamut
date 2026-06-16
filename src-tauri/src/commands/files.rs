@@ -212,6 +212,43 @@ pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppR
     }
 }
 
+/// Largest custom notification sound we'll load into the webview to play.
+const MAX_SOUND_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Audio extensions a custom notification sound may use. Mirrors
+/// `AUDIO_EXTENSIONS` in `src/lib/ipc.ts`; kept here as the *authoritative*
+/// guard since the frontend picker's filter is UI-only.
+const ALLOWED_SOUND_EXTS: &[&str] = &["wav", "mp3", "ogg", "m4a", "aac", "flac"];
+
+/// Read a custom notification sound file's raw bytes by absolute path (see
+/// issue #28): the frontend decodes them with the Web Audio API, so no
+/// asset-protocol scope is needed. Returns the bytes as a raw `ArrayBuffer`.
+///
+/// This is deliberately *not* a general file-read primitive — it only serves
+/// audio playback, so it rejects anything without an allowed audio extension
+/// (the picker's filter is UI-only and can't be trusted) and caps the size, so
+/// a compromised webview or tampered setting can't turn it into an arbitrary
+/// exfiltration channel.
+#[tauri::command]
+pub fn read_audio_file(path: String) -> AppResult<tauri::ipc::Response> {
+    let ext = Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !ALLOWED_SOUND_EXTS.contains(&ext.as_str()) {
+        return Err(AppError::Other("unsupported audio file type".into()));
+    }
+    let meta = fs::metadata(&path)?;
+    if !meta.is_file() {
+        return Err(AppError::Other("not a file".into()));
+    }
+    if meta.len() > MAX_SOUND_BYTES {
+        return Err(AppError::Other("file too large".into()));
+    }
+    Ok(tauri::ipc::Response::new(fs::read(&path)?))
+}
+
 /// Write edited contents back to a working-tree file.
 #[tauri::command]
 pub fn write_file(

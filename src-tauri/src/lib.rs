@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Database lives in the platform app-data directory, e.g.
             // ~/Library/Application Support/com.rymera.gamut/gamut.db on macOS.
@@ -85,6 +86,7 @@ pub fn run() {
             commands::history::blame,
             commands::files::list_dir,
             commands::files::read_file,
+            commands::files::read_audio_file,
             commands::files::write_file,
             commands::files::create_file,
             commands::files::create_dir,
