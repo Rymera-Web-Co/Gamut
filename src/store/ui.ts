@@ -48,6 +48,9 @@ interface UiState {
   // Integrated terminal pane. `terminalOpen` (persisted) toggles the bottom
   // pane; `terminals` holds each group's tabs/panes (in-memory, by group id).
   terminalOpen: boolean;
+  // Whether the terminal pane is maximized to (near) full content-area height.
+  // In-memory only — distinct from open/close and reset when the pane is hidden.
+  terminalMaximized: boolean;
   terminals: Record<number, GroupTerminals>;
   // Monotonic counter for minting unique pane/tab ids.
   nextTermId: number;
@@ -67,6 +70,8 @@ interface UiState {
   toggleRepoSidebar: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
+  setTerminalMaximized: (max: boolean) => void;
+  toggleTerminalMaximized: () => void;
   /** Open a new terminal tab in a group rooted at `cwd`, and reveal the pane. */
   addTerminalTab: (groupId: number, cwd: string, title: string) => void;
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
@@ -87,6 +92,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
   terminalOpen: storedTerminalOpen(),
+  terminalMaximized: false,
   terminals: {},
   nextTermId: 1,
   historySha: null,
@@ -106,9 +112,16 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   setTerminalOpen: (open) => {
     localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
-    set({ terminalOpen: open });
+    // Hiding the pane drops the maximized state so reopening starts from the
+    // normal split height rather than a stale "maximized" flag.
+    set(open ? { terminalOpen: true } : { terminalOpen: false, terminalMaximized: false });
   },
   toggleTerminal: () => get().setTerminalOpen(!get().terminalOpen),
+  setTerminalMaximized: (max) => {
+    if (max) get().setTerminalOpen(true);
+    set({ terminalMaximized: max });
+  },
+  toggleTerminalMaximized: () => get().setTerminalMaximized(!get().terminalMaximized),
   addTerminalTab: (groupId, cwd, title) => {
     const n = get().nextTermId;
     const tab: TermTab = {

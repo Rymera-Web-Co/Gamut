@@ -9,11 +9,13 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
  *   ⌘/Ctrl+` → toggle integrated terminal
+ *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
+  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleTheme = useTheme((s) => s.toggle);
 
   useEffect(() => {
@@ -48,9 +50,14 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           toggleTerminal();
           break;
+        // Shift+` reports as "~" on most layouts.
+        case "~":
+          e.preventDefault();
+          toggleTerminalMaximized();
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setView, toggleRepoSidebar, toggleTerminal, toggleTheme]);
+  }, [setView, toggleRepoSidebar, toggleTerminal, toggleTerminalMaximized, toggleTheme]);
 }

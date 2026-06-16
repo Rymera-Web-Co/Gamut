@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
+import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -51,6 +51,8 @@ const encoder = new TextEncoder();
  */
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const terminalMaximized = useUiStore((s) => s.terminalMaximized);
+  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const terminals = useUiStore((s) => s.terminals);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -355,6 +357,19 @@ export function TerminalPane() {
             className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <Plus className="size-4" />
+          </button>
+          <button
+            title={terminalMaximized ? "Restore terminal (⌘⇧`)" : "Maximize terminal (⌘⇧`)"}
+            aria-label={terminalMaximized ? "Restore terminal" : "Maximize terminal"}
+            aria-pressed={terminalMaximized}
+            onClick={toggleTerminalMaximized}
+            className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          >
+            {terminalMaximized ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Maximize2 className="size-4" />
+            )}
           </button>
           <button
             title="Hide terminal (⌘`)"

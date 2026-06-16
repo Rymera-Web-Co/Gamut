@@ -16,6 +16,19 @@ while the terminal is hidden.
 - **From a group** — the terminal icon in the sidebar header opens one at a folder-bound
   group's folder.
 
+## Maximize & restore
+
+- **Maximize** the pane with the ⤢ button in the tab-bar controls (or
+  <code>⌘/Ctrl+⇧+&#96;</code>). The terminal grows to fill the whole content area —
+  the repository sidebar and the active view collapse, leaving only the top tab bar so
+  you can still switch views or unmaximize.
+- **Restore** with the same button (now ⤡) or shortcut to return the pane to its
+  previous height.
+- Maximize is independent of open/close: restoring keeps the terminal open, and hiding
+  the pane (the **×** or <code>⌘/Ctrl+&#96;</code>) clears the maximized state so it
+  reopens at its normal split height. The maximized state is not persisted across
+  restarts.
+
 ## Tabs & splits
 
 - Each group keeps its own set of tabs. Click a tab to activate it.
