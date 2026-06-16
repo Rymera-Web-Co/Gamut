@@ -453,7 +453,9 @@ export function TerminalPane() {
         {n > 1 &&
           activePanes.map((pane, i) => {
             const kind = termActivity[pane.id];
-            if (!kind) return null;
+            // Guard the focused pane explicitly: the clear effect runs after
+            // paint, so without this it could flash a dot for one frame.
+            if (!kind || pane.id === activeTab?.activePaneId) return null;
             return (
               <span
                 key={`act-${pane.id}`}
