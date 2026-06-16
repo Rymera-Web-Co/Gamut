@@ -1,18 +1,45 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Editor } from "@monaco-editor/react";
-import { FolderOpen, FolderTree, GitCompare, Loader2, Save } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Editor, type OnMount } from "@monaco-editor/react";
+import {
+  FolderOpen,
+  FolderTree,
+  GitCompare,
+  Loader2,
+  Save,
+  Search,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
+import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRepos } from "@/features/repos/api";
 import { useFileContent, useWorktreeStatus } from "./api";
 import { RepoTree, type TreeChanges } from "./RepoTree";
+import { SearchPanel } from "./SearchPanel";
+
+type CodeEditor = Parameters<OnMount>[0];
+
+/** A pending "jump to this match", applied once its file is loaded into the
+ * editor. Columns are 1-based UTF-16 (Monaco's coordinate space). */
+interface RevealTarget {
+  path: string;
+  line: number;
+  startCol: number;
+  endCol: number;
+}
 
 // Remember the last-open file per repo so reopening a repo lands where you left.
 const LAST_FILE_KEY = "gamut.filesLastOpen";
@@ -34,12 +61,44 @@ function rememberFile(repoId: number, path: string | null) {
   localStorage.setItem(LAST_FILE_KEY, JSON.stringify(map));
 }
 
+/** A sidebar mode switch (file tree vs. search) in the Files view left panel. */
+function ModeButton({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "flex size-7 items-center justify-center rounded-md",
+        active
+          ? "bg-[var(--color-accent)] text-[var(--color-foreground)]"
+          : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function FilesView() {
   const repoId = useUiStore((s) => s.activeRepoId);
   const setView = useUiStore((s) => s.setView);
   const setReviewMode = useUiStore((s) => s.setReviewMode);
   const filesPath = useUiStore((s) => s.filesPath);
   const setFilesPath = useUiStore((s) => s.setFilesPath);
+  const filesPanel = useUiStore((s) => s.filesPanel);
+  const setFilesPanel = useUiStore((s) => s.setFilesPanel);
   const repos = useRepos();
   const repo = repos.data?.find((r) => r.id === repoId);
   const queryClient = useQueryClient();
@@ -50,6 +109,10 @@ export function FilesView() {
   // Which file the editor buffer currently belongs to — guards against the
   // content query clobbering unsaved edits on refetch.
   const loadedRef = useRef<string | null>(null);
+  // The live Monaco instance, plus a pending jump-to-match from a search result.
+  const editorRef = useRef<CodeEditor | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
+  const [pendingReveal, setPendingReveal] = useState<RevealTarget | null>(null);
 
   const content = useFileContent(repoId, selectedPath);
   const editable = content.data?.text != null;
@@ -139,6 +202,62 @@ export function FilesView() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [save]);
+
+  // ⌘/Ctrl+F → Monaco find, ⌘/Ctrl+H → Monaco find+replace, in the open file —
+  // works even when focus is in the tree/search panel. We skip plain text inputs
+  // (the search/glob fields) so it doesn't hijack typing there; Monaco's own
+  // editing surface is a <textarea>, which we still allow.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== "f" && key !== "h") return;
+      if (e.shiftKey) return; // ⌘/Ctrl+⇧+F is repo-wide search (global shortcut)
+      const ed = editorRef.current;
+      if (!editable || !ed) return;
+      if (document.activeElement?.tagName === "INPUT") return;
+      e.preventDefault();
+      ed.focus();
+      ed.getAction(
+        key === "f" ? "actions.find" : "editor.action.startFindReplaceAction",
+      )?.run();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editable]);
+
+  // Apply a pending search-result jump once the editor exists and its buffer
+  // holds the target file (loadedRef flips in the content-load effect above).
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!pendingReveal || !ed || !editorReady) return;
+    if (loadedRef.current !== pendingReveal.path) return;
+    ed.revealLineInCenter(pendingReveal.line);
+    ed.setSelection({
+      startLineNumber: pendingReveal.line,
+      startColumn: pendingReveal.startCol,
+      endLineNumber: pendingReveal.line,
+      endColumn: pendingReveal.endCol,
+    });
+    ed.focus();
+    setPendingReveal(null);
+  }, [pendingReveal, editorReady, value]);
+
+  // Open a search result: switch to its file (guarding unsaved edits) and queue
+  // the jump-to-match for when the buffer loads.
+  const openResult = useCallback(
+    (path: string, line: number, startCol: number, endCol: number) => {
+      if (repoId == null) return;
+      if (path !== selectedPath) {
+        if (dirty && !window.confirm("Discard unsaved changes?")) return;
+        loadedRef.current = null;
+        setSelectedPath(path);
+        rememberFile(repoId, path);
+      }
+      setPendingReveal({ path, line, startCol, endCol });
+    },
+    [repoId, selectedPath, dirty],
+  );
 
   // Warn before closing the app/window with unsaved edits.
   useEffect(() => {
@@ -251,14 +370,38 @@ export function FilesView() {
         className="flex min-h-0 flex-1"
       >
         <Panel defaultSize={28} minSize={15} className="min-w-0">
-          <div className="h-full overflow-auto py-1">
-            <RepoTree
-              repoId={repoId}
-              selectedPath={selectedPath}
-              onSelect={selectFile}
-              onDeleted={onTreeDeleted}
-              changes={changes}
-            />
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+              <ModeButton
+                active={filesPanel === "tree"}
+                onClick={() => setFilesPanel("tree")}
+                title="File tree"
+              >
+                <FolderTree className="size-4" />
+              </ModeButton>
+              <ModeButton
+                active={filesPanel === "search"}
+                onClick={() => setFilesPanel("search")}
+                title="Search (⌘/Ctrl+⇧+F)"
+              >
+                <Search className="size-4" />
+              </ModeButton>
+            </div>
+            {filesPanel === "search" ? (
+              <div className="min-h-0 flex-1">
+                <SearchPanel repoId={repoId} onOpenResult={openResult} />
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-auto py-1">
+                <RepoTree
+                  repoId={repoId}
+                  selectedPath={selectedPath}
+                  onSelect={selectFile}
+                  onDeleted={onTreeDeleted}
+                  changes={changes}
+                />
+              </div>
+            )}
           </div>
         </Panel>
 
@@ -297,6 +440,10 @@ export function FilesView() {
               language={languageFor(selectedPath)}
               value={value}
               onChange={(v) => setValue(v ?? "")}
+              onMount={(editor) => {
+                editorRef.current = editor;
+                setEditorReady(true);
+              }}
               options={{
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,

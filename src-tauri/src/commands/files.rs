@@ -41,7 +41,7 @@ pub struct FileContent {
 /// (`..`) and symlink escapes. Returns an absolute path guaranteed to live
 /// inside `root`. For paths that don't exist yet (new file writes) the parent
 /// directory is validated instead.
-fn safe_join(root: &Path, rel: &str) -> AppResult<PathBuf> {
+pub(crate) fn safe_join(root: &Path, rel: &str) -> AppResult<PathBuf> {
     let escape = || AppError::Other("path escapes the repository root".into());
 
     let rel_path = Path::new(rel);
