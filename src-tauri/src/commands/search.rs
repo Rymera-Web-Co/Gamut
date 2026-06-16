@@ -306,7 +306,7 @@ fn search_root(root: &Path, q: &SearchQuery) -> AppResult<SearchResults> {
         }
     }
 
-    files.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    files.sort_by_key(|f| f.path.to_lowercase());
     let files_with_matches = files.len() as u32;
     Ok(SearchResults {
         files,
