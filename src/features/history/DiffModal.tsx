@@ -12,6 +12,7 @@ import {
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
+import { useDiffEditorPrefs } from "@/lib/settings";
 import { useBlame, useFileDiff } from "./api";
 
 /** Build a per-line lookup of which blame hunk owns each (1-based) line. */
@@ -80,6 +81,7 @@ export function DiffModal({
   const [mode, setMode] = useState<"diff" | "blame">("diff");
   const diff = useFileDiff(repoId, sha, path, oldPath);
   const blame = useBlame(repoId, sha, path, mode === "blame");
+  const diffPrefs = useDiffEditorPrefs();
 
   const isDark = isDarkTheme();
 
@@ -128,10 +130,9 @@ export function DiffModal({
               modified={diff.data?.new_text ?? ""}
               options={{
                 readOnly: true,
-                renderSideBySide: true,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
-                fontSize: 12,
+                ...diffPrefs,
               }}
             />
           ) : blame.isLoading || !blame.data ? (

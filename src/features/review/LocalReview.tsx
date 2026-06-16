@@ -8,6 +8,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
+import { useDiffEditorPrefs } from "@/lib/settings";
 import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
 import { useMentionables, usePrComment, useReviewFileDiff, useReviewFiles } from "./api";
 import { InlineCommentBox } from "./InlineCommentBox";
@@ -28,6 +29,7 @@ export function LocalReview({
   pr?: PrContext;
 }) {
   const review = useReviewFiles(repoId, source);
+  const diffPrefs = useDiffEditorPrefs();
   const [selected, setSelected] = useState<FileChange | null>(null);
 
   // Reset selection when the source or file set changes.
@@ -262,11 +264,10 @@ export function LocalReview({
               onMount={handleMount}
               options={{
                 readOnly: true,
-                renderSideBySide: true,
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 glyphMargin: !!pr,
-                fontSize: 12,
+                ...diffPrefs,
               }}
             />
             {composer && (

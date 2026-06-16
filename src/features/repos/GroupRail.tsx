@@ -1,5 +1,5 @@
 import { useEffect, useState, type DragEvent } from "react";
-import { Pencil, Plus, SquareTerminal } from "lucide-react";
+import { Pencil, Plus, Settings, SquareTerminal } from "lucide-react";
 
 import {
   ContextMenu,
@@ -123,6 +123,7 @@ export function GroupRail() {
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
+  const toggleSettings = useUiStore((s) => s.toggleSettings);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
 
@@ -229,6 +230,14 @@ export function GroupRail() {
           )}
         </button>
         <GitHubConnect />
+        <button
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          onClick={toggleSettings}
+          className="flex size-10 items-center justify-center rounded-lg border border-transparent text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        >
+          <Settings className="size-5" />
+        </button>
       </div>
 
       <GroupDialog

@@ -12,7 +12,9 @@ import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
 import { TerminalPane } from "@/features/terminal/TerminalPane";
+import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { ipc } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
@@ -47,8 +49,15 @@ export default function App() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const terminalMaximized = useUiStore((s) => s.terminalMaximized);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const loadSettings = useSettings((s) => s.load);
   useKeyboardShortcuts();
   useGitWatch();
+
+  // Reconcile preferences with the DB once on startup (state is mirror-hydrated
+  // synchronously, so this only corrects drift / picks up another window's edits).
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   // Imperatively collapse/expand the terminal panel to match `terminalOpen`,
   // which can change from the keyboard shortcut, the close button, or opening a
@@ -156,6 +165,7 @@ export default function App() {
       </div>
       <StatusBar />
       <Toaster />
+      <SettingsDialog />
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { toastTimeout } from "@/lib/settings";
+
 export interface Toast {
   id: number;
   message: string;
@@ -21,7 +23,7 @@ export const useToasts = create<ToastState>((set) => ({
     set((s) => ({ toasts: [...s.toasts, { id, message, variant }] }));
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 6000);
+    }, toastTimeout());
   },
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));

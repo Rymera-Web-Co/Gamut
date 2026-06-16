@@ -84,6 +84,8 @@ interface UiState {
   // One-shot navigation target: a repo-relative file to open in the Files tab.
   // The Files view consumes it (opens it in the editor) and clears it.
   filesPath: string | null;
+  // Whether the Settings panel (⌘,) is open. In-memory only.
+  settingsOpen: boolean;
   // Which sidebar the Files view shows (tree vs. repo search). Persisted.
   filesPanel: FilesPanel;
   // Monotonic counter bumped to ask the search panel to focus its input — lets
@@ -96,6 +98,8 @@ interface UiState {
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
+  setSettingsOpen: (open: boolean) => void;
+  toggleSettings: () => void;
   setFilesPanel: (panel: FilesPanel) => void;
   /** Switch to the Files view's search panel and focus its input. */
   focusRepoSearch: () => void;
@@ -134,6 +138,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   nextTermId: 1,
   historySha: null,
   filesPath: null,
+  settingsOpen: false,
   filesPanel: storedFilesPanel(),
   searchFocusNonce: 0,
   setView: (view) => set({ view }),
@@ -144,6 +149,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   setFilesPanel: (filesPanel) => {
     localStorage.setItem(FILES_PANEL_KEY, filesPanel);
     set({ filesPanel });

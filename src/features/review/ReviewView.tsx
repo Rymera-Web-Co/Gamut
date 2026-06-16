@@ -4,6 +4,7 @@ import { GitCompare, GitPullRequestArrow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ipc } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { useUiStore, type ReviewMode } from "@/store/ui";
 import { useGithubAuth, useGithubPrs, useReviewFiles } from "./api";
@@ -22,6 +23,23 @@ export function ReviewView() {
   const setMode = useUiStore((s) => s.setReviewMode);
   const setView = useUiStore((s) => s.setView);
   const setSelectedPr = useUiStore((s) => s.setSelectedPr);
+  const persistedMode = useSettings((s) => s.values.reviewMode);
+  const setSetting = useSettings((s) => s.set);
+
+  // Apply the persisted default review mode when the tab first mounts. The
+  // auto-pick below can still override it per repo (without persisting).
+  const [initialized, setInitialized] = useState(false);
+  useEffect(() => {
+    if (initialized) return;
+    setMode(persistedMode);
+    setInitialized(true);
+  }, [initialized, persistedMode, setMode]);
+
+  // A user's explicit choice becomes the new persisted default.
+  const chooseMode = (m: ReviewMode) => {
+    setMode(m);
+    setSetting("reviewMode", m);
+  };
 
   const auth = useGithubAuth();
   const prs = useGithubPrs(repoId, auth.data?.logged_in ?? false);
@@ -72,7 +90,7 @@ export function ReviewView() {
         {MODES.map(({ mode: m, label }) => (
           <button
             key={m}
-            onClick={() => setMode(m)}
+            onClick={() => chooseMode(m)}
             className={cn(
               "rounded-md px-3 py-1 text-sm transition-colors",
               mode === m

@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { useGroups, useRepos } from "@/features/repos/api";
 import { ipc } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import {
@@ -116,11 +117,14 @@ export function TerminalPane() {
     el.style.pointerEvents = "auto";
     hostRef.current!.appendChild(el);
 
+    // Read preferences at creation time; new panes pick up changes, existing
+    // ones keep their settings until recreated.
+    const prefs = useSettings.getState().values;
     const term = new Terminal({
-      fontSize: 13,
-      fontFamily: FONT_FAMILY,
-      cursorBlink: true,
-      scrollback: 5000,
+      fontSize: prefs.terminalFontSize,
+      fontFamily: prefs.terminalFontFamily || FONT_FAMILY,
+      cursorBlink: prefs.terminalCursorBlink,
+      scrollback: prefs.terminalScrollback,
       theme: xtermTheme(theme),
       allowProposedApi: true,
     });

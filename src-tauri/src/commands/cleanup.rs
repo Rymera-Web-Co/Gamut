@@ -3,18 +3,28 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::history::{open_repo, repo_path};
+use crate::commands::settings;
 use crate::commands::sync::run_git;
 use crate::error::AppResult;
 use crate::git;
 use crate::state::AppState;
 
-/// Local branches we never delete, even if their upstream is gone.
-const PROTECTED: &[&str] = &["main", "master"];
+/// Local branches we never delete by default, even if their upstream is gone.
+const DEFAULT_PROTECTED: &[&str] = &["main", "master"];
+
+/// The configured protected branches, or the built-in default.
+fn protected_branches(state: &AppState) -> Vec<String> {
+    settings::csv_or(
+        state,
+        "pref.protectedBranches",
+        DEFAULT_PROTECTED.iter().map(|s| s.to_string()).collect(),
+    )
+}
 
 /// A branch we must never report or delete: a protected branch, or the branch
 /// currently checked out.
-fn is_protected(name: &str, current: Option<&str>) -> bool {
-    Some(name) == current || PROTECTED.contains(&name)
+fn is_protected(name: &str, current: Option<&str>, protected: &[String]) -> bool {
+    Some(name) == current || protected.iter().any(|p| p == name)
 }
 
 #[derive(Serialize)]
@@ -57,6 +67,7 @@ pub async fn list_stale_branches(
 
     let repo = open_repo(&state, repo_id)?;
     let current = git::current_branch(&repo);
+    let protected = protected_branches(&state);
 
     let mut out = Vec::new();
     for b in repo.branches(Some(BranchType::Local))? {
@@ -64,7 +75,7 @@ pub async fn list_stale_branches(
         let Some(name) = branch.name()?.map(|s| s.to_string()) else {
             continue;
         };
-        if is_protected(&name, current.as_deref()) {
+        if is_protected(&name, current.as_deref(), &protected) {
             continue;
         }
         if !upstream_is_gone(&repo, &branch) {
@@ -115,10 +126,11 @@ pub async fn delete_branches(
 ) -> AppResult<Vec<DeleteResult>> {
     let repo = open_repo(&state, repo_id)?;
     let current = git::current_branch(&repo);
+    let protected = protected_branches(&state);
 
     let mut results = Vec::with_capacity(names.len());
     for name in names {
-        if is_protected(&name, current.as_deref()) {
+        if is_protected(&name, current.as_deref(), &protected) {
             results.push(DeleteResult {
                 name,
                 deleted: false,

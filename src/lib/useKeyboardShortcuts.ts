@@ -11,6 +11,7 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+⇧+F → repo-wide search (Files view)
  *   ⌘/Ctrl+` → toggle integrated terminal
  *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
+ *   ⌘/Ctrl+, → settings
  *
  * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view,
  * where the Monaco instance lives.
@@ -20,6 +21,7 @@ export function useKeyboardShortcuts() {
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
+  const toggleSettings = useUiStore((s) => s.toggleSettings);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
   const toggleTheme = useTheme((s) => s.toggle);
 
@@ -66,6 +68,10 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           toggleTerminalMaximized();
           break;
+        case ",":
+          e.preventDefault();
+          toggleSettings();
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
@@ -75,6 +81,7 @@ export function useKeyboardShortcuts() {
     toggleRepoSidebar,
     toggleTerminal,
     toggleTerminalMaximized,
+    toggleSettings,
     focusRepoSearch,
     toggleTheme,
   ]);

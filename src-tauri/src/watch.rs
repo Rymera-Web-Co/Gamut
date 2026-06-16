@@ -58,9 +58,9 @@ fn is_interesting(path: &Path) -> bool {
 }
 
 impl RepoWatcher {
-    pub fn new(app: AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(app: AppHandle, debounce_ms: u64) -> Result<Self, Box<dyn std::error::Error>> {
         let debouncer = new_debouncer(
-            Duration::from_millis(400),
+            Duration::from_millis(debounce_ms),
             move |res: DebounceEventResult| {
                 let Ok(events) = res else { return };
 
