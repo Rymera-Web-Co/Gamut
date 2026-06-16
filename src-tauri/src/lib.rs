@@ -87,6 +87,8 @@ pub fn run() {
             commands::files::reveal_in_file_manager,
             commands::review::review_files,
             commands::review::review_file_diff,
+            commands::search::search_repo,
+            commands::search::replace_in_files,
             commands::sync::git_sync_status,
             commands::sync::git_fetch,
             commands::sync::git_pull,

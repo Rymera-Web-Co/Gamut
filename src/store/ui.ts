@@ -40,6 +40,10 @@ export interface GroupTerminals {
 
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
 const TERMINAL_OPEN_KEY = "gamut.terminalOpen";
+const FILES_PANEL_KEY = "gamut.filesPanel";
+
+/** Which sidebar mode the Files view shows: the file tree or repo-wide search. */
+export type FilesPanel = "tree" | "search";
 
 function storedRepoSidebarHidden(): boolean {
   return localStorage.getItem(REPO_SIDEBAR_KEY) === "1";
@@ -47,6 +51,10 @@ function storedRepoSidebarHidden(): boolean {
 
 function storedTerminalOpen(): boolean {
   return localStorage.getItem(TERMINAL_OPEN_KEY) === "1";
+}
+
+function storedFilesPanel(): FilesPanel {
+  return localStorage.getItem(FILES_PANEL_KEY) === "search" ? "search" : "tree";
 }
 
 interface UiState {
@@ -76,6 +84,11 @@ interface UiState {
   // One-shot navigation target: a repo-relative file to open in the Files tab.
   // The Files view consumes it (opens it in the editor) and clears it.
   filesPath: string | null;
+  // Which sidebar the Files view shows (tree vs. repo search). Persisted.
+  filesPanel: FilesPanel;
+  // Monotonic counter bumped to ask the search panel to focus its input — lets
+  // ⌘/Ctrl+⇧+F re-focus search even when it's already the active panel.
+  searchFocusNonce: number;
   setView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null) => void;
@@ -83,6 +96,9 @@ interface UiState {
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
+  setFilesPanel: (panel: FilesPanel) => void;
+  /** Switch to the Files view's search panel and focus its input. */
+  focusRepoSearch: () => void;
   toggleRepoSidebar: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
@@ -118,6 +134,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   nextTermId: 1,
   historySha: null,
   filesPath: null,
+  filesPanel: storedFilesPanel(),
+  searchFocusNonce: 0,
   setView: (view) => set({ view }),
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
@@ -126,6 +144,18 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),
+  setFilesPanel: (filesPanel) => {
+    localStorage.setItem(FILES_PANEL_KEY, filesPanel);
+    set({ filesPanel });
+  },
+  focusRepoSearch: () => {
+    localStorage.setItem(FILES_PANEL_KEY, "search");
+    set((s) => ({
+      view: "files",
+      filesPanel: "search",
+      searchFocusNonce: s.searchFocusNonce + 1,
+    }));
+  },
   toggleRepoSidebar: () => {
     const repoSidebarHidden = !get().repoSidebarHidden;
     localStorage.setItem(REPO_SIDEBAR_KEY, repoSidebarHidden ? "1" : "0");

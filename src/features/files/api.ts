@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
-import { ipc } from "@/lib/ipc";
+import { ipc, type SearchQuery } from "@/lib/ipc";
 
 /** Children of one working-tree directory (lazy — fetched when a dir expands). */
 export function useDirChildren(
@@ -30,5 +30,18 @@ export function useWorktreeStatus(repoId: number | null) {
     queryKey: ["worktree-status", repoId],
     queryFn: () => ipc.worktreeStatus(repoId!),
     enabled: repoId != null,
+  });
+}
+
+/** Repo-wide content search. Runs only once `query` is non-null with a non-empty
+ * term (the panel sets it on a debounce). Previous results stay visible while a
+ * new query runs so the list doesn't flash empty. */
+export function useRepoSearch(repoId: number | null, query: SearchQuery | null) {
+  return useQuery({
+    queryKey: ["repo-search", repoId, query],
+    queryFn: () => ipc.searchRepo(repoId!, query!),
+    enabled: repoId != null && query != null && query.query.length > 0,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
   });
 }

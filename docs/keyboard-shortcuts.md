@@ -12,6 +12,7 @@ anywhere in the app; the rest apply within a specific view or input.
 | `⌘/Ctrl+3` | Switch to **Review** |
 | `⌘/Ctrl+4` | Switch to **Pull Requests** |
 | `⌘/Ctrl+B` | Toggle the repository sidebar |
+| `⌘/Ctrl+⇧+F` | Open repo-wide search in the **Files** view |
 | `⌘/Ctrl+J` | Toggle light / dark theme |
 | <code>⌘/Ctrl+&#96;</code> | Toggle the integrated terminal |
 | <code>⌘/Ctrl+⇧+&#96;</code> | Maximize / restore the integrated terminal |
@@ -23,6 +24,9 @@ These are registered globally — see [`useKeyboardShortcuts`](../src/lib/useKey
 | Shortcut | Action |
 | --- | --- |
 | `⌘/Ctrl+S` | Save the open file (works even when the editor isn't focused) |
+| `⌘/Ctrl+F` | Find in the open file (Monaco's find widget) |
+| `⌘/Ctrl+H` | Find & replace in the open file |
+| `⌘/Ctrl+⇧+F` | Switch the sidebar to repo-wide search |
 
 See [Files](features/files.md).
 
