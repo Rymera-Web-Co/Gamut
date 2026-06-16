@@ -52,6 +52,7 @@ import type {
   TimelineEvent,
 } from "@/lib/ipc";
 import { relativeTime } from "@/lib/format";
+import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import { useDraftsFor, useReviewDrafts } from "@/store/reviewDrafts";
@@ -1220,7 +1221,9 @@ function MergeBar({
 }) {
   const merge = useMergePr(repoId);
   const [open, setOpen] = useState(false);
-  const [method, setMethod] = useState<MergeMethod>("merge");
+  const [method, setMethod] = useState<MergeMethod>(
+    useSettings.getState().values.mergeStrategy,
+  );
 
   if (state === "merged") {
     return (

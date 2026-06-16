@@ -47,10 +47,17 @@ const PRUNE: &[&str] = &[
     ".cache",
 ];
 
+/// The built-in directory names skipped during discovery, as owned strings.
+/// Used as the default when no `pref.pruneDirs` override is configured.
+pub fn default_prune_dirs() -> Vec<String> {
+    PRUNE.iter().map(|s| s.to_string()).collect()
+}
+
 /// Recursively scan `root` (up to `max_depth`) for git working repositories.
 /// A directory containing a `.git` entry is treated as a repo and is not
-/// descended into; common heavy directories are pruned for speed.
-pub fn discover(root: &Path, max_depth: usize) -> Vec<Discovered> {
+/// descended into; directories named in `prune` (plus any dotfile dirs) are
+/// skipped for speed.
+pub fn discover(root: &Path, max_depth: usize, prune: &[String]) -> Vec<Discovered> {
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
 
@@ -81,7 +88,7 @@ pub fn discover(root: &Path, max_depth: usize) -> Vec<Discovered> {
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with('.') || PRUNE.contains(&name.as_ref()) {
+            if name.starts_with('.') || prune.iter().any(|p| p == name.as_ref()) {
                 continue;
             }
             stack.push((path, depth + 1));
@@ -108,7 +115,7 @@ mod tests {
         // A plain directory with no repo.
         std::fs::create_dir_all(root.join("plain")).unwrap();
 
-        let found = discover(&root, 6);
+        let found = discover(&root, 6, &default_prune_dirs());
         let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
 
         assert_eq!(found.len(), 2, "should find exactly a and b");

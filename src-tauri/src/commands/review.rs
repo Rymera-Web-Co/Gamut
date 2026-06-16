@@ -3,8 +3,24 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::history::{blob_text, files_from_diff, open_repo, FileChange, FileDiff};
+use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+
+/// Branch names tried (in order) to resolve a "branch vs base" review base.
+const DEFAULT_BASE_PRECEDENCE: &[&str] = &["trunk", "main", "master"];
+
+/// The configured base-branch precedence, or the built-in default.
+fn base_precedence(state: &AppState) -> Vec<String> {
+    settings::csv_or(
+        state,
+        "pref.baseBranchPrecedence",
+        DEFAULT_BASE_PRECEDENCE
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    )
+}
 
 /// Which set of local changes to review.
 #[derive(serde::Deserialize, Clone, Copy, PartialEq)]
@@ -26,23 +42,28 @@ pub struct ReviewDiff {
 /// Resolve the base commit + a human label for a "branch" review.
 /// The base is always trunk, main, or master (in that order), preferring a
 /// local branch then its `origin/` counterpart. An explicit `base` overrides.
-fn resolve_base(repo: &Repository, base: Option<&str>) -> AppResult<(Oid, String)> {
+fn resolve_base(
+    repo: &Repository,
+    base: Option<&str>,
+    precedence: &[String],
+) -> AppResult<(Oid, String)> {
     if let Some(name) = base {
         let commit = repo.revparse_single(name)?.peel_to_commit()?;
         return Ok((commit.id(), name.to_string()));
     }
 
-    for name in ["trunk", "main", "master"] {
-        for cand in [name.to_string(), format!("origin/{name}")] {
+    for name in precedence {
+        for cand in [name.clone(), format!("origin/{name}")] {
             if let Ok(commit) = repo.revparse_single(&cand).and_then(|o| o.peel_to_commit()) {
                 return Ok((commit.id(), cand));
             }
         }
     }
 
-    Err(AppError::Other(
-        "no base branch found (expected trunk, main, or master)".into(),
-    ))
+    Err(AppError::Other(format!(
+        "no base branch found (expected {})",
+        precedence.join(", ")
+    )))
 }
 
 fn head_branch_label(repo: &Repository) -> String {
@@ -76,7 +97,8 @@ pub async fn review_files(
             })
         }
         ReviewSource::Branch => {
-            let (base_oid, base_label) = resolve_base(&repo, base.as_deref())?;
+            let (base_oid, base_label) =
+                resolve_base(&repo, base.as_deref(), &base_precedence(&state))?;
             let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
             let base_tree = repo.find_commit(merge_base)?.tree()?;
             let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&head_tree), None)?;
@@ -118,7 +140,7 @@ pub async fn review_file_diff(
             (old, new)
         }
         ReviewSource::Branch => {
-            let (base_oid, _) = resolve_base(&repo, base.as_deref())?;
+            let (base_oid, _) = resolve_base(&repo, base.as_deref(), &base_precedence(&state))?;
             let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
             let base_tree = repo.find_commit(merge_base)?.tree()?;
             let old = blob_text(&repo, &base_tree, old_lookup);

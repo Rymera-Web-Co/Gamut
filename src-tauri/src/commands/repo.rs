@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::history::open_repo;
+use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::git;
 use crate::state::AppState;
@@ -113,6 +114,17 @@ fn register_path(conn: &Connection, path: &std::path::Path) -> AppResult<(i64, b
 /// Default recursion depth for folder discovery (matches the manual scan).
 const SYNC_DEPTH: usize = 6;
 
+/// Discovery depth + prune list, applying any `pref.` overrides. Reads from a
+/// held connection so it's safe to call while the db lock is taken.
+fn discovery_opts(conn: &Connection) -> (usize, Vec<String>) {
+    let depth = settings::parsed_conn(conn, "pref.scanDepth", SYNC_DEPTH);
+    let prune = settings::get_conn(conn, "pref.pruneDirs")
+        .map(|raw| settings::parse_csv(&raw))
+        .filter(|list| !list.is_empty())
+        .unwrap_or_else(git::default_prune_dirs);
+    (depth, prune)
+}
+
 /// Scan a bound group's folder and add (never remove) every discovered repo to
 /// the group. Add-only and idempotent: repos already registered/assigned are
 /// untouched. Honors the scanner's prune list. Stamps `last_scan_at`.
@@ -134,8 +146,9 @@ pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppR
         .map(|v| v != 0)
         .unwrap_or(false);
 
+    let (depth, prune) = discovery_opts(conn);
     let mut added = 0usize;
-    for d in git::discover(&PathBuf::from(folder), SYNC_DEPTH) {
+    for d in git::discover(&PathBuf::from(folder), depth, &prune) {
         let Ok((repo_id, inserted)) = register_path(conn, &d.path) else {
             continue;
         };
@@ -393,8 +406,11 @@ pub fn discover_repos(
     root: String,
     max_depth: Option<usize>,
 ) -> AppResult<Vec<DiscoveredRepo>> {
-    let found = git::discover(&PathBuf::from(&root), max_depth.unwrap_or(6));
     let conn = lock(&state)?;
+    // An explicit `max_depth` (from a deeper manual scan) wins; otherwise fall
+    // back to the configured discovery depth. The prune list always applies.
+    let (depth, prune) = discovery_opts(&conn);
+    let found = git::discover(&PathBuf::from(&root), max_depth.unwrap_or(depth), &prune);
 
     found
         .into_iter()

@@ -351,6 +351,14 @@ export const ipc = {
   ping: (name?: string) => invoke<string>("ping", { name }),
   dbHealth: () => invoke<DbHealth>("db_health"),
 
+  // settings (generic key/value, `pref.`-namespaced user preferences)
+  getSettings: () => invoke<Record<string, string>>("get_settings"),
+  getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
+  setSetting: (key: string, value: string) =>
+    invoke<void>("set_setting", { key, value }),
+  deleteSetting: (key: string) => invoke<void>("delete_setting", { key }),
+  resetSettings: () => invoke<void>("reset_settings"),
+
   // repos
   listRepos: () => invoke<Repo[]>("list_repos"),
   repoStatuses: () => invoke<RepoStatus[]>("repo_statuses"),

@@ -57,6 +57,8 @@ interface UiState {
   // One-shot navigation target: a repo-relative file to open in the Files tab.
   // The Files view consumes it (opens it in the editor) and clears it.
   filesPath: string | null;
+  // Whether the Settings panel (⌘,) is open. In-memory only.
+  settingsOpen: boolean;
   setView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null) => void;
@@ -64,6 +66,8 @@ interface UiState {
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
+  setSettingsOpen: (open: boolean) => void;
+  toggleSettings: () => void;
   toggleRepoSidebar: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
@@ -91,6 +95,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   nextTermId: 1,
   historySha: null,
   filesPath: null,
+  settingsOpen: false,
   setView: (view) => set({ view }),
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
@@ -99,6 +104,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   toggleRepoSidebar: () => {
     const repoSidebarHidden = !get().repoSidebarHidden;
     localStorage.setItem(REPO_SIDEBAR_KEY, repoSidebarHidden ? "1" : "0");

@@ -7,6 +7,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
+import { useEditorPrefs } from "@/lib/settings";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
@@ -42,6 +43,7 @@ export function FilesView() {
   const setFilesPath = useUiStore((s) => s.setFilesPath);
   const repos = useRepos();
   const repo = repos.data?.find((r) => r.id === repoId);
+  const editorPrefs = useEditorPrefs();
   const queryClient = useQueryClient();
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -300,7 +302,7 @@ export function FilesView() {
               options={{
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
-                fontSize: 12,
+                ...editorPrefs,
               }}
             />
           )}

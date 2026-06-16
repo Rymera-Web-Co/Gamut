@@ -23,6 +23,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
+import { useDiffEditorPrefs } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
@@ -442,6 +443,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
   const discard = useDiscard(repoId);
   const setView = useUiStore((s) => s.setView);
   const setFilesPath = useUiStore((s) => s.setFilesPath);
+  const diffPrefs = useDiffEditorPrefs();
   const [selected, setSelected] = useState<Selected | null>(null);
 
   useEffect(() => {
@@ -620,10 +622,9 @@ export function WorkingTree({ repoId }: { repoId: number }) {
                 modified={diff.data.new_text ?? ""}
                 options={{
                   readOnly: true,
-                  renderSideBySide: true,
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
-                  fontSize: 12,
+                  ...diffPrefs,
                 }}
               />
             )}

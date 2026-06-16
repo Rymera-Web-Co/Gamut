@@ -34,7 +34,13 @@ pub fn run() {
             });
 
             // Watch registered repos' .git so external changes reflect live.
-            match watch::RepoWatcher::new(app.handle().clone()) {
+            // The debounce window is configurable (applied at startup).
+            let debounce_ms = commands::settings::parsed(
+                &app.state::<AppState>(),
+                "pref.watchDebounceMs",
+                400u64,
+            );
+            match watch::RepoWatcher::new(app.handle().clone(), debounce_ms) {
                 Ok(w) => {
                     let state = app.state::<AppState>();
                     *state.watcher.lock().unwrap() = Some(w);
@@ -87,6 +93,11 @@ pub fn run() {
             commands::files::reveal_in_file_manager,
             commands::review::review_files,
             commands::review::review_file_diff,
+            commands::settings::get_setting,
+            commands::settings::set_setting,
+            commands::settings::delete_setting,
+            commands::settings::get_settings,
+            commands::settings::reset_settings,
             commands::sync::git_sync_status,
             commands::sync::git_fetch,
             commands::sync::git_pull,

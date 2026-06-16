@@ -20,6 +20,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -94,7 +95,15 @@ pub fn terminal_spawn(
         .openpty(size(cols, rows))
         .map_err(pty_err)?;
 
-    let mut cmd = CommandBuilder::new(default_shell());
+    // A configured shell override wins; otherwise use the login shell. Blank or
+    // unset falls back to the platform default.
+    let shell = settings::get(&state, "pref.terminalShell")
+        .ok()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(default_shell);
+    let mut cmd = CommandBuilder::new(shell);
     cmd.cwd(&cwd);
     // Advertise a capable terminal so prompts, colors and full-screen apps work.
     cmd.env("TERM", "xterm-256color");
