@@ -39,7 +39,31 @@ export interface Settings {
   // Terminal
   terminalShell: string; // "" → system login shell
   terminalScrollback: number;
+
+  // Terminal notifications (background-pane bell / process-exit; see #28)
+  terminalNotifySound: boolean; // master on/off for the audible cue
+  terminalNotifyOnExit: boolean; // notify when a background shell exits
+  terminalNotifyOnBell: boolean; // notify on a background terminal bell (\a)
+  terminalNotifySoundName: TerminalSound; // which sound to play ("custom" → file)
+  terminalNotifySoundCustom: string; // absolute path to a user-chosen sound file
+  terminalNotifyDesktop: boolean; // also show a native OS notification
 }
+
+/**
+ * Notification sound choices. The first five are synthesized in the browser
+ * (see `features/terminal/notify.ts`) so v1 ships no bundled audio assets;
+ * `"custom"` plays a user-supplied file (`terminalNotifySoundCustom`). The list
+ * doubles as the enum guard for the `terminalNotifySoundName` setting.
+ */
+export const TERMINAL_SOUNDS = [
+  "chime",
+  "ping",
+  "blip",
+  "knock",
+  "alert",
+  "custom",
+] as const;
+export type TerminalSound = (typeof TERMINAL_SOUNDS)[number];
 
 export const DEFAULTS: Settings = {
   editorFontSize: 12,
@@ -61,6 +85,15 @@ export const DEFAULTS: Settings = {
 
   terminalShell: "",
   terminalScrollback: 5000,
+
+  // Sound on by default for both discrete events; desktop notifications stay
+  // off until the user opts in (they require an OS permission grant).
+  terminalNotifySound: true,
+  terminalNotifyOnExit: true,
+  terminalNotifyOnBell: true,
+  terminalNotifySoundName: "chime",
+  terminalNotifySoundCustom: "",
+  terminalNotifyDesktop: false,
 };
 
 type Key = keyof Settings;
@@ -68,6 +101,7 @@ type Key = keyof Settings;
 /** Allowed values for enum-typed keys, used to reject corrupt stored strings. */
 const ENUMS: Partial<Record<Key, readonly string[]>> = {
   diffLayout: ["side-by-side", "unified"],
+  terminalNotifySoundName: TERMINAL_SOUNDS,
   reviewMode: ["working", "branch"],
   mergeStrategy: ["merge", "squash", "rebase"],
 };

@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  Bell,
+  FolderOpen,
   GitCompare,
   GitFork,
   Monitor,
   Moon,
   Palette,
+  Play,
   RotateCcw,
   SquareTerminal,
   Sun,
@@ -19,15 +22,22 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { useSettings, type Settings } from "@/lib/settings";
+import { pickAudioFile } from "@/lib/ipc";
+import { useSettings, type Settings, type TerminalSound } from "@/lib/settings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useUiStore } from "@/store/ui";
+import {
+  BUILTIN_SOUNDS,
+  ensureDesktopPermission,
+  playSound,
+} from "@/features/terminal/notify";
 
 const CATEGORIES = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "diff", label: "Diff & Review", icon: GitCompare },
   { id: "git", label: "Git & Repos", icon: GitFork },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
+  { id: "notifications", label: "Notifications", icon: Bell },
 ] as const;
 
 type CategoryId = (typeof CATEGORIES)[number]["id"];
@@ -76,6 +86,7 @@ export function SettingsDialog() {
           {category === "diff" && <DiffPanel />}
           {category === "git" && <GitPanel />}
           {category === "terminal" && <TerminalPanel />}
+          {category === "notifications" && <NotificationsPanel />}
         </div>
       </DialogContent>
     </Dialog>
@@ -252,6 +263,30 @@ function Toggle({
         )}
       />
     </button>
+  );
+}
+
+function Select<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      className="h-8 w-48 rounded-md border bg-[var(--color-background)] px-2 text-sm"
+    >
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -478,6 +513,106 @@ function TerminalPanel() {
           step={100}
           suffix="lines"
         />
+      </Field>
+    </div>
+  );
+}
+
+function NotificationsPanel() {
+  const [sound, setSound] = useSetting("terminalNotifySound");
+  const [onExit, setOnExit] = useSetting("terminalNotifyOnExit");
+  const [onBell, setOnBell] = useSetting("terminalNotifyOnBell");
+  const [soundName, setSoundName] = useSetting("terminalNotifySoundName");
+  const [customPath, setCustomPath] = useSetting("terminalNotifySoundCustom");
+  const [desktop, setDesktop] = useSetting("terminalNotifyDesktop");
+
+  const chooseCustom = async () => {
+    const path = await pickAudioFile();
+    if (path) {
+      setCustomPath(path);
+      setSoundName("custom");
+    }
+  };
+
+  const onSelectSound = (v: TerminalSound) => {
+    setSoundName(v);
+    // Selecting "Custom…" with nothing chosen yet opens the picker straight away.
+    if (v === "custom" && !customPath) void chooseCustom();
+  };
+
+  const customName = customPath.split(/[\\/]/).pop() || customPath;
+
+  const toggleDesktop = (next: boolean) => {
+    // Prompt for OS permission the moment the user opts in, rather than on the
+    // first background event. Leave the preference on regardless — the send
+    // path re-checks, so a later grant in System Settings just starts working.
+    if (next) void ensureDesktopPermission();
+    setDesktop(next);
+  };
+
+  return (
+    <div>
+      <PanelTitle>Notifications</PanelTitle>
+      <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+        Alerts for events in a background terminal pane — one you're not currently
+        looking at. The focused pane never makes a sound.
+      </p>
+      <Field
+        label="Play sound on terminal events"
+        hint="An audible cue when a background pane signals an event."
+      >
+        <Toggle checked={sound} onChange={setSound} />
+      </Field>
+      <Divider />
+      <Field label="Notify on process exit" hint="A background shell process ends.">
+        <Toggle checked={onExit} onChange={setOnExit} />
+      </Field>
+      <Field label="Notify on terminal bell" hint="A background pane rings the bell (\a).">
+        <Toggle checked={onBell} onChange={setOnBell} />
+      </Field>
+      <Divider />
+      <Field label="Sound" hint="Plays for the events selected above.">
+        <div className="flex items-center gap-2">
+          <Select
+            value={soundName}
+            onChange={onSelectSound}
+            options={[
+              ...BUILTIN_SOUNDS.map((s) => ({ value: s.id, label: s.label })),
+              { value: "custom" as TerminalSound, label: "Custom…" },
+            ]}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={() => playSound(soundName)}
+          >
+            <Play className="size-3.5" />
+            Test
+          </Button>
+        </div>
+      </Field>
+      {soundName === "custom" && (
+        <Field
+          label="Custom sound file"
+          hint={
+            customPath
+              ? customName
+              : "Pick a .wav, .mp3, .ogg, .m4a, .aac or .flac file."
+          }
+        >
+          <Button variant="outline" size="sm" className="h-8" onClick={chooseCustom}>
+            <FolderOpen className="size-3.5" />
+            {customPath ? "Change…" : "Choose file…"}
+          </Button>
+        </Field>
+      )}
+      <Divider />
+      <Field
+        label="Show desktop notification"
+        hint="Also post a native OS notification. Needs notification permission; respects Do Not Disturb."
+      >
+        <Toggle checked={desktop} onChange={toggleDesktop} />
       </Field>
     </div>
   );

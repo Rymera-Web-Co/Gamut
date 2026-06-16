@@ -212,6 +212,26 @@ pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppR
     }
 }
 
+/// Largest custom notification sound we'll load into the webview to play.
+const MAX_SOUND_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Read an arbitrary file's raw bytes by absolute path. Used to play a
+/// user-chosen custom notification sound (see issue #28): the frontend turns
+/// the bytes into a Blob URL and decodes them with the Web Audio API, so no
+/// asset-protocol scope is needed. Capped so a misselected huge file can't
+/// bloat the IPC payload. Returns the bytes as a raw `ArrayBuffer`.
+#[tauri::command]
+pub fn read_file_bytes(path: String) -> AppResult<tauri::ipc::Response> {
+    let meta = fs::metadata(&path)?;
+    if !meta.is_file() {
+        return Err(AppError::Other("not a file".into()));
+    }
+    if meta.len() > MAX_SOUND_BYTES {
+        return Err(AppError::Other("file too large".into()));
+    }
+    Ok(tauri::ipc::Response::new(fs::read(&path)?))
+}
+
 /// Write edited contents back to a working-tree file.
 #[tauri::command]
 pub fn write_file(

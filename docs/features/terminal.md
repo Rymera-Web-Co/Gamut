@@ -66,8 +66,28 @@ shows as a small dot:
 The dot is colored by the most salient event: blue for output, amber for a bell, red for a
 process exit. It clears the moment the pane comes into view (its group and tab are selected,
 the panel is open, and it's the focused pane). The pane you're currently viewing never
-badges itself. This is purely a visual indicator — no sound or desktop notification (that's
-tracked separately).
+badges itself.
+
+## Notifications
+
+On top of the visual dot, a background pane can also pull you back with a **sound** and an
+optional **desktop notification** — useful when Gamut is in another tab, another group, or
+behind another app. These fire only on the two *discrete* events — a **process exit** and a
+**terminal bell** — never on plain output, so a chatty background process can't spam you
+(bursts are coalesced into at most one cue every 400 ms). The pane you're currently looking
+at is suppressed (you can already see it), while its visual activity dot is unaffected.
+
+Configure it under **Settings → Notifications** (⌘,):
+
+- **Play sound on terminal events** — master toggle for the audible cue (on by default).
+- **Notify on process exit** / **Notify on terminal bell** — pick which events fire.
+- **Sound** — choose from the built-in tones (Chime, Ping, Blip, Knock, Alert) or pick
+  **Custom…** to use your own audio file (`.wav`, `.mp3`, `.ogg`, `.m4a`, `.aac`, `.flac`).
+  A **Test** button previews the current choice. Built-in tones are synthesized in-app;
+  a custom file is read on demand and capped at 8 MB.
+- **Show desktop notification** — also post a native OS notification (off by default). It
+  asks for notification permission when enabled and respects the OS Do-Not-Disturb state;
+  clicking the notification focuses Gamut and reveals the originating group, tab and pane.
 
 ## Behind the scenes
 
@@ -78,6 +98,15 @@ read on a dedicated thread and tracked in `AppState` (see
 [Architecture](../ARCHITECTURE.md)). Per-pane unseen-activity flags live in the UI store
 (`termActivity` in `src/store/ui.ts`) and drive the activity dots in the tab bar and
 group rail (`src/features/terminal/activity.tsx`).
+
+The same bell/exit events drive notifications via `src/features/terminal/notify.ts`:
+built-in sounds are synthesized with the Web Audio API (no bundled assets), while a custom
+sound file is read through the `read_file_bytes` command (`src-tauri/src/commands/files.rs`)
+and played from a Blob URL — so no asset-protocol scope is needed. Desktop notifications go
+through [`tauri-plugin-notification`](https://v2.tauri.app/plugin/notification/) (registered
+in `src-tauri/src/lib.rs` with the `notification:default` capability). Preferences live in
+`src/lib/settings.ts` (`terminalNotify*` keys) and are edited in the **Notifications** pane
+of the Settings dialog.
 
 ---
 

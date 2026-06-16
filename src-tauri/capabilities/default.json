@@ -9,6 +9,7 @@
     "opener:allow-open-url",
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "notification:default"
   ]
 }
