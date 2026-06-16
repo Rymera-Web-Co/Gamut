@@ -158,6 +158,7 @@ function NumberField({
   max,
   step = 1,
   suffix,
+  integer = true,
 }: {
   value: number;
   onChange: (value: number) => void;
@@ -165,6 +166,8 @@ function NumberField({
   max?: number;
   step?: number;
   suffix?: string;
+  /** Whether to coerce input to a whole number (all current settings are). */
+  integer?: boolean;
 }) {
   const [text, setText] = useState(String(value));
   // Re-sync when the source changes (e.g. reset-to-defaults).
@@ -174,6 +177,9 @@ function NumberField({
     setText(raw);
     const n = Number(raw);
     if (raw.trim() === "" || !Number.isFinite(n)) return;
+    // Don't commit a fractional value for an integer setting (the backend
+    // parses these as `usize`/`u64` and would silently fall back to default).
+    if (integer && !Number.isInteger(n)) return;
     let clamped = n;
     if (min != null) clamped = Math.max(min, clamped);
     if (max != null) clamped = Math.min(max, clamped);

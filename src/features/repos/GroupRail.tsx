@@ -10,7 +10,8 @@ import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
 import { clearDrag, getDrag, moveAdjacent, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { useUiStore } from "@/store/ui";
+import { useUiStore, type TermActivityKind } from "@/store/ui";
+import { ActivityDot, groupActivityKind } from "@/features/terminal/activity";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
 import { useGroups, useReorderGroups, useSetRepoGroups } from "./api";
 import { GroupDialog } from "./GroupDialog";
@@ -18,6 +19,7 @@ import { GroupDialog } from "./GroupDialog";
 function GroupButton({
   group,
   active,
+  activity,
   onSelect,
   onRepoDrop,
   onGroupReorder,
@@ -25,6 +27,8 @@ function GroupButton({
 }: {
   group: Group;
   active: boolean;
+  /** Unseen terminal activity in this (non-active) group, if any. */
+  activity?: TermActivityKind;
   onSelect: () => void;
   onRepoDrop: (repoId: number) => void;
   onGroupReorder: (srcId: number, targetId: number, position: "before" | "after") => void;
@@ -87,7 +91,7 @@ function GroupButton({
       onClick={onSelect}
       onContextMenu={onContextMenu}
       className={cn(
-        "flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
+        "relative flex size-10 items-center justify-center rounded-lg border text-xs font-semibold transition-colors",
         repoOver
           ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]"
           : active
@@ -101,6 +105,11 @@ function GroupButton({
       )}
     >
       {Icon ? <Icon className="size-5" /> : groupInitials(group.name)}
+      {activity && (
+        <span className="absolute -top-0.5 -right-0.5 rounded-full p-px ring-2 ring-[var(--color-sidebar)]">
+          <ActivityDot kind={activity} />
+        </span>
+      )}
     </button>
   );
 }
@@ -115,6 +124,8 @@ export function GroupRail() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
+  const terminals = useUiStore((s) => s.terminals);
+  const termActivity = useUiStore((s) => s.termActivity);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
@@ -124,6 +135,10 @@ export function GroupRail() {
 
   const list = groups.data ?? [];
   const defaultGroup = list.find((g) => g.is_default) ?? list[0];
+  const toggleActivity =
+    activeGroupId != null
+      ? groupActivityKind(terminals[activeGroupId], termActivity)
+      : undefined;
 
   useEffect(() => {
     if (list.length === 0) return;
@@ -164,6 +179,13 @@ export function GroupRail() {
           key={g.id}
           group={g}
           active={g.id === activeGroupId}
+          // The active group surfaces its activity in-panel (tabs/splits) and on
+          // the terminal toggle when collapsed, so only badge other groups here.
+          activity={
+            g.id === activeGroupId
+              ? undefined
+              : groupActivityKind(terminals[g.id], termActivity)
+          }
           onSelect={() => setActiveGroup(g.id)}
           onRepoDrop={(repoId) => handleRepoDrop(g, repoId)}
           onGroupReorder={handleGroupReorder}
@@ -192,13 +214,20 @@ export function GroupRail() {
           title={terminalOpen ? "Hide terminal (⌘`)" : "Show terminal (⌘`)"}
           onClick={toggleTerminal}
           className={cn(
-            "flex size-10 items-center justify-center rounded-lg border transition-colors",
+            "relative flex size-10 items-center justify-center rounded-lg border transition-colors",
             terminalOpen
               ? "border-[var(--color-primary)] bg-[var(--color-accent)] text-[var(--color-foreground)]"
               : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
           )}
         >
           <SquareTerminal className="size-5" />
+          {/* When the panel is collapsed, the active group's hidden tabs have no
+              other way to surface activity — badge the toggle. */}
+          {!terminalOpen && toggleActivity && (
+            <span className="absolute -top-0.5 -right-0.5 rounded-full p-px ring-2 ring-[var(--color-sidebar)]">
+              <ActivityDot kind={toggleActivity} />
+            </span>
+          )}
         </button>
         <GitHubConnect />
         <button

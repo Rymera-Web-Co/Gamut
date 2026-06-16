@@ -15,6 +15,18 @@ export interface TermPane {
   /** Working directory the shell is rooted at. */
   cwd: string;
 }
+/**
+ * Why a hidden pane is flagged as having unseen activity, ordered by salience
+ * so a transient bell/exit isn't downgraded by a later output chunk:
+ * `output` (PTY wrote bytes) < `bell` (xterm `\a`) < `exit` (shell process ended).
+ */
+export type TermActivityKind = "output" | "bell" | "exit";
+
+export const ACTIVITY_PRIORITY: Record<TermActivityKind, number> = {
+  output: 0,
+  bell: 1,
+  exit: 2,
+};
 export interface TermTab {
   id: string;
   title: string;
@@ -48,7 +60,14 @@ interface UiState {
   // Integrated terminal pane. `terminalOpen` (persisted) toggles the bottom
   // pane; `terminals` holds each group's tabs/panes (in-memory, by group id).
   terminalOpen: boolean;
+  // Whether the terminal pane is maximized to (near) full content-area height.
+  // In-memory only — distinct from open/close and reset when the pane is hidden.
+  terminalMaximized: boolean;
   terminals: Record<number, GroupTerminals>;
+  // Per-pane "unseen activity" flag, keyed by pane id, set when a *hidden* pane
+  // emits output, rings the bell, or its process exits. Drives the activity
+  // badges on inactive tabs/groups; cleared when the pane becomes visible.
+  termActivity: Record<string, TermActivityKind>;
   // Monotonic counter for minting unique pane/tab ids.
   nextTermId: number;
   // One-shot navigation target: a commit to reveal in the History tab. The
@@ -71,6 +90,8 @@ interface UiState {
   toggleRepoSidebar: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
+  setTerminalMaximized: (max: boolean) => void;
+  toggleTerminalMaximized: () => void;
   /** Open a new terminal tab in a group rooted at `cwd`, and reveal the pane. */
   addTerminalTab: (groupId: number, cwd: string, title: string) => void;
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
@@ -81,6 +102,10 @@ interface UiState {
   closeTerminalTab: (groupId: number, tabId: string) => void;
   /** Remove one split pane; removes the tab if it was the last pane. */
   closeTerminalPane: (groupId: number, tabId: string, paneId: string) => void;
+  /** Flag a hidden pane as having unseen activity (escalating by salience). */
+  markTermActivity: (paneId: string, kind: TermActivityKind) => void;
+  /** Clear a pane's unseen-activity flag (on focus or when the pane is gone). */
+  clearTermActivity: (paneId: string) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -91,7 +116,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
   terminalOpen: storedTerminalOpen(),
+  terminalMaximized: false,
   terminals: {},
+  termActivity: {},
   nextTermId: 1,
   historySha: null,
   filesPath: null,
@@ -113,9 +140,16 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   setTerminalOpen: (open) => {
     localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
-    set({ terminalOpen: open });
+    // Hiding the pane drops the maximized state so reopening starts from the
+    // normal split height rather than a stale "maximized" flag.
+    set(open ? { terminalOpen: true } : { terminalOpen: false, terminalMaximized: false });
   },
   toggleTerminal: () => get().setTerminalOpen(!get().terminalOpen),
+  setTerminalMaximized: (max) => {
+    if (max) get().setTerminalOpen(true);
+    set({ terminalMaximized: max });
+  },
+  toggleTerminalMaximized: () => get().setTerminalMaximized(!get().terminalMaximized),
   addTerminalTab: (groupId, cwd, title) => {
     const n = get().nextTermId;
     const tab: TermTab = {
@@ -189,6 +223,9 @@ export const useUiStore = create<UiState>((set, get) => ({
       if (!g) return {};
       const tab = g.tabs.find((t) => t.id === tabId);
       if (!tab) return {};
+      const { [paneId]: _gone, ...termActivity } = s.termActivity;
+      void _gone;
+      const patch = paneId in s.termActivity ? { termActivity } : {};
       const panes = tab.panes.filter((p) => p.id !== paneId);
       if (panes.length === 0) {
         const idx = g.tabs.findIndex((t) => t.id === tabId);
@@ -199,13 +236,26 @@ export const useUiStore = create<UiState>((set, get) => ({
               ? tabs[Math.min(idx, tabs.length - 1)].id
               : null
             : g.activeTabId;
-        return { terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
+        return { ...patch, terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
       }
       const activePaneId =
         tab.activePaneId === paneId ? panes[panes.length - 1].id : tab.activePaneId;
       const tabs = g.tabs.map((t) =>
         t.id === tabId ? { ...t, panes, activePaneId } : t,
       );
-      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      return { ...patch, terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+    }),
+  markTermActivity: (paneId, kind) =>
+    set((s) => {
+      const cur = s.termActivity[paneId];
+      if (cur && ACTIVITY_PRIORITY[cur] >= ACTIVITY_PRIORITY[kind]) return {};
+      return { termActivity: { ...s.termActivity, [paneId]: kind } };
+    }),
+  clearTermActivity: (paneId) =>
+    set((s) => {
+      if (!(paneId in s.termActivity)) return {};
+      const { [paneId]: _gone, ...termActivity } = s.termActivity;
+      void _gone;
+      return { termActivity };
     }),
 }));

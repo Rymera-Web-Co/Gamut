@@ -92,18 +92,35 @@ pub fn set(state: &AppState, key: &str, value: &str) -> AppResult<()> {
 
 // ---- Tauri commands -------------------------------------------------------
 
+/// Reject any key outside the `pref.` namespace. The generic commands are
+/// reachable from the frontend, so without this guard a compromised renderer
+/// could read or overwrite credential rows (`github_token`, `github_login`).
+/// Backend features bypass this by calling the helpers above directly.
+fn ensure_pref(key: &str) -> AppResult<()> {
+    if key.starts_with(PREF_PREFIX) {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "setting key must be in the `{PREF_PREFIX}` namespace"
+        )))
+    }
+}
+
 #[tauri::command]
 pub fn get_setting(state: State<AppState>, key: String) -> AppResult<Option<String>> {
+    ensure_pref(&key)?;
     get(&state, &key)
 }
 
 #[tauri::command]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> AppResult<()> {
+    ensure_pref(&key)?;
     set(&state, &key, &value)
 }
 
 #[tauri::command]
 pub fn delete_setting(state: State<AppState>, key: String) -> AppResult<()> {
+    ensure_pref(&key)?;
     lock(&state)?.execute(
         "DELETE FROM settings WHERE key = ?1",
         rusqlite::params![key],

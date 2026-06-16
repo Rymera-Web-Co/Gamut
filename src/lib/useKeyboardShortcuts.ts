@@ -8,12 +8,15 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
  *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
- *   ⌘/Ctrl+` → toggle integrated terminal   ⌘/Ctrl+, → settings
+ *   ⌘/Ctrl+` → toggle integrated terminal
+ *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
+ *   ⌘/Ctrl+, → settings
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
+  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
   const toggleTheme = useTheme((s) => s.toggle);
 
@@ -49,6 +52,11 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           toggleTerminal();
           break;
+        // Shift+` reports as "~" on most layouts.
+        case "~":
+          e.preventDefault();
+          toggleTerminalMaximized();
+          break;
         case ",":
           e.preventDefault();
           toggleSettings();
@@ -57,5 +65,12 @@ export function useKeyboardShortcuts() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setView, toggleRepoSidebar, toggleTerminal, toggleSettings, toggleTheme]);
+  }, [
+    setView,
+    toggleRepoSidebar,
+    toggleTerminal,
+    toggleTerminalMaximized,
+    toggleSettings,
+    toggleTheme,
+  ]);
 }

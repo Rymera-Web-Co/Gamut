@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
+import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -10,7 +10,14 @@ import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { useUiStore, type TermPane } from "@/store/ui";
+import {
+  ACTIVITY_PRIORITY,
+  useUiStore,
+  type TermActivityKind,
+  type TermPane,
+  type TermTab,
+} from "@/store/ui";
+import { ActivityDot } from "./activity";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
@@ -52,6 +59,8 @@ const encoder = new TextEncoder();
  */
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const terminalMaximized = useUiStore((s) => s.terminalMaximized);
+  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const terminals = useUiStore((s) => s.terminals);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -61,6 +70,9 @@ export function TerminalPane() {
   const setActivePane = useUiStore((s) => s.setActivePane);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const closeTerminalPane = useUiStore((s) => s.closeTerminalPane);
+  const termActivity = useUiStore((s) => s.termActivity);
+  const markTermActivity = useUiStore((s) => s.markTermActivity);
+  const clearTermActivity = useUiStore((s) => s.clearTermActivity);
   const theme = useTheme((s) => s.theme);
 
   const repos = useRepos();
@@ -84,6 +96,13 @@ export function TerminalPane() {
   // Keep the latest group/tab around for the imperative click handlers.
   const ctxRef = useRef({ groupId: activeGroupId, tabId: activeTab?.id });
   ctxRef.current = { groupId: activeGroupId, tabId: activeTab?.id };
+
+  // The one pane the user is actually looking at: the focused pane of the
+  // active tab while the panel is open. Only this pane is exempt from activity
+  // badging (no self-badging) and is auto-cleared when it comes into view.
+  const visiblePaneId = terminalOpen && activeTab ? activeTab.activePaneId : null;
+  const visiblePaneRef = useRef<string | null>(visiblePaneId);
+  visiblePaneRef.current = visiblePaneId;
 
   function ensureEntry(pane: TermPane): SessionEntry {
     const existing = sessionsRef.current.get(pane.id);
@@ -114,6 +133,10 @@ export function TerminalPane() {
     term.open(el);
     term.onData((data) => {
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
+    });
+    // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity.
+    term.onBell(() => {
+      if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "bell");
     });
     el.addEventListener("mousedown", () => {
       const { groupId, tabId } = ctxRef.current;
@@ -160,9 +183,11 @@ export function TerminalPane() {
             return next;
           });
           ipc
-            .terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) =>
-              e.term.write(bytes),
-            )
+            .terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
+              e.term.write(bytes);
+              // Output to a pane the user isn't viewing is unseen activity.
+              if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
+            })
             .catch((err) => {
               e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
             });
@@ -206,18 +231,26 @@ export function TerminalPane() {
     return () => ro.disconnect();
   }, []);
 
-  // A shell exited: note it so the active pane can offer Restart.
+  // A shell exited: note it so the active pane can offer Restart, and badge it
+  // as activity if it exited while hidden.
   useEffect(() => {
     const unlisten = listen<string>("terminal-exit", (ev) => {
       const key = ev.payload;
       const e = sessionsRef.current.get(key);
       if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
       setDeadKeys((prev) => new Set(prev).add(key));
+      if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
     });
     return () => {
       unlisten.then((off) => off());
     };
-  }, []);
+  }, [markTermActivity]);
+
+  // Clear unseen-activity for the pane as soon as it comes into view (its tab
+  // and group are selected, the panel is open, and it's the focused pane).
+  useEffect(() => {
+    if (visiblePaneId) clearTermActivity(visiblePaneId);
+  }, [visiblePaneId, clearTermActivity]);
 
   function disposeEntry(id: string) {
     const e = sessionsRef.current.get(id);
@@ -237,6 +270,7 @@ export function TerminalPane() {
   function killPane(id: string) {
     ipc.terminalKill(id).catch(() => {});
     disposeEntry(id);
+    clearTermActivity(id);
   }
 
   function restart(id: string) {
@@ -285,6 +319,16 @@ export function TerminalPane() {
     closeTerminalPane(activeGroupId, activeTab.id, paneId);
   }
 
+  // The most salient unseen-activity kind across a tab's panes, if any.
+  function tabActivity(tab: TermTab): TermActivityKind | undefined {
+    let best: TermActivityKind | undefined;
+    for (const p of tab.panes) {
+      const k = termActivity[p.id];
+      if (k && (!best || ACTIVITY_PRIORITY[k] > ACTIVITY_PRIORITY[best])) best = k;
+    }
+    return best;
+  }
+
   const tabs = gt?.tabs ?? [];
   const canNewTab = defaultTarget() != null;
   const n = activePanes.length;
@@ -298,7 +342,11 @@ export function TerminalPane() {
     >
       {/* Tab strip + controls. */}
       <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs">
-        {tabs.map((tab) => (
+        {tabs.map((tab) => {
+          // Inactive tabs surface unseen background activity with a dot; the
+          // active tab's focused pane is already "seen" (and cleared).
+          const tabKind = tab.id === gt?.activeTabId ? undefined : tabActivity(tab);
+          return (
           <div
             key={tab.id}
             role="tab"
@@ -311,6 +359,7 @@ export function TerminalPane() {
                 : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
             )}
           >
+            {tabKind && <ActivityDot kind={tabKind} />}
             <span className="min-w-0 truncate">{tab.title}</span>
             {tab.panes.length > 1 && (
               <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
@@ -329,7 +378,8 @@ export function TerminalPane() {
               <X className="size-3" />
             </button>
           </div>
-        ))}
+          );
+        })}
 
         <div className="ml-auto flex items-center gap-0.5 pr-1 pl-1">
           {activeDead && (
@@ -361,6 +411,19 @@ export function TerminalPane() {
             <Plus className="size-4" />
           </button>
           <button
+            title={terminalMaximized ? "Restore terminal (⌘⇧`)" : "Maximize terminal (⌘⇧`)"}
+            aria-label={terminalMaximized ? "Restore terminal" : "Maximize terminal"}
+            aria-pressed={terminalMaximized}
+            onClick={toggleTerminalMaximized}
+            className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          >
+            {terminalMaximized ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Maximize2 className="size-4" />
+            )}
+          </button>
+          <button
             title="Hide terminal (⌘`)"
             aria-label="Hide terminal"
             onClick={() => setTerminalOpen(false)}
@@ -389,6 +452,25 @@ export function TerminalPane() {
               <X className="size-3.5" />
             </button>
           ))}
+        {/* Per-split activity markers: which split changed while you were away.
+            The focused pane is cleared, so this only marks the others. */}
+        {n > 1 &&
+          activePanes.map((pane, i) => {
+            const kind = termActivity[pane.id];
+            // Guard the focused pane explicitly: the clear effect runs after
+            // paint, so without this it could flash a dot for one frame.
+            if (!kind || pane.id === activeTab?.activePaneId) return null;
+            return (
+              <span
+                key={`act-${pane.id}`}
+                title="Unseen activity in this pane"
+                style={{ left: `calc(${(i * 100) / n}% + 0.5rem)`, top: "0.5rem" }}
+                className="absolute z-10"
+              >
+                <ActivityDot kind={kind} />
+              </span>
+            );
+          })}
         {tabs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-xs text-[var(--color-muted-foreground)]">
             <span>No terminals open in this group.</span>

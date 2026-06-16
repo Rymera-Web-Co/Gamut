@@ -65,6 +65,13 @@ export const DEFAULTS: Settings = {
 
 type Key = keyof Settings;
 
+/** Allowed values for enum-typed keys, used to reject corrupt stored strings. */
+const ENUMS: Partial<Record<Key, readonly string[]>> = {
+  diffLayout: ["side-by-side", "unified"],
+  reviewMode: ["working", "branch"],
+  mergeStrategy: ["merge", "squash", "rebase"],
+};
+
 /** localStorage mirror of the DB, for synchronous hydration before IPC loads. */
 const MIRROR_KEY = "gamut.settings";
 /** Backend key for a preference (matches the `pref.` namespace on the Rust side). */
@@ -79,6 +86,10 @@ function deserialize<K extends Key>(key: K, raw: string): Settings[K] {
   if (typeof def === "boolean") {
     return (raw === "1" || raw === "true") as Settings[K];
   }
+  // Enum-typed keys: fall back to the default if the stored value is unknown,
+  // so a corrupt DB/mirror can't put the store into an invalid state.
+  const allowed = ENUMS[key];
+  if (allowed && !allowed.includes(raw)) return def;
   return raw as Settings[K];
 }
 

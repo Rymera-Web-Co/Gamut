@@ -47,6 +47,7 @@ export default function App() {
   const view = useUiStore((s) => s.view);
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const terminalMaximized = useUiStore((s) => s.terminalMaximized);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const loadSettings = useSettings((s) => s.load);
   useKeyboardShortcuts();
@@ -69,62 +70,98 @@ export default function App() {
     else if (!terminalOpen && panel.isExpanded()) panel.collapse();
   }, [terminalOpen]);
 
+  // Maximize/restore the terminal panel. Maximizing collapses the content panel
+  // to zero (its minSize drops to 0 while maximized) so the terminal fills the
+  // whole right column below the persistent top bar; restoring returns it to the
+  // size captured just before maximizing. Resets while the pane is hidden so
+  // reopening never restores into a stale size.
+  const preMaximizeSizeRef = useRef<number | null>(null);
+  useEffect(() => {
+    const panel = terminalPanelRef.current;
+    if (!panel) return;
+    if (!terminalOpen) {
+      preMaximizeSizeRef.current = null;
+      return;
+    }
+    if (terminalMaximized) {
+      preMaximizeSizeRef.current = panel.getSize();
+      panel.resize(100);
+    } else if (preMaximizeSizeRef.current != null) {
+      panel.resize(preMaximizeSizeRef.current);
+      preMaximizeSizeRef.current = null;
+    }
+  }, [terminalMaximized, terminalOpen]);
+
   return (
     <div className="flex h-full w-full flex-col">
       <div className="flex min-h-0 flex-1">
         <GroupRail />
         {/* Vertical split to the right of the group rail: main content on top,
             the integrated terminal pinned to the bottom. The rail stays outside
-            so the terminal spans the full width minus the rail. */}
-        <PanelGroup direction="vertical" className="min-w-0 flex-1">
-          <Panel id="content" order={1} minSize={20} className="min-h-0">
-            <PanelGroup
-              direction="horizontal"
-              autoSaveId="gamut.layout.main"
-              className="min-w-0"
+            so the terminal spans the full width minus the rail. While the
+            terminal is maximized the content panel collapses to zero, so a
+            persistent top bar is rendered above the split to keep view tabs and
+            the maximize toggle reachable. */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {terminalMaximized && <TopTabs />}
+          <PanelGroup direction="vertical" className="min-h-0 flex-1">
+            <Panel
+              id="content"
+              order={1}
+              minSize={terminalMaximized ? 0 : 20}
+              className="min-h-0"
             >
-              {!repoSidebarHidden && (
-                <Panel
-                  id="repos"
-                  order={1}
-                  defaultSize={20}
-                  minSize={12}
-                  maxSize={40}
-                  className="min-w-0"
-                >
-                  <RepoSidebar />
+              <PanelGroup
+                direction="horizontal"
+                autoSaveId="gamut.layout.main"
+                className="min-w-0"
+              >
+                {!repoSidebarHidden && (
+                  <Panel
+                    id="repos"
+                    order={1}
+                    defaultSize={20}
+                    minSize={12}
+                    maxSize={40}
+                    className="min-w-0"
+                  >
+                    <RepoSidebar />
+                  </Panel>
+                )}
+                {!repoSidebarHidden && <ResizeHandle />}
+                <Panel id="main" order={2} className="min-w-0">
+                  <main className="flex h-full min-w-0 flex-col">
+                    <TopTabs />
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      {view === "files" && <FilesView />}
+                      {view === "history" && <HistoryView />}
+                      {view === "review" && <ReviewView />}
+                      {view === "pulls" && <PullsView />}
+                    </div>
+                  </main>
                 </Panel>
-              )}
-              {!repoSidebarHidden && <ResizeHandle />}
-              <Panel id="main" order={2} className="min-w-0">
-                <main className="flex h-full min-w-0 flex-col">
-                  <TopTabs />
-                  <div className="min-h-0 flex-1 overflow-hidden">
-                    {view === "files" && <FilesView />}
-                    {view === "history" && <HistoryView />}
-                    {view === "review" && <ReviewView />}
-                    {view === "pulls" && <PullsView />}
-                  </div>
-                </main>
-              </Panel>
-            </PanelGroup>
-          </Panel>
-          <ResizeHandle horizontal className={terminalOpen ? "" : "hidden"} />
-          <Panel
-            id="terminal"
-            order={2}
-            ref={terminalPanelRef}
-            collapsible
-            collapsedSize={0}
-            defaultSize={terminalOpen ? 32 : 0}
-            minSize={12}
-            onCollapse={() => setTerminalOpen(false)}
-            onExpand={() => setTerminalOpen(true)}
-            className="min-h-0"
-          >
-            <TerminalPane />
-          </Panel>
-        </PanelGroup>
+              </PanelGroup>
+            </Panel>
+            <ResizeHandle
+              horizontal
+              className={terminalOpen && !terminalMaximized ? "" : "hidden"}
+            />
+            <Panel
+              id="terminal"
+              order={2}
+              ref={terminalPanelRef}
+              collapsible
+              collapsedSize={0}
+              defaultSize={terminalOpen ? 32 : 0}
+              minSize={12}
+              onCollapse={() => setTerminalOpen(false)}
+              onExpand={() => setTerminalOpen(true)}
+              className="min-h-0"
+            >
+              <TerminalPane />
+            </Panel>
+          </PanelGroup>
+        </div>
       </div>
       <StatusBar />
       <Toaster />

@@ -16,6 +16,19 @@ while the terminal is hidden.
 - **From a group** — the terminal icon in the sidebar header opens one at a folder-bound
   group's folder.
 
+## Maximize & restore
+
+- **Maximize** the pane with the ⤢ button in the tab-bar controls (or
+  <code>⌘/Ctrl+⇧+&#96;</code>). The terminal grows to fill the whole content area —
+  the repository sidebar and the active view collapse, leaving only the top tab bar so
+  you can still switch views or unmaximize.
+- **Restore** with the same button (now ⤡) or shortcut to return the pane to its
+  previous height.
+- Maximize is independent of open/close: restoring keeps the terminal open, and hiding
+  the pane (the **×** or <code>⌘/Ctrl+&#96;</code>) clears the maximized state so it
+  reopens at its normal split height. The maximized state is not persisted across
+  restarts.
+
 ## Tabs & splits
 
 - Each group keeps its own set of tabs. Click a tab to activate it.
@@ -37,13 +50,34 @@ while the terminal is hidden.
 When a group has no terminals: *"No terminals open in this group"* (or a prompt to add a
 repo / bind a folder first).
 
+## Activity indicator
+
+Because hidden panes keep running, Gamut surfaces background activity so you don't have to
+hunt for it. A pane is flagged with unseen activity when — *while you're not looking at it*
+— it emits output, rings the terminal bell (`\a`), or its shell process exits. The flag
+shows as a small dot:
+
+- on the pane's **tab**, while that tab is inactive;
+- on each **split pane** that changed, so a split tab shows *which* pane has activity;
+- on the **group rail** entry for any other group with terminal activity;
+- on the **terminal toggle** icon when the panel is collapsed and the active group has
+  activity.
+
+The dot is colored by the most salient event: blue for output, amber for a bell, red for a
+process exit. It clears the moment the pane comes into view (its group and tab are selected,
+the panel is open, and it's the focused pane). The pane you're currently viewing never
+badges itself. This is purely a visual indicator — no sound or desktop notification (that's
+tracked separately).
+
 ## Behind the scenes
 
 `src/features/terminal/TerminalPane.tsx` talks to the terminal commands in the Rust
 backend. IPC commands: `terminalSpawn`, `terminalWrite`, `terminalResize`,
 `terminalKill`; the backend emits a `terminal-exit` event when a shell exits. PTYs are
 read on a dedicated thread and tracked in `AppState` (see
-[Architecture](../ARCHITECTURE.md)).
+[Architecture](../ARCHITECTURE.md)). Per-pane unseen-activity flags live in the UI store
+(`termActivity` in `src/store/ui.ts`) and drive the activity dots in the tab bar and
+group rail (`src/features/terminal/activity.tsx`).
 
 ---
 
