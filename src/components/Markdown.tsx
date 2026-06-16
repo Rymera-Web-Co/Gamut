@@ -1,9 +1,10 @@
-import { useRef, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
 type MdNode = {
@@ -84,6 +85,88 @@ export function toggleTaskInMarkdown(source: string, index: number): string {
     .join("\n");
 }
 
+/**
+ * Whether `url` points at a GitHub-hosted attachment/asset image. These render
+ * fine on github.com (the browser sends session cookies) but break in the
+ * cookieless Tauri webview, so they're proxied through the backend with the
+ * user's token. Non-GitHub images (badges, external hosts) load directly.
+ */
+function isGithubAssetUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "github.com" ||
+      host.endsWith(".github.com") ||
+      host === "githubusercontent.com" ||
+      host.endsWith(".githubusercontent.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Dedupe and cache proxied-image fetches across renders/mounts: a markdown body
+// often re-renders (task toggles, refetches) and the same screenshot shouldn't
+// be re-downloaded each time.
+const imageCache = new Map<string, Promise<string>>();
+
+function fetchProxiedImage(url: string): Promise<string> {
+  let p = imageCache.get(url);
+  if (!p) {
+    p = ipc.githubFetchImage(url).catch((e) => {
+      imageCache.delete(url); // allow a retry on the next mount
+      throw e;
+    });
+    imageCache.set(url, p);
+  }
+  return p;
+}
+
+/**
+ * An `<img>` whose source is a GitHub attachment URL, fetched via the backend
+ * (with auth) and shown as a data URL. Falls back to a link to the asset if the
+ * fetch fails so the image is at least reachable.
+ */
+function GitHubImage({ src, alt }: ComponentProps<"img">) {
+  const [resolved, setResolved] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (typeof src !== "string") return;
+    let active = true;
+    setResolved(null);
+    setFailed(false);
+    fetchProxiedImage(src)
+      .then((dataUrl) => active && setResolved(dataUrl))
+      .catch(() => active && setFailed(true));
+    return () => {
+      active = false;
+    };
+  }, [src]);
+
+  if (failed) {
+    return (
+      <a
+        href={typeof src === "string" ? src : undefined}
+        onClick={(e) => {
+          e.preventDefault();
+          if (typeof src === "string") openUrl(src).catch(() => {});
+        }}
+      >
+        {alt || "View image"}
+      </a>
+    );
+  }
+  if (!resolved) {
+    return (
+      <span className="text-xs text-[var(--color-muted-foreground)]">
+        Loading image…
+      </span>
+    );
+  }
+  return <img src={resolved} alt={alt} />;
+}
+
 export function Markdown({
   children,
   onToggleTask,
@@ -130,6 +213,14 @@ export function Markdown({
                 }
               />
             );
+          },
+          // GitHub attachment images need an authenticated fetch (the webview
+          // has no github.com cookies); other images load directly. (issue #36)
+          img({ node: _node, src, alt, ...props }) {
+            if (typeof src === "string" && isGithubAssetUrl(src)) {
+              return <GitHubImage src={src} alt={alt} />;
+            }
+            return <img src={src} alt={alt} {...props} />;
           },
           // Open all links in the external browser, not the app webview.
           a({ href, children }) {

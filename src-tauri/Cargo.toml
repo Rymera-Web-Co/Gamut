@@ -33,6 +33,10 @@ git2 = { version = "0.20", default-features = false }
 # GitHub: token in the OS keychain (release builds), REST over rustls.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Inline GitHub attachment images (issue #36): the webview has no github.com
+# session cookies, so authenticated attachment URLs are fetched with the user's
+# token in the backend and handed to the webview as base64 data URLs.
+base64 = "0.22"
 # Watch each repo's .git so external branch switches/commits reflect live.
 notify = "7"
 notify-debouncer-mini = "0.5"
