@@ -45,19 +45,9 @@ export function useKeyboardShortcuts() {
   const { pull, push, busy } = useSyncActions(activeRepoId);
 
   // Latest dynamic state for the (mount-once) keydown listener, so it never
-  // works off stale repo/group/mutation snapshots without re-binding.
-  const ref = useRef({
-    activeRepoId,
-    activeGroupId,
-    repos: repos.data,
-    groups: groups.data,
-    fetchGroup,
-    pull,
-    push,
-    busy,
-    setActiveRepo,
-  });
-  ref.current = {
+  // works off stale repo/group/mutation snapshots without re-binding. Built
+  // once per render and reused as both the initializer and the live value.
+  const snapshot = {
     activeRepoId,
     activeGroupId,
     repos: repos.data,
@@ -68,6 +58,8 @@ export function useKeyboardShortcuts() {
     busy,
     setActiveRepo,
   };
+  const ref = useRef(snapshot);
+  ref.current = snapshot;
 
   useEffect(() => {
     // The repos shown in the active group, in sidebar order — kept in sync with
@@ -82,15 +74,19 @@ export function useKeyboardShortcuts() {
           );
     }
 
-    function cycleRepo(dir: 1 | -1) {
+    // Returns whether a cycle actually happened, so the caller can decide
+    // whether to swallow the key (don't preventDefault when there's nothing
+    // to cycle).
+    function cycleRepo(dir: 1 | -1): boolean {
       const s = ref.current;
       const visible = visibleRepos();
-      if (visible.length < 2) return;
+      if (visible.length < 2) return false;
       const cur = visible.findIndex((r) => r.id === s.activeRepoId);
       const next =
         cur < 0 ? visible[0] : visible[(cur + dir + visible.length) % visible.length];
       s.setActiveRepo(next.id);
       ipc.touchRepo(next.id);
+      return true;
     }
 
     // Fetch every fetchable repo in the active group (matches the group header's
@@ -129,14 +125,16 @@ export function useKeyboardShortcuts() {
           fetchActiveGroup();
           return;
         }
-        // ⌃Tab / ⌃⇧Tab → cycle repos in the active group.
-        if (e.key === "Tab") {
-          e.preventDefault();
-          cycleRepo(e.shiftKey ? -1 : 1);
+        // ⌃Tab / ⌃⇧Tab → cycle repos in the active group. Gated on Control
+        // specifically (⌘Tab is the OS app switcher), and only swallowed when
+        // there's actually a repo to cycle to.
+        if (e.ctrlKey && e.key === "Tab") {
+          if (cycleRepo(e.shiftKey ? -1 : 1)) e.preventDefault();
           return;
         }
-        if (!e.altKey) {
-          // ⌘⇧K → push, ⌘⇧P → pull (shift letters arrive uppercase).
+        if (e.shiftKey && !e.altKey) {
+          // ⌘⇧K → push, ⌘⇧P → pull. Require an explicit Shift so Caps Lock
+          // (which also yields uppercase e.key) can't fire these on plain ⌘K/⌘P.
           if (e.key === "K") {
             e.preventDefault();
             if (s.activeRepoId != null && !s.busy) s.push.mutate();

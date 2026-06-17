@@ -405,16 +405,9 @@ export function TerminalPane() {
   //   ⌘⇧] / ⌘⇧[ next / prev tab   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split
   // Everything but ⌘T is scoped to the terminal pane having focus, so it never
   // steals keys from the editor (e.g. Monaco's own ⌘D).
-  const shortcutRef = useRef({
-    handleNewTab,
-    handleSplit,
-    handleCloseTab,
-    selectTerminalTab,
-    activeGroupId,
-    gt,
-    activeTab,
-  });
-  shortcutRef.current = {
+  // Built once per render and reused as both the initializer and the live
+  // value, so we don't allocate a throwaway snapshot every render.
+  const shortcuts = {
     handleNewTab,
     handleSplit,
     handleCloseTab,
@@ -423,6 +416,8 @@ export function TerminalPane() {
     gt,
     activeTab,
   };
+  const shortcutRef = useRef(shortcuts);
+  shortcutRef.current = shortcuts;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -438,10 +433,10 @@ export function TerminalPane() {
       if (!focused || s.activeGroupId == null) return;
       const tabs = s.gt?.tabs ?? [];
       if (!e.altKey && !e.shiftKey && e.code === "KeyW") {
-        if (s.activeTab) {
-          e.preventDefault();
-          s.handleCloseTab(s.activeTab.id);
-        }
+        // Always swallow ⌘W while the terminal is focused so it can't fall
+        // through to closing the Tauri window; no-op when there's no tab.
+        e.preventDefault();
+        if (s.activeTab) s.handleCloseTab(s.activeTab.id);
         return;
       }
       if (!e.altKey && !e.shiftKey && e.code === "KeyD") {
