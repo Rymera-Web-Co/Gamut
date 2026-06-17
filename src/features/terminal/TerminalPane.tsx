@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -122,6 +123,38 @@ export function TerminalPane() {
   const visiblePaneRef = useRef<string | null>(visiblePaneId);
   visiblePaneRef.current = visiblePaneId;
 
+  // Whether the Gamut window itself is focused. Focused-pane suppression only
+  // makes sense while the user is actually looking at the app; when the window
+  // is backgrounded (e.g. Claude finishes a task or asks for input while you're
+  // in another app) the cue must fire regardless of which pane is active — the
+  // exact case that was always silenced before. See #47.
+  const windowFocusedRef = useRef(true);
+  useEffect(() => {
+    const win = getCurrentWindow();
+    void win
+      .isFocused()
+      .then((f) => {
+        windowFocusedRef.current = f;
+      })
+      .catch(() => {});
+    const unlisten = win.onFocusChanged(({ payload }) => {
+      windowFocusedRef.current = payload;
+    });
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  }, []);
+
+  // Whether a background-pane event should produce an audible/desktop cue.
+  // Fire when the user isn't already watching it: the always-notify setting is
+  // on, the window is unfocused, or this isn't the focused pane. Visual activity
+  // badging stays keyed on pane visibility alone (handled at each call site).
+  const shouldNotifyRef = useRef((paneId: string) => {
+    if (useSettings.getState().values.terminalNotifyAlways) return true;
+    if (!windowFocusedRef.current) return true;
+    return paneId !== visiblePaneRef.current;
+  });
+
   function ensureEntry(pane: TermPane): SessionEntry {
     const existing = sessionsRef.current.get(pane.id);
     if (existing) return existing;
@@ -155,8 +188,10 @@ export function TerminalPane() {
     // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity,
     // and fires the audible/desktop cue. The focused pane is exempt from both.
     term.onBell(() => {
-      if (pane.id !== visiblePaneRef.current) {
-        markTermActivity(pane.id, "bell");
+      // Badge the pane only when it's hidden (no self-badging); notify on a
+      // wider condition so a backgrounded window is still cued (#47).
+      if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "bell");
+      if (shouldNotifyRef.current(pane.id)) {
         const loc = locatePane(pane.id);
         if (loc) notifyTerminalEvent({ kind: "bell", title: loc.title, target: loc.target });
       }
@@ -262,8 +297,8 @@ export function TerminalPane() {
       const e = sessionsRef.current.get(key);
       if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
       setDeadKeys((prev) => new Set(prev).add(key));
-      if (key !== visiblePaneRef.current) {
-        markTermActivity(key, "exit");
+      if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
+      if (shouldNotifyRef.current(key)) {
         const loc = locatePane(key);
         if (loc) notifyTerminalEvent({ kind: "exit", title: loc.title, target: loc.target });
       }

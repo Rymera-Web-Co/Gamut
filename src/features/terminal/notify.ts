@@ -64,16 +64,30 @@ const SOUND_RECIPES: Record<Exclude<TerminalSound, "custom">, Tone[]> = {
 
 let audioCtx: AudioContext | null = null;
 
-/** Lazily create (and resume) the shared AudioContext on first playback. */
+/** Lazily create the shared AudioContext on first playback. */
 function ctx(): AudioContext | null {
   type WithWebkit = typeof globalThis & { webkitAudioContext?: typeof AudioContext };
   const Ctor = window.AudioContext ?? (window as WithWebkit).webkitAudioContext;
   if (!Ctor) return null;
   if (!audioCtx) audioCtx = new Ctor();
-  // Autoplay policies can leave the context suspended until a gesture; the
-  // Settings "Test" button and real terminal use both occur post-interaction.
-  if (audioCtx.state === "suspended") void audioCtx.resume();
   return audioCtx;
+}
+
+/**
+ * Resume a suspended context before scheduling. Autoplay policies can leave the
+ * context suspended until a gesture; a background event (Claude finishing while
+ * the window is unfocused) isn't a gesture, so we must await the resume or the
+ * tone is scheduled against a stalled clock and never sounds. Best-effort — a
+ * rejected resume just means playback is a no-op, never a thrown error.
+ */
+async function ensureRunning(ac: AudioContext): Promise<void> {
+  if (ac.state === "suspended") {
+    try {
+      await ac.resume();
+    } catch {
+      /* still suspended — playback will be a silent no-op */
+    }
+  }
 }
 
 // Loaded custom sound, keyed by path so we read it from disk only when the
@@ -94,6 +108,7 @@ async function playCustom(path: string) {
   if (!path) return;
   const ac = ctx();
   if (!ac) return;
+  await ensureRunning(ac);
   try {
     if (!customCache || customCache.path !== path) {
       const buf = await ipc.readAudioFile(path);
@@ -129,23 +144,28 @@ export function playSound(name: TerminalSound) {
   const ac = ctx();
   if (!ac) return;
   const recipe = SOUND_RECIPES[name] ?? SOUND_RECIPES.chime;
-  const now = ac.currentTime;
-  for (const tone of recipe) {
-    const osc = ac.createOscillator();
-    const gain = ac.createGain();
-    osc.type = tone.type ?? "sine";
-    osc.frequency.value = tone.freq;
-    const peak = tone.gain ?? 0.25;
-    const start = now + tone.at;
-    const end = start + tone.dur;
-    // Linear attack + exponential decay keeps each tone click-free.
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.linearRampToValueAtTime(peak, start + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, end);
-    osc.connect(gain).connect(ac.destination);
-    osc.start(start);
-    osc.stop(end + 0.02);
-  }
+  // Resume first so a background event schedules against a running clock; the
+  // tones are scheduled in the continuation since `currentTime` only advances
+  // once the context is running.
+  void ensureRunning(ac).then(() => {
+    const now = ac.currentTime;
+    for (const tone of recipe) {
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = tone.type ?? "sine";
+      osc.frequency.value = tone.freq;
+      const peak = tone.gain ?? 0.25;
+      const start = now + tone.at;
+      const end = start + tone.dur;
+      // Linear attack + exponential decay keeps each tone click-free.
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(peak, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      osc.connect(gain).connect(ac.destination);
+      osc.start(start);
+      osc.stop(end + 0.02);
+    }
+  });
 }
 
 // ---- Event orchestration --------------------------------------------------
