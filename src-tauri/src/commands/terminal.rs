@@ -63,6 +63,35 @@ fn default_shell() -> String {
     }
 }
 
+/// POSIX shells we know accept `-l` to run as a login shell (and that are
+/// interactive when attached to a PTY). The login flag is only appended for
+/// these recognised basenames so an arbitrary `pref.terminalShell` override —
+/// which can be any command, not necessarily a shell — isn't broken by an
+/// argument it doesn't understand.
+#[cfg(not(windows))]
+const LOGIN_SHELLS: &[&str] = &["bash", "zsh", "sh", "fish", "dash", "ksh"];
+
+/// Append the login-shell flag so the shell sources the user's init files
+/// (`~/.zprofile`/`~/.zshrc`, `~/.bash_profile`, …). macOS terminal emulators
+/// (Terminal.app, iTerm2, VS Code) all launch `$SHELL` as a login shell; without
+/// it the in-app terminal misses PATH additions, aliases and version-manager
+/// shims, and GUI-launched apps start with a minimal environment to begin with.
+/// No-op for an unrecognised command, and absent entirely on Windows where
+/// `cmd.exe`/`COMSPEC` has no login-shell concept.
+#[cfg(not(windows))]
+fn apply_login_shell(cmd: &mut CommandBuilder, shell: &str) {
+    let base = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(shell);
+    if LOGIN_SHELLS.contains(&base) {
+        cmd.arg("-l");
+    }
+}
+
+#[cfg(windows)]
+fn apply_login_shell(_cmd: &mut CommandBuilder, _shell: &str) {}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows: rows.max(1),
@@ -103,7 +132,10 @@ pub fn terminal_spawn(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(default_shell);
-    let mut cmd = CommandBuilder::new(shell);
+    let mut cmd = CommandBuilder::new(&shell);
+    // Run as a login shell so the user's init files are sourced, matching
+    // Terminal.app / iTerm2 / VS Code behaviour (see `apply_login_shell`).
+    apply_login_shell(&mut cmd, &shell);
     cmd.cwd(&cwd);
     // Advertise a capable terminal so prompts, colors and full-screen apps work.
     cmd.env("TERM", "xterm-256color");
