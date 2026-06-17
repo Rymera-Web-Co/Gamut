@@ -347,6 +347,13 @@ export interface SyncStatus {
   behind: number;
 }
 
+/** Per-repo outcome of a batch fetch (`gitFetchMany`). */
+export interface FetchResult {
+  repo_id: number;
+  ok: boolean;
+  error: string | null;
+}
+
 /** Repo-wide find & replace query. `includes`/`excludes` are gitignore-style
  * globs (e.g. `src/**`, `*.rs`); empty `includes` means "everything". */
 export interface SearchQuery {
@@ -443,6 +450,8 @@ export const ipc = {
   gitSyncStatus: (repoId: number) =>
     invoke<SyncStatus>("git_sync_status", { repoId }),
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
+  gitFetchMany: (repoIds: number[]) =>
+    invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>

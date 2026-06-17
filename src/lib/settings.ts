@@ -35,6 +35,8 @@ export interface Settings {
   pruneDirs: string; // comma-separated
   watchDebounceMs: number; // applied at startup
   mergeStrategy: "merge" | "squash" | "rebase";
+  autoFetch: boolean; // periodically fetch repos in the background
+  autoFetchIntervalMinutes: number; // minutes between background fetches
 
   // Terminal
   terminalShell: string; // "" → system login shell
@@ -82,6 +84,8 @@ export const DEFAULTS: Settings = {
   pruneDirs: "node_modules, vendor, target, .git, dist, build, .next, .cache",
   watchDebounceMs: 400,
   mergeStrategy: "merge",
+  autoFetch: true,
+  autoFetchIntervalMinutes: 5,
 
   terminalShell: "",
   terminalScrollback: 5000,

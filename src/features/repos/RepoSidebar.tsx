@@ -3,9 +3,11 @@ import {
   AlertTriangle,
   FolderGit2,
   GripVertical,
+  Loader2,
   Pencil,
   Plus,
   FolderSearch,
+  RefreshCw,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
@@ -23,6 +25,7 @@ import { ipc, pickDirectory, type Repo, type RepoStatus } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import {
+  useFetchGroup,
   useGroups,
   useRegisterRepo,
   useRemoveRepo,
@@ -208,6 +211,7 @@ export function RepoSidebar() {
   const removeRepo = useRemoveRepo();
   const setRepoGroups = useSetRepoGroups();
   const reorderRepos = useReorderRepos();
+  const fetchGroup = useFetchGroup();
   const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
@@ -230,6 +234,10 @@ export function RepoSidebar() {
   const visible = activeGroup?.is_default
     ? allRepos.filter((r) => r.group_ids.length === 0)
     : allRepos.filter((r) => activeGroupId != null && r.group_ids.includes(activeGroupId));
+
+  // Repos eligible for a group fetch — everything visible except missing folders
+  // (fetching a gone directory just errors).
+  const fetchableIds = visible.filter((r) => !r.missing).map((r) => r.id);
 
   function reorder(srcId: number, targetId: number) {
     const order = moveBefore(
@@ -275,6 +283,20 @@ export function RepoSidebar() {
           )}
         </div>
         <div className="flex shrink-0 items-center">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            title="Fetch all repositories in this group"
+            disabled={fetchGroup.isPending || fetchableIds.length === 0}
+            onClick={() => fetchGroup.mutate(fetchableIds)}
+          >
+            {fetchGroup.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <RefreshCw />
+            )}
+          </Button>
           {groupFolder && activeGroup && (
             <Button
               size="icon"

@@ -17,6 +17,7 @@ import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch } from "@/lib/updater";
+import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
@@ -54,6 +55,7 @@ export default function App() {
   const loadSettings = useSettings((s) => s.load);
   useKeyboardShortcuts();
   useGitWatch();
+  useAutoFetch();
 
   // Reconcile preferences with the DB once on startup (state is mirror-hydrated
   // synchronously, so this only corrects drift / picks up another window's edits).
