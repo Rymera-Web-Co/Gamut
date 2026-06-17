@@ -1,4 +1,3 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -7,8 +6,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ipc } from "@/lib/ipc";
-import { toast } from "@/store/toast";
+import { useSyncActions } from "@/features/sync/useSyncActions";
 
 export function SyncControls({
   repoId,
@@ -19,40 +17,7 @@ export function SyncControls({
   ahead?: number;
   behind?: number;
 }) {
-  const qc = useQueryClient();
-
-  function invalidate() {
-    qc.invalidateQueries({ queryKey: ["sync-status", repoId] });
-    qc.invalidateQueries({ queryKey: ["branches", repoId] });
-    qc.invalidateQueries({ queryKey: ["log", repoId] });
-    qc.invalidateQueries({ queryKey: ["review-files", repoId] });
-    qc.invalidateQueries({ queryKey: ["repo-statuses"] });
-  }
-
-  // Errors surface via the global mutation-cache toast handler.
-  const fetch = useMutation({
-    mutationFn: () => ipc.gitFetch(repoId),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Fetched from remote");
-    },
-  });
-  const pull = useMutation({
-    mutationFn: () => ipc.gitPull(repoId),
-    onSuccess: (out) => {
-      invalidate();
-      toast.success(out || "Pulled");
-    },
-  });
-  const push = useMutation({
-    mutationFn: () => ipc.gitPush(repoId),
-    onSuccess: (out) => {
-      invalidate();
-      toast.success(out || "Pushed");
-    },
-  });
-
-  const busy = fetch.isPending || pull.isPending || push.isPending;
+  const { fetch, pull, push, busy } = useSyncActions(repoId);
 
   return (
     <div className="flex items-center">
@@ -60,7 +25,7 @@ export function SyncControls({
         size="sm"
         variant="ghost"
         className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Fetch all remotes"
+        title="Fetch all remotes (⌘⌥F)"
         disabled={busy}
         onClick={() => fetch.mutate()}
       >
@@ -74,7 +39,7 @@ export function SyncControls({
         size="sm"
         variant="ghost"
         className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Pull"
+        title="Pull (⌘⇧P)"
         disabled={busy}
         onClick={() => pull.mutate()}
       >
@@ -89,7 +54,7 @@ export function SyncControls({
         size="sm"
         variant="ghost"
         className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Push"
+        title="Push (⌘⇧K)"
         disabled={busy}
         onClick={() => push.mutate()}
       >

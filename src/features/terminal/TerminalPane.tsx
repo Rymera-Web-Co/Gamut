@@ -399,6 +399,84 @@ export function TerminalPane() {
     closeTerminalPane(activeGroupId, activeTab.id, paneId);
   }
 
+  // Terminal keyboard shortcuts. Handled here (not in the global hook) because
+  // closing a tab must also kill its panes' PTYs — only this component can.
+  //   ⌘T new tab (opens the pane if hidden)   ⌘W close active tab
+  //   ⌘⇧] / ⌘⇧[ next / prev tab   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split
+  // Everything but ⌘T is scoped to the terminal pane having focus, so it never
+  // steals keys from the editor (e.g. Monaco's own ⌘D).
+  const shortcutRef = useRef({
+    handleNewTab,
+    handleSplit,
+    handleCloseTab,
+    selectTerminalTab,
+    activeGroupId,
+    gt,
+    activeTab,
+  });
+  shortcutRef.current = {
+    handleNewTab,
+    handleSplit,
+    handleCloseTab,
+    selectTerminalTab,
+    activeGroupId,
+    gt,
+    activeTab,
+  };
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const s = shortcutRef.current;
+      // ⌘T opens / adds a tab from anywhere.
+      if (!e.altKey && !e.shiftKey && e.code === "KeyT") {
+        e.preventDefault();
+        s.handleNewTab();
+        return;
+      }
+      // The rest act on the focused terminal pane only.
+      const focused = hostRef.current?.contains(document.activeElement) ?? false;
+      if (!focused || s.activeGroupId == null) return;
+      const tabs = s.gt?.tabs ?? [];
+      if (!e.altKey && !e.shiftKey && e.code === "KeyW") {
+        if (s.activeTab) {
+          e.preventDefault();
+          s.handleCloseTab(s.activeTab.id);
+        }
+        return;
+      }
+      if (!e.altKey && !e.shiftKey && e.code === "KeyD") {
+        e.preventDefault();
+        s.handleSplit();
+        return;
+      }
+      if (
+        e.shiftKey &&
+        !e.altKey &&
+        (e.code === "BracketRight" || e.code === "BracketLeft")
+      ) {
+        if (tabs.length && s.gt?.activeTabId) {
+          e.preventDefault();
+          const i = tabs.findIndex((t) => t.id === s.gt!.activeTabId);
+          const dir = e.code === "BracketRight" ? 1 : -1;
+          const next = tabs[(i + dir + tabs.length) % tabs.length];
+          s.selectTerminalTab(s.activeGroupId, next.id);
+        }
+        return;
+      }
+      if (e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+        const n = Number(e.code.slice(5));
+        const idx = n === 9 ? tabs.length - 1 : n - 1;
+        if (tabs[idx]) {
+          e.preventDefault();
+          s.selectTerminalTab(s.activeGroupId, tabs[idx].id);
+        }
+        return;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // The most salient unseen-activity kind across a tab's panes, if any.
   function tabActivity(tab: TermTab): TermActivityKind | undefined {
     let best: TermActivityKind | undefined;
@@ -501,7 +579,7 @@ export function TerminalPane() {
             </button>
           )}
           <button
-            title="Split terminal"
+            title="Split terminal (⌘D)"
             aria-label="Split terminal"
             disabled={!activeTab}
             onClick={handleSplit}
@@ -510,7 +588,7 @@ export function TerminalPane() {
             <SplitSquareHorizontal className="size-4" />
           </button>
           <button
-            title="New terminal"
+            title="New terminal (⌘T)"
             aria-label="New terminal"
             disabled={!canNewTab}
             onClick={handleNewTab}
