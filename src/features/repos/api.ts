@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 
 import { ipc } from "@/lib/ipc";
+import { toast } from "@/store/toast";
 
 const keys = {
   repos: ["repos"] as const,
@@ -24,6 +25,45 @@ export function useRepoStatuses() {
     queryKey: ["repo-statuses"],
     queryFn: ipc.repoStatuses,
     staleTime: 30_000,
+  });
+}
+
+/** Git-derived query keys that a fetch can make stale (ahead/behind, branches…). */
+const GIT_QUERY_KEYS = [
+  "repo-statuses",
+  "branches",
+  "git-tags",
+  "log",
+  "review-files",
+  "sync-status",
+] as const;
+
+/**
+ * Fetch every repo in a group at once (the group-header fetch button). One repo
+ * failing doesn't abort the rest — the backend returns a per-repo result list,
+ * and any failures are surfaced as a single toast. Callers pass already-filtered
+ * IDs (missing repos excluded).
+ */
+export function useFetchGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoIds: number[]) => ipc.gitFetchMany(repoIds),
+    onSuccess: (results) => {
+      for (const key of GIT_QUERY_KEYS) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+      const failed = results.filter((r) => !r.ok);
+      const fetched = results.length - failed.length;
+      if (failed.length === 0) {
+        toast.success(
+          fetched === 1 ? "Fetched 1 repository" : `Fetched ${fetched} repositories`,
+        );
+      } else {
+        toast.error(
+          `Fetched ${fetched} of ${results.length} — ${failed.length} failed`,
+        );
+      }
+    },
   });
 }
 

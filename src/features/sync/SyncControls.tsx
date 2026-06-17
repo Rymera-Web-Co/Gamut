@@ -1,10 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ipc } from "@/lib/ipc";
@@ -29,14 +24,8 @@ export function SyncControls({
     qc.invalidateQueries({ queryKey: ["repo-statuses"] });
   }
 
-  // Errors surface via the global mutation-cache toast handler.
-  const fetch = useMutation({
-    mutationFn: () => ipc.gitFetch(repoId),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Fetched from remote");
-    },
-  });
+  // Errors surface via the global mutation-cache toast handler. Fetching is
+  // driven from the group header (fetch-all), not per-repo — see RepoSidebar.
   const pull = useMutation({
     mutationFn: () => ipc.gitPull(repoId),
     onSuccess: (out) => {
@@ -52,24 +41,10 @@ export function SyncControls({
     },
   });
 
-  const busy = fetch.isPending || pull.isPending || push.isPending;
+  const busy = pull.isPending || push.isPending;
 
   return (
     <div className="flex items-center">
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Fetch all remotes"
-        disabled={busy}
-        onClick={() => fetch.mutate()}
-      >
-        {fetch.isPending ? (
-          <Loader2 className="size-3 animate-spin" />
-        ) : (
-          <RefreshCw className="size-3" />
-        )}
-      </Button>
       <Button
         size="sm"
         variant="ghost"
