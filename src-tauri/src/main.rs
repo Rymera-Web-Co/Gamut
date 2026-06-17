@@ -15,9 +15,11 @@ fn main() {
 /// Two failure modes are handled:
 ///   1. The DMABUF/compositing renderer aborting `WebKitWebProcess` on some
 ///      Mesa/GPU stacks (white window, then SIGABRT).
-///   2. `Could not create default EGL display: EGL_BAD_PARAMETER` on Wayland,
-///      caused by the AppImage's bundled `libwayland-client` shadowing the
-///      host's. Mesa's `libEGL` then loads stale Wayland symbols and aborts.
+///   2. `Could not create default EGL display: EGL_BAD_PARAMETER`, caused by the
+///      AppImage's bundled `libwayland-client` shadowing the host's. Mesa's
+///      `libEGL` initializes the Wayland platform regardless of session type,
+///      so it loads the stale bundled symbols and aborts — this happens on X11
+///      sessions too, not just Wayland.
 ///
 /// (1) is fixed by disabling those renderers via env vars. (2) is fixed by
 /// preloading the host's `libwayland-client` and re-executing ourselves so the
@@ -41,10 +43,11 @@ mod linux_webkit_workarounds {
         set_if_unset("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         set_if_unset("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
 
-        // The EGL_BAD_PARAMETER crash only happens under Wayland.
-        if !is_wayland() {
-            return;
-        }
+        // The bundled `libwayland-client` shadows the host's even on X11
+        // sessions (Mesa's `libEGL` initializes the Wayland platform regardless
+        // of session type), so always preload the host lib when one is found.
+        // On native `.deb`/`.rpm` installs this resolves to the host's own
+        // library and is a no-op.
 
         // Don't loop: if we've already re-exec'd, the preload is in effect.
         if env::var_os(REEXEC_GUARD).is_some() {
@@ -83,13 +86,6 @@ mod linux_webkit_workarounds {
         // `exec` only returns on failure; fall through and let the app try to
         // start normally rather than refusing to launch.
         eprintln!("gamut: failed to re-exec with libwayland-client preload: {err}");
-    }
-
-    fn is_wayland() -> bool {
-        env::var("XDG_SESSION_TYPE")
-            .map(|t| t.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(false)
-            || env::var_os("WAYLAND_DISPLAY").is_some()
     }
 
     /// Locate the host's `libwayland-client.so.0`, preferring the path that
