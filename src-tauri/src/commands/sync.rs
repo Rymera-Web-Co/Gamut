@@ -78,6 +78,62 @@ pub async fn git_fetch(state: State<'_, AppState>, repo_id: i64) -> AppResult<St
     run_git(&dir.to_string_lossy(), &["fetch", "--all", "--prune"]).await
 }
 
+/// Outcome of fetching one repo within a batch `git_fetch_many` call.
+#[derive(Serialize)]
+pub struct FetchResult {
+    pub repo_id: i64,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Fetch many repos in one call — backs the group-level fetch button and the
+/// background auto-fetch. Each repo is fetched independently: one failure (or a
+/// repo whose folder is gone) is recorded and the batch carries on rather than
+/// aborting. Repos are fetched sequentially to avoid hammering the network.
+#[tauri::command]
+pub async fn git_fetch_many(
+    state: State<'_, AppState>,
+    repo_ids: Vec<i64>,
+) -> AppResult<Vec<FetchResult>> {
+    let mut results = Vec::with_capacity(repo_ids.len());
+    for repo_id in repo_ids {
+        let dir = match repo_path(&state, repo_id) {
+            Ok(d) => d,
+            Err(e) => {
+                results.push(FetchResult {
+                    repo_id,
+                    ok: false,
+                    error: Some(e.to_string()),
+                });
+                continue;
+            }
+        };
+        // Skip repos whose folder no longer exists — fetching would just error.
+        if !dir.exists() {
+            results.push(FetchResult {
+                repo_id,
+                ok: false,
+                error: Some("folder no longer exists on disk".to_string()),
+            });
+            continue;
+        }
+        let result = match run_git(&dir.to_string_lossy(), &["fetch", "--all", "--prune"]).await {
+            Ok(_) => FetchResult {
+                repo_id,
+                ok: true,
+                error: None,
+            },
+            Err(e) => FetchResult {
+                repo_id,
+                ok: false,
+                error: Some(e.to_string()),
+            },
+        };
+        results.push(result);
+    }
+    Ok(results)
+}
+
 #[tauri::command]
 pub async fn git_pull(state: State<'_, AppState>, repo_id: i64) -> AppResult<String> {
     let dir = repo_path(&state, repo_id)?;

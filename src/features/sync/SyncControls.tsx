@@ -1,9 +1,4 @@
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useSyncActions } from "@/features/sync/useSyncActions";
@@ -17,24 +12,10 @@ export function SyncControls({
   ahead?: number;
   behind?: number;
 }) {
-  const { fetch, pull, push, busy } = useSyncActions(repoId);
+  const { pull, push, busy } = useSyncActions(repoId);
 
   return (
     <div className="flex items-center">
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Fetch all remotes (⌘⌥F)"
-        disabled={busy}
-        onClick={() => fetch.mutate()}
-      >
-        {fetch.isPending ? (
-          <Loader2 className="size-3 animate-spin" />
-        ) : (
-          <RefreshCw className="size-3" />
-        )}
-      </Button>
       <Button
         size="sm"
         variant="ghost"

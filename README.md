@@ -120,6 +120,8 @@ pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/relea
 - `⌘/Ctrl+1` Files · `⌘/Ctrl+2` History · `⌘/Ctrl+3` Review · `⌘/Ctrl+4` Pull Requests
 - `⌘/Ctrl+S` save the open file (Files tab) · `⌘/Ctrl+Enter` commit (Review working tree)
 - `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme · <code>⌘/Ctrl+&#96;</code> toggle terminal
+- `⌘/Ctrl+⇧+P` pull · `⌘/Ctrl+⇧+K` push · `⌘/Ctrl+⌥+F` fetch group · `Ctrl+Tab` cycle repos
+- `⌘/Ctrl+T` new terminal tab · `⌘/Ctrl+W` close tab · `⌘/Ctrl+D` split · `⌘/Ctrl+⌥+1…9` jump to tab
 
 See [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md) for the full list.
 

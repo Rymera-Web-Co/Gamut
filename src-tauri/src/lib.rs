@@ -106,6 +106,7 @@ pub fn run() {
             commands::settings::reset_settings,
             commands::sync::git_sync_status,
             commands::sync::git_fetch,
+            commands::sync::git_fetch_many,
             commands::sync::git_pull,
             commands::sync::git_push,
             commands::sync::git_checkout_pr,

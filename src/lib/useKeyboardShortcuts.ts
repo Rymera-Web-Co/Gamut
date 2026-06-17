@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { useGroups, useRepos } from "@/features/repos/api";
+import { useFetchGroup, useGroups, useRepos } from "@/features/repos/api";
 import { useSyncActions } from "@/features/sync/useSyncActions";
 import { ipc } from "@/lib/ipc";
 import { useTheme } from "@/lib/theme";
@@ -15,7 +15,8 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+` → toggle integrated terminal
  *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
  *   ⌘/Ctrl+, → settings
- *   ⌘/Ctrl+⇧+K → push   ⌘/Ctrl+⇧+P → pull   ⌘/Ctrl+⌥+F → fetch (active repo)
+ *   ⌘/Ctrl+⇧+K → push   ⌘/Ctrl+⇧+P → pull (active repo)
+ *   ⌘/Ctrl+⌥+F → fetch all repos in the active group
  *   ⌃Tab / ⌃⇧Tab → cycle repos in the active group
  *
  * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view,
@@ -40,7 +41,8 @@ export function useKeyboardShortcuts() {
 
   const repos = useRepos();
   const groups = useGroups();
-  const { fetch, pull, push, busy } = useSyncActions(activeRepoId);
+  const fetchGroup = useFetchGroup();
+  const { pull, push, busy } = useSyncActions(activeRepoId);
 
   // Latest dynamic state for the (mount-once) keydown listener, so it never
   // works off stale repo/group/mutation snapshots without re-binding.
@@ -49,7 +51,7 @@ export function useKeyboardShortcuts() {
     activeGroupId,
     repos: repos.data,
     groups: groups.data,
-    fetch,
+    fetchGroup,
     pull,
     push,
     busy,
@@ -60,7 +62,7 @@ export function useKeyboardShortcuts() {
     activeGroupId,
     repos: repos.data,
     groups: groups.data,
-    fetch,
+    fetchGroup,
     pull,
     push,
     busy,
@@ -68,22 +70,38 @@ export function useKeyboardShortcuts() {
   };
 
   useEffect(() => {
-    // The repos visible in the active group, in sidebar order — kept in sync
-    // with RepoSidebar's own filter so cycling matches what the user sees.
-    function cycleRepo(dir: 1 | -1) {
+    // The repos shown in the active group, in sidebar order — kept in sync with
+    // RepoSidebar's own filter so cycling and group-fetch match what's visible.
+    function visibleRepos() {
       const s = ref.current;
       const group = (s.groups ?? []).find((g) => g.id === s.activeGroupId);
-      const visible = group?.is_default
+      return group?.is_default
         ? (s.repos ?? []).filter((r) => r.group_ids.length === 0)
         : (s.repos ?? []).filter(
             (r) => s.activeGroupId != null && r.group_ids.includes(s.activeGroupId),
           );
+    }
+
+    function cycleRepo(dir: 1 | -1) {
+      const s = ref.current;
+      const visible = visibleRepos();
       if (visible.length < 2) return;
       const cur = visible.findIndex((r) => r.id === s.activeRepoId);
       const next =
         cur < 0 ? visible[0] : visible[(cur + dir + visible.length) % visible.length];
       s.setActiveRepo(next.id);
       ipc.touchRepo(next.id);
+    }
+
+    // Fetch every fetchable repo in the active group (matches the group header's
+    // fetch-all button — missing folders are skipped, they'd just error).
+    function fetchActiveGroup() {
+      const s = ref.current;
+      if (s.fetchGroup.isPending) return;
+      const ids = visibleRepos()
+        .filter((r) => !r.missing)
+        .map((r) => r.id);
+      if (ids.length > 0) s.fetchGroup.mutate(ids);
     }
 
     function isTypingTarget(): boolean {
@@ -104,10 +122,11 @@ export function useKeyboardShortcuts() {
       // Repo-action / repo-cycle shortcuts: only when not typing somewhere.
       if (!isTypingTarget()) {
         const s = ref.current;
-        // ⌘⌥F → fetch. ⌥ combos mangle e.key on macOS, so match the code.
+        // ⌘⌥F → fetch the active group. ⌥ combos mangle e.key on macOS, so
+        // match the physical code instead.
         if (e.altKey && e.code === "KeyF") {
           e.preventDefault();
-          if (s.activeRepoId != null && !s.busy) s.fetch.mutate();
+          fetchActiveGroup();
           return;
         }
         // ⌃Tab / ⌃⇧Tab → cycle repos in the active group.

@@ -408,6 +408,10 @@ function GitPanel() {
   const [pruneDirs, setPruneDirs] = useSetting("pruneDirs");
   const [watchDebounceMs, setWatchDebounce] = useSetting("watchDebounceMs");
   const [mergeStrategy, setMergeStrategy] = useSetting("mergeStrategy");
+  const [autoFetch, setAutoFetch] = useSetting("autoFetch");
+  const [autoFetchInterval, setAutoFetchInterval] = useSetting(
+    "autoFetchIntervalMinutes",
+  );
 
   return (
     <div>
@@ -465,6 +469,24 @@ function GitPanel() {
           ]}
         />
       </Field>
+      <Divider />
+      <Field
+        label="Auto-fetch repositories"
+        hint="Periodically fetch all repos in the background so ahead/behind counts and branches stay current."
+      >
+        <Toggle checked={autoFetch} onChange={setAutoFetch} />
+      </Field>
+      {autoFetch && (
+        <Field label="Auto-fetch interval">
+          <NumberField
+            value={autoFetchInterval}
+            onChange={setAutoFetchInterval}
+            min={1}
+            max={120}
+            suffix="min"
+          />
+        </Field>
+      )}
     </div>
   );
 }

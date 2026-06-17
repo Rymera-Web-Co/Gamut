@@ -4,10 +4,13 @@ import { ipc } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 
 /**
- * Fetch/pull/push mutations for a repo, shared by the `SyncControls` buttons
- * and the global keyboard shortcuts (⌘⌥F / ⌘⇧P / ⌘⇧K). Pass `null` when no
- * repo is active — the mutations are still created (hooks must run every
- * render) but reject if triggered, so callers should guard on `repoId`.
+ * Pull/push mutations for a repo, shared by the `SyncControls` buttons and the
+ * global keyboard shortcuts (⌘⇧P / ⌘⇧K). Pass `null` when no repo is active —
+ * the mutations are still created (hooks must run every render) but reject if
+ * triggered, so callers should guard on `repoId`.
+ *
+ * Fetching is group-level (fetch-all), not per-repo — see `useFetchGroup` and
+ * the group header in RepoSidebar.
  */
 export function useSyncActions(repoId: number | null) {
   const qc = useQueryClient();
@@ -27,13 +30,6 @@ export function useSyncActions(repoId: number | null) {
   }
 
   // Errors surface via the global mutation-cache toast handler.
-  const fetch = useMutation({
-    mutationFn: () => ipc.gitFetch(requireRepo()),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Fetched from remote");
-    },
-  });
   const pull = useMutation({
     mutationFn: () => ipc.gitPull(requireRepo()),
     onSuccess: (out) => {
@@ -49,7 +45,7 @@ export function useSyncActions(repoId: number | null) {
     },
   });
 
-  const busy = fetch.isPending || pull.isPending || push.isPending;
+  const busy = pull.isPending || push.isPending;
 
-  return { fetch, pull, push, busy };
+  return { pull, push, busy };
 }
