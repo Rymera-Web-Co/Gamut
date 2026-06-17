@@ -410,7 +410,7 @@ export function TerminalPane() {
                 autoFocus
                 value={draftTitle}
                 placeholder={tab.title}
-                aria-label={`Rename ${tab.title} terminal`}
+                aria-label={`Rename ${termTabLabel(tab)} terminal`}
                 onChange={(e) => setDraftTitle(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 onBlur={commitRename}
