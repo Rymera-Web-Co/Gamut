@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "@xterm/xterm/css/xterm.css";
 
 import { useGroups, useRepos } from "@/features/repos/api";
@@ -68,6 +70,29 @@ function locatePane(paneId: string): { target: NotifyTarget; title: string } | n
     }
   }
   return null;
+}
+
+/**
+ * Activate a clickable URL from terminal output (#51). A GitHub **pull request**
+ * URL whose `<owner>/<repo>` matches a tracked repo opens in-app in the Pull
+ * Requests tab; everything else (and unresolved/untracked PRs) opens in the
+ * external browser. `setActiveRepo` clears the selected PR, so `setSelectedPr`
+ * must run after it.
+ */
+async function openTerminalLink(uri: string) {
+  try {
+    const ref = await ipc.githubResolvePrUrl(uri);
+    if (ref) {
+      const ui = useUiStore.getState();
+      ui.setView("pulls");
+      ui.setActiveRepo(ref.repo_id);
+      ui.setSelectedPr(ref.number);
+      return;
+    }
+  } catch {
+    // Resolution failed (offline, no origin remote, etc.) — open externally.
+  }
+  openUrl(uri).catch(() => {});
 }
 
 /**
@@ -186,6 +211,16 @@ export function TerminalPane() {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // Make http(s) URLs in output clickable. Require cmd/ctrl (matching the
+    // app's other shortcuts) so plain clicks and drag-selection are undisturbed;
+    // hover still underlines and shows the pointer cursor. PR links resolve
+    // in-app, others open in the browser (#51). Disposed with the terminal.
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        if (!(event.metaKey || event.ctrlKey)) return;
+        void openTerminalLink(uri);
+      }),
+    );
     term.open(el);
     term.onData((data) => {
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});

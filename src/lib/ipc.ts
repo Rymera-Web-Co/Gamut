@@ -210,6 +210,12 @@ export interface PrSummary {
   requested_reviewers: string[];
 }
 
+/** A PR web URL resolved to a tracked repo + number (terminal link handling). */
+export interface PrRef {
+  repo_id: number;
+  number: number;
+}
+
 /** An inline review comment anchored to a line (or range) of the diff. */
 export interface DraftComment {
   path: string;
@@ -603,6 +609,13 @@ export const ipc = {
     }),
   githubListPrs: (repoId: number) =>
     invoke<PrSummary[]>("github_list_prs", { repoId }),
+  /**
+   * Resolve a GitHub PR web URL to a tracked repo + PR number, or `null` when the
+   * URL isn't a PR or its repo isn't tracked. Used to open PR links from the
+   * integrated terminal in-app rather than the browser (issue #51).
+   */
+  githubResolvePrUrl: (url: string) =>
+    invoke<PrRef | null>("github_resolve_pr_url", { url }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
   /** Fetch a GitHub-hosted attachment image as a `data:` URL (issue #36). */
