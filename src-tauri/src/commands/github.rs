@@ -319,6 +319,72 @@ fn owner_repo(state: &State<AppState>, repo_id: i64) -> AppResult<(String, Strin
     }
 }
 
+/// Parse a GitHub **pull request** web URL into `(owner, repo, number)`.
+/// Accepts the canonical `https://github.com/<owner>/<repo>/pull/<n>` form plus
+/// any trailing path/query/fragment (`/files`, `#discussion_r…`). Returns `None`
+/// for non-GitHub hosts, non-`https` URLs, or any non-PR path (issues, commits…).
+fn parse_pr_url(url: &str) -> Option<(String, String, i64)> {
+    let host = https_host(url)?;
+    if !is_github_host(&host) {
+        return None;
+    }
+    let rest = url.strip_prefix("https://")?;
+    let path = rest.split_once('/')?.1;
+    // Strip query/fragment, then take the leading path segments.
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if parts.next()? != "pull" {
+        return None;
+    }
+    let number: i64 = parts.next()?.parse().ok()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string(), number))
+}
+
+/// A tracked PR resolved from a web URL: which app repo it belongs to and its
+/// number, for navigating to the in-app Pull Requests tab.
+#[derive(Serialize)]
+pub struct PrRef {
+    pub repo_id: i64,
+    pub number: i64,
+}
+
+/// Map a GitHub PR web URL to a tracked repo, for the integrated terminal's
+/// clickable links. Returns `Some` only when the URL is a PR URL **and** its
+/// `<owner>/<repo>` matches a registered repo's `origin` remote (case-insensitive
+/// — GitHub slugs aren't case-sensitive). Returns `None` otherwise, so the caller
+/// falls back to opening the URL in the external browser.
+#[tauri::command]
+pub fn github_resolve_pr_url(state: State<AppState>, url: String) -> AppResult<Option<PrRef>> {
+    let Some((owner, repo, number)) = parse_pr_url(&url) else {
+        return Ok(None);
+    };
+    let ids: Vec<i64> = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+        let mut stmt = conn.prepare("SELECT id FROM repos")?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids
+    };
+    for id in ids {
+        // A repo with no/non-GitHub origin simply doesn't match; skip it.
+        if let Ok((o, r)) = owner_repo(&state, id) {
+            if o.eq_ignore_ascii_case(&owner) && r.eq_ignore_ascii_case(&repo) {
+                return Ok(Some(PrRef { repo_id: id, number }));
+            }
+        }
+    }
+    Ok(None)
+}
+
 // ---- Serializable types ----
 
 #[derive(Serialize)]
@@ -1700,7 +1766,7 @@ pub async fn github_merge_pr(
 
 #[cfg(test)]
 mod tests {
-    use super::{https_host, is_github_asset_host, parse_owner_repo, split_remote};
+    use super::{https_host, is_github_asset_host, parse_owner_repo, parse_pr_url, split_remote};
 
     #[test]
     fn extracts_https_host() {
@@ -1792,5 +1858,46 @@ mod tests {
         assert_eq!(parse_owner_repo("https://gitlab.com/x/y.git"), None);
         assert_eq!(parse_owner_repo("git@gitlab.com:x/y.git"), None);
         assert_eq!(parse_owner_repo("rymera.gitlab.com:x/y.git"), None);
+    }
+
+    #[test]
+    fn parses_pr_urls() {
+        // Canonical PR URL plus trailing path, query and fragment variants.
+        for url in [
+            "https://github.com/Rymera-Web-Co/Gamut/pull/51",
+            "https://github.com/Rymera-Web-Co/Gamut/pull/51/files",
+            "https://github.com/Rymera-Web-Co/Gamut/pull/51#discussion_r123",
+            "https://github.com/Rymera-Web-Co/Gamut/pull/51?w=1",
+        ] {
+            assert_eq!(
+                parse_pr_url(url),
+                Some(("Rymera-Web-Co".to_string(), "Gamut".to_string(), 51)),
+                "failed for {url}"
+            );
+        }
+        // Custom github host alias is still GitHub.
+        assert_eq!(
+            parse_pr_url("https://github.com-work/o/r/pull/7"),
+            Some(("o".to_string(), "r".to_string(), 7))
+        );
+    }
+
+    #[test]
+    fn rejects_non_pr_urls() {
+        for url in [
+            // Not a PR path.
+            "https://github.com/o/r/issues/3",
+            "https://github.com/o/r/commit/abc",
+            "https://github.com/o/r",
+            // Non-numeric / missing PR number.
+            "https://github.com/o/r/pull/",
+            "https://github.com/o/r/pull/abc",
+            // Non-GitHub host.
+            "https://gitlab.com/o/r/pull/3",
+            // Non-https (terminal links can be http; PR deep-linking is https-only).
+            "http://github.com/o/r/pull/3",
+        ] {
+            assert_eq!(parse_pr_url(url), None, "should reject {url}");
+        }
     }
 }
