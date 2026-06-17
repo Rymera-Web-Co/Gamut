@@ -4,6 +4,8 @@ import {
   FolderOpen,
   GitCompare,
   GitFork,
+  Info,
+  Loader2,
   Monitor,
   Moon,
   Palette,
@@ -12,6 +14,8 @@ import {
   SquareTerminal,
   Sun,
 } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 
 import {
   Dialog,
@@ -25,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { pickAudioFile } from "@/lib/ipc";
 import { useSettings, type Settings, type TerminalSound } from "@/lib/settings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
+import { useUpdater } from "@/lib/updater";
 import { useUiStore } from "@/store/ui";
 import {
   BUILTIN_SOUNDS,
@@ -38,6 +43,7 @@ const CATEGORIES = [
   { id: "git", label: "Git & Repos", icon: GitFork },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "about", label: "About", icon: Info },
 ] as const;
 
 type CategoryId = (typeof CATEGORIES)[number]["id"];
@@ -87,6 +93,7 @@ export function SettingsDialog() {
           {category === "git" && <GitPanel />}
           {category === "terminal" && <TerminalPanel />}
           {category === "notifications" && <NotificationsPanel />}
+          {category === "about" && <AboutPanel />}
         </div>
       </DialogContent>
     </Dialog>
@@ -614,6 +621,78 @@ function NotificationsPanel() {
       >
         <Toggle checked={desktop} onChange={toggleDesktop} />
       </Field>
+    </div>
+  );
+}
+
+// ---- About / Updates ------------------------------------------------------
+
+function AboutPanel() {
+  const [version, setVersion] = useState<string | null>(null);
+  const status = useUpdater((s) => s.status);
+  const available = useUpdater((s) => s.version);
+  const progress = useUpdater((s) => s.progress);
+  const error = useUpdater((s) => s.error);
+  const check = useUpdater((s) => s.check);
+  const downloadAndInstall = useUpdater((s) => s.downloadAndInstall);
+  const restart = useUpdater((s) => s.restart);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(null));
+  }, []);
+
+  const checking = status === "checking";
+  const downloading = status === "downloading";
+  const pct = progress == null ? null : Math.round(progress * 100);
+
+  return (
+    <div>
+      <PanelTitle>About</PanelTitle>
+      <Field label="Version">
+        <span className="text-sm text-[var(--color-muted-foreground)]">
+          {version ?? "—"}
+        </span>
+      </Field>
+      <Divider />
+      <Field
+        label="Updates"
+        hint="Gamut checks for updates on launch. Updates are signed and verified before install."
+      >
+        {status === "available" ? (
+          <Button size="sm" onClick={() => void downloadAndInstall()}>
+            Download {available}
+          </Button>
+        ) : status === "ready" ? (
+          <Button size="sm" onClick={() => void restart()}>
+            Restart to update
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={checking || downloading}
+            onClick={() => void check()}
+          >
+            {checking ? <Loader2 className="animate-spin" /> : null}
+            {checking ? "Checking…" : "Check for updates"}
+          </Button>
+        )}
+      </Field>
+      {(downloading || status === "uptodate" || status === "error") && (
+        <div className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+          {downloading &&
+            (pct == null ? "Downloading update…" : `Downloading update… ${pct}%`)}
+          {status === "uptodate" && "You're on the latest version."}
+          {status === "error" && (
+            <span className="text-[var(--color-destructive)]">
+              {error ?? "Update check failed."}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
