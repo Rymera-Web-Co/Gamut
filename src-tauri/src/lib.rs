@@ -126,6 +126,7 @@ pub fn run() {
             commands::github::github_device_poll,
             commands::github::github_list_prs,
             commands::github::github_pr_diff,
+            commands::github::github_fetch_image,
             commands::github::github_pr_thread,
             commands::github::github_pr_timeline,
             commands::github::github_submit_review,

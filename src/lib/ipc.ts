@@ -595,6 +595,9 @@ export const ipc = {
     invoke<PrSummary[]>("github_list_prs", { repoId }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
+  /** Fetch a GitHub-hosted attachment image as a `data:` URL (issue #36). */
+  githubFetchImage: (url: string) =>
+    invoke<string>("github_fetch_image", { url }),
   githubPrThread: (repoId: number, number: number) =>
     invoke<PrThread>("github_pr_thread", { repoId, number }),
   githubPrTimeline: (repoId: number, number: number) =>

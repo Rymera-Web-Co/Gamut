@@ -203,6 +203,33 @@ fn is_github_host(host: &str) -> bool {
     host == "github.com" || host.ends_with(".github.com") || host.starts_with("github.com-")
 }
 
+/// The `host` part of an `https://host/...` URL, lowercased, with any userinfo
+/// and `:port` stripped. Returns `None` for non-`https` URLs.
+fn https_host(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit('@').next()?; // drop optional user@
+    let host = host.split(':').next()?; // drop optional :port
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+/// Whether `host` serves GitHub-hosted attachment/asset images. These are the
+/// URLs embedded in issue/PR bodies (`github.com/user-attachments/assets/…`,
+/// `*-user-images.githubusercontent.com`, `camo.githubusercontent.com`, …);
+/// the authenticated ones 403 in a cookieless webview, so we proxy them with
+/// the user's token. Restricting to GitHub hosts keeps this from being an open
+/// proxy that would leak the token to arbitrary servers.
+fn is_github_asset_host(host: &str) -> bool {
+    host == "github.com"
+        || host.ends_with(".github.com")
+        || host == "githubusercontent.com"
+        || host.ends_with(".githubusercontent.com")
+}
+
 /// Split a git remote URL into its `(host, owner, repo)` components, supporting
 /// the generic forms rather than keying on a literal `github.com` host:
 ///   https://host/owner/repo[.git]
@@ -627,6 +654,65 @@ pub async fn github_pr_diff(
         return Err(api_error("fetching the PR diff", resp).await);
     }
     Ok(resp.text().await?)
+}
+
+/// Cap on a proxied image's size. GitHub rejects attachment uploads over 10 MB
+/// for images, so this is comfortably above any legitimate inline image while
+/// bounding the base64 payload we hold in memory and hand to the webview.
+const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Fetch a GitHub-hosted attachment image with the user's token and return it
+/// as a `data:` URL the webview can render directly.
+///
+/// Images embedded in issue/PR bodies often point at authenticated GitHub
+/// hosts (`github.com/user-attachments/assets/…`,
+/// `private-user-images.githubusercontent.com`). github.com serves them via a
+/// signed redirect that a logged-in browser follows with its session cookies;
+/// the Tauri webview has none, so those requests 403/404 and the image breaks.
+/// Fetching here attaches the token for the initial GitHub request — reqwest
+/// drops the `Authorization` header on the cross-host redirect to the signed
+/// blob URL, so the token never leaves GitHub.
+#[tauri::command]
+pub async fn github_fetch_image(state: State<'_, AppState>, url: String) -> AppResult<String> {
+    let host = https_host(&url)
+        .ok_or_else(|| AppError::Other("only https image URLs can be proxied".into()))?;
+    if !is_github_asset_host(&host) {
+        return Err(AppError::Other(format!(
+            "refusing to proxy non-GitHub image host: {host}"
+        )));
+    }
+
+    let token = require_token(&state)?;
+    let client = http()?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Accept", "image/*")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("fetching an embedded image", resp).await);
+    }
+
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .filter(|m| m.starts_with("image/"))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let bytes = resp.bytes().await?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::Other(format!(
+            "embedded image is too large to display ({} MB)",
+            bytes.len() / (1024 * 1024)
+        )));
+    }
+
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
 }
 
 /// The conversation thread for a pull request: description + issue comments +
@@ -1614,7 +1700,49 @@ pub async fn github_merge_pr(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_owner_repo, split_remote};
+    use super::{https_host, is_github_asset_host, parse_owner_repo, split_remote};
+
+    #[test]
+    fn extracts_https_host() {
+        assert_eq!(
+            https_host("https://github.com/user-attachments/assets/abc"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            https_host("https://private-user-images.githubusercontent.com/1/2?jwt=x"),
+            Some("private-user-images.githubusercontent.com".to_string())
+        );
+        // userinfo and port are stripped; host is lowercased.
+        assert_eq!(
+            https_host("https://user@GitHub.com:443/x"),
+            Some("github.com".to_string())
+        );
+        // Non-https (e.g. data:, http:) is not proxied.
+        assert_eq!(https_host("http://github.com/x"), None);
+        assert_eq!(https_host("data:image/png;base64,AAAA"), None);
+    }
+
+    #[test]
+    fn recognizes_github_asset_hosts() {
+        for host in [
+            "github.com",
+            "githubusercontent.com",
+            "private-user-images.githubusercontent.com",
+            "user-images.githubusercontent.com",
+            "camo.githubusercontent.com",
+        ] {
+            assert!(is_github_asset_host(host), "should accept {host}");
+        }
+        // Anything else must be rejected so the token isn't leaked to it.
+        for host in [
+            "evil.com",
+            "githubusercontent.com.evil.com",
+            "notgithub.com",
+            "raw.githubusercontent.com.attacker.net",
+        ] {
+            assert!(!is_github_asset_host(host), "should reject {host}");
+        }
+    }
 
     #[test]
     fn splits_arbitrary_host_aliases() {
