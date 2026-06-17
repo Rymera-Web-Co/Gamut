@@ -433,7 +433,7 @@ export function TerminalPane() {
             aria-selected={tab.id === gt?.activeTabId}
             onClick={() => activeGroupId != null && selectTerminalTab(activeGroupId, tab.id)}
             className={cn(
-              "flex max-w-44 shrink-0 cursor-pointer items-center gap-1.5 border-r border-[var(--color-border)] px-3",
+              "flex min-w-0 cursor-pointer items-center gap-1.5 border-r border-[var(--color-border)] px-3",
               tab.id === gt?.activeTabId
                 ? "bg-[var(--color-background)] text-[var(--color-foreground)]"
                 : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
