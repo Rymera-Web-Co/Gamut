@@ -98,6 +98,8 @@ interface UiState {
   filesPath: string | null;
   // Whether the Settings panel (⌘,) is open. In-memory only.
   settingsOpen: boolean;
+  // Whether the ⌘/Ctrl+K command palette is open. In-memory only.
+  commandPaletteOpen: boolean;
   // Which sidebar the Files view shows (tree vs. repo search). Persisted.
   filesPanel: FilesPanel;
   // Monotonic counter bumped to ask the search panel to focus its input — lets
@@ -112,6 +114,8 @@ interface UiState {
   setFilesPath: (path: string | null) => void;
   setSettingsOpen: (open: boolean) => void;
   toggleSettings: () => void;
+  setCommandPaletteOpen: (open: boolean) => void;
+  toggleCommandPalette: () => void;
   setFilesPanel: (panel: FilesPanel) => void;
   /** Switch to the Files view's search panel and focus its input. */
   focusRepoSearch: () => void;
@@ -153,6 +157,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   historySha: null,
   filesPath: null,
   settingsOpen: false,
+  commandPaletteOpen: false,
   filesPanel: storedFilesPanel(),
   searchFocusNonce: 0,
   setView: (view) => set({ view }),
@@ -165,6 +170,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   setFilesPath: (filesPath) => set({ filesPath }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
+  toggleCommandPalette: () =>
+    set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
   setFilesPanel: (filesPanel) => {
     localStorage.setItem(FILES_PANEL_KEY, filesPanel);
     set({ filesPanel });

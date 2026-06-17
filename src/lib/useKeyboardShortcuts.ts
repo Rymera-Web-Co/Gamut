@@ -8,6 +8,7 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
  *   ⌘/Ctrl+4 → Pull Requests
  *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
+ *   ⌘/Ctrl+K → command palette (search repos, groups & terminals)
  *   ⌘/Ctrl+⇧+F → repo-wide search (Files view)
  *   ⌘/Ctrl+` → toggle integrated terminal
  *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
@@ -22,6 +23,7 @@ export function useKeyboardShortcuts() {
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
+  const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
   const toggleTheme = useTheme((s) => s.toggle);
 
@@ -59,6 +61,10 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           toggleTheme();
           break;
+        case "k":
+          e.preventDefault();
+          toggleCommandPalette();
+          break;
         case "`":
           e.preventDefault();
           toggleTerminal();
@@ -82,6 +88,7 @@ export function useKeyboardShortcuts() {
     toggleTerminal,
     toggleTerminalMaximized,
     toggleSettings,
+    toggleCommandPalette,
     focusRepoSearch,
     toggleTheme,
   ]);
