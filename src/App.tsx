@@ -18,6 +18,7 @@ import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch } from "@/lib/updater";
+import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
@@ -57,6 +58,7 @@ export default function App() {
   useKeyboardShortcuts();
   useGitWatch();
   useAutoFetch();
+  useActiveRepoReconciler();
 
   // Reconcile preferences with the DB once on startup (state is mirror-hydrated
   // synchronously, so this only corrects drift / picks up another window's edits).

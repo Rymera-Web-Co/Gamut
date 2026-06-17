@@ -50,6 +50,17 @@ export interface GroupTerminals {
   activeTabId: string | null;
 }
 
+/**
+ * What a group remembers between visits: the repo that was selected and the
+ * view tab that was open. Restored on return so switching groups feels like
+ * stepping back into where you left off — the terminal already works this way
+ * via `terminals`. In-memory only, like the terminal state.
+ */
+export interface GroupSelection {
+  repoId: number | null;
+  view: View;
+}
+
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
 const TERMINAL_OPEN_KEY = "gamut.terminalOpen";
 const FILES_PANEL_KEY = "gamut.filesPanel";
@@ -84,6 +95,11 @@ interface UiState {
   // In-memory only — distinct from open/close and reset when the pane is hidden.
   terminalMaximized: boolean;
   terminals: Record<number, GroupTerminals>;
+  // Per-group memory of the last-selected repo and view tab, keyed by group id.
+  // Switching groups restores the entry for the group being entered (the repo
+  // is re-validated against the group's actual membership by the
+  // useActiveRepoReconciler hook). In-memory, like `terminals`.
+  groupSelections: Record<number, GroupSelection>;
   // Per-pane "unseen activity" flag, keyed by pane id, set when a *hidden* pane
   // emits output, rings the bell, or its process exits. Drives the activity
   // badges on inactive tabs/groups; cleared when the pane becomes visible.
@@ -152,6 +168,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   terminalOpen: storedTerminalOpen(),
   terminalMaximized: false,
   terminals: {},
+  groupSelections: {},
   termActivity: {},
   nextTermId: 1,
   historySha: null,
@@ -164,7 +181,30 @@ export const useUiStore = create<UiState>((set, get) => ({
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
   setActiveRepo: (id) => set({ activeRepoId: id, selectedPrNumber: null }),
-  setActiveGroup: (id) => set({ activeGroupId: id }),
+  // Switching groups stashes the outgoing group's repo + view, then restores
+  // the group being entered. A repo that's since left the group (or a group
+  // never visited, hence no memory) leaves `activeRepoId` pointing nowhere
+  // valid; useActiveRepoReconciler corrects that to the group's first repo so
+  // the content area never shows a repo outside the active group.
+  setActiveGroup: (id) =>
+    set((s) => {
+      if (id === s.activeGroupId) return {};
+      const groupSelections =
+        s.activeGroupId == null
+          ? s.groupSelections
+          : {
+              ...s.groupSelections,
+              [s.activeGroupId]: { repoId: s.activeRepoId, view: s.view },
+            };
+      const remembered = id != null ? groupSelections[id] : undefined;
+      return {
+        activeGroupId: id,
+        groupSelections,
+        activeRepoId: remembered ? remembered.repoId : null,
+        view: remembered ? remembered.view : s.view,
+        selectedPrNumber: null,
+      };
+    }),
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),

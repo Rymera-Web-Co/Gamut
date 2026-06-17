@@ -21,6 +21,7 @@ import {
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
+import { visibleRepos } from "@/lib/groupRepos";
 import { ipc, pickDirectory, type Repo, type RepoStatus } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
@@ -237,10 +238,7 @@ export function RepoSidebar() {
   // for operating across all the repos under that folder at once.
   const groupFolder = activeGroup?.folder_path ?? null;
 
-  // Default group = repos with no explicit group; others = repos assigned to it.
-  const visible = activeGroup?.is_default
-    ? allRepos.filter((r) => r.group_ids.length === 0)
-    : allRepos.filter((r) => activeGroupId != null && r.group_ids.includes(activeGroupId));
+  const visible = visibleRepos(allRepos, activeGroup);
 
   // Repos eligible for a group fetch — everything visible except missing folders
   // (fetching a gone directory just errors).

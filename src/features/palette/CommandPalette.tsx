@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGroups, useRepos } from "@/features/repos/api";
+import { repoInGroup } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore } from "@/store/ui";
@@ -101,10 +102,8 @@ export function CommandPalette() {
           // switching to a group that contains it (its first group, or the
           // default group for ungrouped repos), unless the current group
           // already shows it. Mirrors the visibility rule in RepoSidebar.
-          const shownHere =
-            activeGroupId != null &&
-            (r.group_ids.includes(activeGroupId) ||
-              (r.group_ids.length === 0 && defaultGroup?.id === activeGroupId));
+          const activeGroup = groupList.find((g) => g.id === activeGroupId);
+          const shownHere = repoInGroup(r, activeGroup);
           if (!shownHere) {
             const target = r.group_ids[0] ?? defaultGroup?.id ?? null;
             if (target != null) setActiveGroup(target);

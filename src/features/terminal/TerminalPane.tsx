@@ -9,6 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import "@xterm/xterm/css/xterm.css";
 
 import { useGroups, useRepos } from "@/features/repos/api";
+import { visibleRepos } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
@@ -385,12 +386,7 @@ export function TerminalPane() {
   function defaultTarget(): { cwd: string; title: string } | null {
     const group = groupList.find((g) => g.id === activeGroupId);
     if (group?.folder_path) return { cwd: group.folder_path, title: group.name };
-    const inGroup = group?.is_default
-      ? repoList.filter((r) => r.group_ids.length === 0 && !r.missing)
-      : repoList.filter(
-          (r) => activeGroupId != null && r.group_ids.includes(activeGroupId) && !r.missing,
-        );
-    const first = inGroup[0];
+    const first = visibleRepos(repoList, group).find((r) => !r.missing);
     return first ? { cwd: first.path, title: first.name } : null;
   }
 

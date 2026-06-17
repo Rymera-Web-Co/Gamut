@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { relativeTimeSqlite } from "@/lib/format";
+import { visibleRepos } from "@/lib/groupRepos";
 import { GROUP_ICONS, GROUP_ICON_KEYS, groupInitials } from "@/lib/groupIcons";
 import { pickDirectory, type Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -76,11 +77,7 @@ export function GroupDialog({
   // repos as ungrouped rather than as explicit members.
   const canOfferBind = !editing || !bound;
   // The default group shows ungrouped repos; everything else counts members.
-  const repoCount = group
-    ? group.is_default
-      ? (repos.data ?? []).filter((r) => r.group_ids.length === 0).length
-      : (repos.data ?? []).filter((r) => r.group_ids.includes(group.id)).length
-    : 0;
+  const repoCount = group ? visibleRepos(repos.data ?? [], group).length : 0;
   const busy =
     create.isPending || update.isPending || bind.isPending || sync.isPending;
 
