@@ -532,6 +532,7 @@ function NotificationsPanel() {
   const [soundName, setSoundName] = useSetting("terminalNotifySoundName");
   const [customPath, setCustomPath] = useSetting("terminalNotifySoundCustom");
   const [desktop, setDesktop] = useSetting("terminalNotifyDesktop");
+  const [always, setAlways] = useSetting("terminalNotifyAlways");
 
   const chooseCustom = async () => {
     const path = await pickAudioFile();
@@ -561,8 +562,11 @@ function NotificationsPanel() {
     <div>
       <PanelTitle>Notifications</PanelTitle>
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
-        Alerts for events in a background terminal pane — one you're not currently
-        looking at. The focused pane never makes a sound.
+        Alerts for terminal events — a process exiting or a bell (e.g. Claude
+        Code finishing a task or asking for input). These fire for background
+        panes and whenever the Gamut window is unfocused; the focused pane stays
+        silent while you're looking at it unless you enable "Notify even when
+        focused" below.
       </p>
       <Field
         label="Play sound on terminal events"
@@ -574,8 +578,14 @@ function NotificationsPanel() {
       <Field label="Notify on process exit" hint="A background shell process ends.">
         <Toggle checked={onExit} onChange={setOnExit} />
       </Field>
-      <Field label="Notify on terminal bell" hint="A background pane rings the bell (\a).">
+      <Field label="Notify on terminal bell" hint="A pane rings the bell (\a).">
         <Toggle checked={onBell} onChange={setOnBell} />
+      </Field>
+      <Field
+        label="Notify even when focused"
+        hint="Cue events for the active pane too, not just background panes or an unfocused window."
+      >
+        <Toggle checked={always} onChange={setAlways} />
       </Field>
       <Divider />
       <Field label="Sound" hint="Plays for the events selected above.">

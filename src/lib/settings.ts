@@ -47,6 +47,7 @@ export interface Settings {
   terminalNotifySoundName: TerminalSound; // which sound to play ("custom" → file)
   terminalNotifySoundCustom: string; // absolute path to a user-chosen sound file
   terminalNotifyDesktop: boolean; // also show a native OS notification
+  terminalNotifyAlways: boolean; // notify even when the event pane is focused
 }
 
 /**
@@ -94,6 +95,9 @@ export const DEFAULTS: Settings = {
   terminalNotifySoundName: "chime",
   terminalNotifySoundCustom: "",
   terminalNotifyDesktop: false,
+  // Off by default: only notify for backgrounded panes / when the app window is
+  // unfocused. Opt in to also be cued while looking right at the active pane.
+  terminalNotifyAlways: false,
 };
 
 type Key = keyof Settings;
