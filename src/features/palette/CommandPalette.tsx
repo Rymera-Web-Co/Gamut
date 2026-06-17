@@ -58,6 +58,7 @@ export function CommandPalette() {
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
   const terminals = useUiStore((s) => s.terminals);
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
 
   const repos = useRepos();
   const groups = useGroups();
@@ -72,6 +73,7 @@ export function CommandPalette() {
     const repoList = repos.data ?? [];
     const groupList = groups.data ?? [];
     const groupName = new Map(groupList.map((g) => [g.id, g.name]));
+    const defaultGroup = groupList.find((g) => g.is_default) ?? groupList[0];
 
     const out: PaletteItem[] = [];
 
@@ -94,6 +96,19 @@ export function CommandPalette() {
         label: r.name,
         sublabel: r.path,
         run: () => {
+          // Setting the active repo alone switches the main view, but the repo
+          // sidebar is scoped to a group — so reveal the repo there too by
+          // switching to a group that contains it (its first group, or the
+          // default group for ungrouped repos), unless the current group
+          // already shows it. Mirrors the visibility rule in RepoSidebar.
+          const shownHere =
+            activeGroupId != null &&
+            (r.group_ids.includes(activeGroupId) ||
+              (r.group_ids.length === 0 && defaultGroup?.id === activeGroupId));
+          if (!shownHere) {
+            const target = r.group_ids[0] ?? defaultGroup?.id ?? null;
+            if (target != null) setActiveGroup(target);
+          }
           setActiveRepo(r.id);
           void ipc.touchRepo(r.id);
           close();
@@ -151,6 +166,7 @@ export function CommandPalette() {
     repos.data,
     groups.data,
     terminals,
+    activeGroupId,
     setActiveRepo,
     setActiveGroup,
     setTerminalOpen,
