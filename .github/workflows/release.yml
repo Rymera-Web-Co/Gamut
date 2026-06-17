@@ -75,6 +75,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (issue #1). With createUpdaterArtifacts enabled,
+          # tauri-action signs the update package and, on tag pushes, also
+          # generates and uploads `latest.json` to the release. The private key
+          # + password are repo secrets — see docs/features/updates.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # On a tag push, attach artifacts to a GitHub Release for that tag.
           # On manual workflow_dispatch, tagName is empty so tauri-action only

@@ -15,6 +15,7 @@ here, then dive into a feature.
 | [Sync](features/sync.md) | One-click fetch / pull / push with live ahead/behind counts |
 | [GitHub integration](features/github.md) | Connect a GitHub account (OAuth device flow or PAT), token storage in the OS keychain |
 | [Terminal](features/terminal.md) | The integrated, per-group terminal with tabs and splits |
+| [Updates](features/updates.md) | In-app auto-update — check on launch, download, install, relaunch; signing keys and releasing |
 
 ## Reference
 

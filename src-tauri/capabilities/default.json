@@ -10,6 +10,8 @@
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
     "clipboard-manager:allow-write-text",
-    "notification:default"
+    "notification:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

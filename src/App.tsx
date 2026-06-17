@@ -13,8 +13,10 @@ import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
 import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
+import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
+import { checkForUpdatesOnLaunch } from "@/lib/updater";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useUiStore } from "@/store/ui";
@@ -59,6 +61,12 @@ export default function App() {
     void loadSettings();
   }, [loadSettings]);
 
+  // Check for an app update once on launch (silent — no toast if up to date or
+  // offline). A no-op outside the bundled desktop app.
+  useEffect(() => {
+    checkForUpdatesOnLaunch();
+  }, []);
+
   // Imperatively collapse/expand the terminal panel to match `terminalOpen`,
   // which can change from the keyboard shortcut, the close button, or opening a
   // group terminal. The guard avoids a feedback loop with onCollapse/onExpand.
@@ -94,6 +102,7 @@ export default function App() {
 
   return (
     <div className="flex h-full w-full flex-col">
+      <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <GroupRail />
         {/* Vertical split to the right of the group rail: main content on top,
