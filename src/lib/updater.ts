@@ -93,8 +93,11 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
   },
 
   downloadAndInstall: async () => {
-    const update = get().update;
-    if (!update) return;
+    const { update, status } = get();
+    // Guard against concurrent invocation — the banner and Settings → About
+    // both call this, and a double-click could otherwise start a second
+    // download that interleaves progress with the first.
+    if (!update || status === "downloading") return;
     set({ status: "downloading", progress: 0, error: null });
     try {
       let downloaded = 0;
