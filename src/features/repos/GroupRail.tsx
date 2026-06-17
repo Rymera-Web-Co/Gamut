@@ -147,25 +147,6 @@ export function GroupRail() {
     }
   }, [list, activeGroupId, defaultGroup, setActiveGroup]);
 
-  // TEMP DEBUG (#27 group-badge investigation)
-  useEffect(() => {
-    console.debug("[term-activity] rail recompute", {
-      termActivity,
-      activeGroupId,
-      perGroup: list.map((g) => ({
-        id: g.id,
-        name: g.name,
-        active: g.id === activeGroupId,
-        hasTerminals: !!terminals[g.id],
-        paneIds: (terminals[g.id]?.tabs ?? []).flatMap((t) => t.panes.map((p) => p.id)),
-        activity:
-          g.id === activeGroupId
-            ? "(active-skipped)"
-            : groupActivityKind(terminals[g.id], termActivity),
-      })),
-    });
-  }, [termActivity, terminals, list, activeGroupId]);
-
   function handleRepoDrop(group: Group, repoId: number) {
     setRepoGroups.mutate({
       repoId,
