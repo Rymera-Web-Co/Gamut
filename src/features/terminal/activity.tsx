@@ -24,7 +24,7 @@ export function ActivityDot({
   return (
     <span
       aria-hidden
-      className={cn("size-1.5 shrink-0 rounded-full", className)}
+      className={cn("inline-block size-1.5 shrink-0 rounded-full", className)}
       style={{ background: activityColor(kind) }}
     />
   );
