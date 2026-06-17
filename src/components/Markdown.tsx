@@ -127,7 +127,7 @@ function fetchProxiedImage(url: string): Promise<string> {
  * (with auth) and shown as a data URL. Falls back to a link to the asset if the
  * fetch fails so the image is at least reachable.
  */
-function GitHubImage({ src, alt }: ComponentProps<"img">) {
+function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
   const [resolved, setResolved] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -148,6 +148,7 @@ function GitHubImage({ src, alt }: ComponentProps<"img">) {
     return (
       <a
         href={typeof src === "string" ? src : undefined}
+        title={props.title}
         onClick={(e) => {
           e.preventDefault();
           if (typeof src === "string") openUrl(src).catch(() => {});
@@ -164,7 +165,7 @@ function GitHubImage({ src, alt }: ComponentProps<"img">) {
       </span>
     );
   }
-  return <img src={resolved} alt={alt} />;
+  return <img src={resolved} alt={alt} {...props} />;
 }
 
 export function Markdown({
@@ -218,7 +219,7 @@ export function Markdown({
           // has no github.com cookies); other images load directly. (issue #36)
           img({ node: _node, src, alt, ...props }) {
             if (typeof src === "string" && isGithubAssetUrl(src)) {
-              return <GitHubImage src={src} alt={alt} />;
+              return <GitHubImage src={src} alt={alt} {...props} />;
             }
             return <img src={src} alt={alt} {...props} />;
           },
