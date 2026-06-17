@@ -88,7 +88,11 @@ jobs:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Gamut {0}', github.ref_name) || '' }}
           releaseDraft: false
-          prerelease: true
+          # `alpha-*` tags publish as prereleases; `v*` tags are full releases.
+          # The updater endpoint (releases/latest/download/latest.json) only
+          # resolves to non-prerelease releases, so a `v*` tag is what actually
+          # delivers in-app auto-updates.
+          prerelease: ${{ startsWith(github.ref_name, 'alpha-') }}
           args: ${{ matrix.args }}
 
       - name: Upload build artifacts (manual runs)
