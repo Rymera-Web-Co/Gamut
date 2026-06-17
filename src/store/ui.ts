@@ -29,9 +29,21 @@ export const ACTIVITY_PRIORITY: Record<TermActivityKind, number> = {
 };
 export interface TermTab {
   id: string;
+  /** Auto-derived default label (group/repo name), set once at creation. */
   title: string;
+  /**
+   * User-chosen label that overrides `title` when set. Cleared (back to the
+   * default) by renaming to an empty string. In-memory like the rest of the
+   * terminal state — survives group switches, lost on restart.
+   */
+  customTitle?: string;
   panes: TermPane[];
   activePaneId: string;
+}
+
+/** The label shown for a tab: the user's custom name, else the default. */
+export function termTabLabel(tab: TermTab): string {
+  return tab.customTitle ?? tab.title;
 }
 export interface GroupTerminals {
   tabs: TermTab[];
@@ -113,6 +125,8 @@ interface UiState {
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
   splitTerminal: (groupId: number, cwd: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
+  /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
+  renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
   setActivePane: (groupId: number, tabId: string, paneId: string) => void;
   /** Remove a tab (caller kills its panes' PTYs first). */
   closeTerminalTab: (groupId: number, tabId: string) => void;
@@ -222,6 +236,16 @@ export const useUiStore = create<UiState>((set, get) => ({
       const g = s.terminals[groupId];
       if (!g) return {};
       return { terminals: { ...s.terminals, [groupId]: { ...g, activeTabId: tabId } } };
+    }),
+  renameTerminalTab: (groupId, tabId, title) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      const customTitle = title.trim() || undefined;
+      const tabs = g.tabs.map((t) =>
+        t.id === tabId ? { ...t, customTitle } : t,
+      );
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   setActivePane: (groupId, tabId, paneId) =>
     set((s) => {

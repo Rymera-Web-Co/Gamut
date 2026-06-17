@@ -13,6 +13,7 @@ import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import {
   ACTIVITY_PRIORITY,
+  termTabLabel,
   useUiStore,
   type TermActivityKind,
   type TermPane,
@@ -62,7 +63,7 @@ function locatePane(paneId: string): { target: NotifyTarget; title: string } | n
   for (const [gid, gt] of Object.entries(terminals)) {
     for (const tab of gt.tabs) {
       if (tab.panes.some((p) => p.id === paneId)) {
-        return { target: { groupId: Number(gid), tabId: tab.id, paneId }, title: tab.title };
+        return { target: { groupId: Number(gid), tabId: tab.id, paneId }, title: termTabLabel(tab) };
       }
     }
   }
@@ -86,6 +87,7 @@ export function TerminalPane() {
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const splitTerminal = useUiStore((s) => s.splitTerminal);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
   const setActivePane = useUiStore((s) => s.setActivePane);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const closeTerminalPane = useUiStore((s) => s.closeTerminalPane);
@@ -103,6 +105,9 @@ export function TerminalPane() {
   const sessionsRef = useRef<Map<string, SessionEntry>>(new Map());
   const [deadKeys, setDeadKeys] = useState<Set<string>>(new Set());
   const [tick, setTick] = useState(0);
+  // Inline tab-rename state: which tab's label is being edited, and its draft.
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
 
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
   const activeTab = gt?.tabs.find((t) => t.id === gt.activeTabId);
@@ -368,6 +373,19 @@ export function TerminalPane() {
     splitTerminal(activeGroupId, active.cwd);
   }
 
+  function beginRename(tab: TermTab) {
+    setEditingTabId(tab.id);
+    setDraftTitle(termTabLabel(tab));
+  }
+
+  // Commit the draft (blank reverts to the default); a no-op once editing ended,
+  // so the blur that fires after Enter/Esc doesn't double-apply.
+  function commitRename() {
+    if (editingTabId == null || activeGroupId == null) return;
+    renameTerminalTab(activeGroupId, editingTabId, draftTitle);
+    setEditingTabId(null);
+  }
+
   function handleCloseTab(tabId: string) {
     if (activeGroupId == null) return;
     const tab = gt?.tabs.find((t) => t.id === tabId);
@@ -422,14 +440,42 @@ export function TerminalPane() {
             )}
           >
             {tabKind && <ActivityDot kind={tabKind} />}
-            <span className="min-w-0 truncate">{tab.title}</span>
+            {editingTabId === tab.id ? (
+              <input
+                autoFocus
+                value={draftTitle}
+                placeholder={tab.title}
+                aria-label={`Rename ${termTabLabel(tab)} terminal`}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitRename();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setEditingTabId(null);
+                  }
+                }}
+                className="min-w-0 w-24 rounded border border-[var(--color-accent)] bg-[var(--color-background)] px-1 text-[var(--color-foreground)] outline-none"
+              />
+            ) : (
+              <span
+                className="min-w-0 truncate"
+                title="Double-click to rename"
+                onDoubleClick={() => beginRename(tab)}
+              >
+                {termTabLabel(tab)}
+              </span>
+            )}
             {tab.panes.length > 1 && (
               <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
                 ×{tab.panes.length}
               </span>
             )}
             <button
-              aria-label={`Close ${tab.title} terminal`}
+              aria-label={`Close ${termTabLabel(tab)} terminal`}
               title="Close tab"
               onClick={(e) => {
                 e.stopPropagation();
