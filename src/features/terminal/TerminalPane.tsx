@@ -284,7 +284,17 @@ export function TerminalPane() {
             .terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
               e.term.write(bytes);
               // Output to a pane the user isn't viewing is unseen activity.
-              if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
+              const hidden = pane.id !== visiblePaneRef.current;
+              // TEMP DEBUG (#27 group-badge investigation)
+              console.debug(
+                "[term-activity] output",
+                pane.id,
+                "hidden=",
+                hidden,
+                "visiblePane=",
+                visiblePaneRef.current,
+              );
+              if (hidden) markTermActivity(pane.id, "output");
             })
             .catch((err) => {
               e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
@@ -337,6 +347,15 @@ export function TerminalPane() {
       const e = sessionsRef.current.get(key);
       if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
       setDeadKeys((prev) => new Set(prev).add(key));
+      // TEMP DEBUG (#27 group-badge investigation)
+      console.debug(
+        "[term-activity] exit",
+        key,
+        "hasEntry=",
+        !!e,
+        "visiblePane=",
+        visiblePaneRef.current,
+      );
       if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
       if (shouldNotifyRef.current(key)) {
         const loc = locatePane(key);

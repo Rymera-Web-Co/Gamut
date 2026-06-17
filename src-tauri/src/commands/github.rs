@@ -378,7 +378,10 @@ pub fn github_resolve_pr_url(state: State<AppState>, url: String) -> AppResult<O
         // A repo with no/non-GitHub origin simply doesn't match; skip it.
         if let Ok((o, r)) = owner_repo(&state, id) {
             if o.eq_ignore_ascii_case(&owner) && r.eq_ignore_ascii_case(&repo) {
-                return Ok(Some(PrRef { repo_id: id, number }));
+                return Ok(Some(PrRef {
+                    repo_id: id,
+                    number,
+                }));
             }
         }
     }
