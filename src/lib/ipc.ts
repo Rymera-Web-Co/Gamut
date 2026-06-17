@@ -44,6 +44,7 @@ export interface RepoStatus {
   branch: string | null;
   ahead: number;
   behind: number;
+  has_uncommitted_changes: boolean;
 }
 
 /** A local branch whose upstream tracking ref is gone (merged & deleted on remote). */
