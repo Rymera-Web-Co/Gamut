@@ -124,6 +124,13 @@ function RepoRow({
           >
             {repo.name}
           </span>
+          {!repo.missing && status?.has_uncommitted_changes && (
+            <span
+              aria-label="Uncommitted changes"
+              title="Uncommitted changes"
+              className="mt-0.5 size-2 shrink-0 rounded-full bg-[#f59e0b]"
+            />
+          )}
           {!repo.missing && (
             <button
               aria-label="Open terminal here"

@@ -284,6 +284,38 @@ pub struct RepoStatus {
     pub branch: Option<String>,
     pub ahead: usize,
     pub behind: usize,
+    /// True when the working tree has staged, unstaged, or untracked changes.
+    /// Surfaced as a dirty indicator in the sidebar.
+    pub has_uncommitted_changes: bool,
+}
+
+/// Whether the repo's working tree has any uncommitted changes — staged,
+/// unstaged, or untracked. Mirrors the dirty-tree detection in
+/// `git_worktree_status` (HEAD → index plus index → working tree, untracked
+/// included). HEAD may be unborn (a fresh repo) — then the index alone counts.
+fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
+    let head_tree = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    let Ok(index) = repo.index() else {
+        return false;
+    };
+
+    let staged_dirty = repo
+        .diff_tree_to_index(head_tree.as_ref(), Some(&index), None)
+        .map(|d| d.deltas().len() > 0)
+        .unwrap_or(false);
+    if staged_dirty {
+        return true;
+    }
+
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    repo.diff_index_to_workdir(Some(&index), Some(&mut opts))
+        .map(|d| d.deltas().len() > 0)
+        .unwrap_or(false)
 }
 
 /// Per-repo current branch and ahead/behind vs its upstream (local-only; the
@@ -308,8 +340,10 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
             branch: None,
             ahead: 0,
             behind: 0,
+            has_uncommitted_changes: false,
         };
         if let Ok(repo) = git::open(std::path::Path::new(&path)) {
+            status.has_uncommitted_changes = has_uncommitted_changes(&repo);
             if let Ok(head) = repo.head() {
                 status.branch = head.shorthand().map(|s| s.to_string());
                 if head.is_branch() {
@@ -439,6 +473,57 @@ pub fn discover_repos(
 mod tests {
     use super::*;
     use git2::Repository;
+    use std::path::Path;
+
+    /// Commit a file so the repo has a HEAD to diff against.
+    fn commit_file(repo: &Repository, name: &str, contents: &str) {
+        let wd = repo.workdir().unwrap();
+        std::fs::write(wd.join(name), contents).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(name)).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, "msg", &tree, &parent_refs)
+            .unwrap();
+    }
+
+    #[test]
+    fn detects_dirty_working_trees() {
+        let root = std::env::temp_dir().join("gamut_dirty_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        commit_file(&repo, "a.txt", "hello\n");
+
+        // Clean working tree.
+        assert!(!has_uncommitted_changes(&repo), "clean tree is not dirty");
+
+        // Untracked file.
+        std::fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        assert!(has_uncommitted_changes(&repo), "untracked file is dirty");
+        std::fs::remove_file(root.join("untracked.txt")).unwrap();
+        assert!(!has_uncommitted_changes(&repo), "back to clean");
+
+        // Unstaged modification.
+        std::fs::write(root.join("a.txt"), "hello world\n").unwrap();
+        assert!(has_uncommitted_changes(&repo), "modified file is dirty");
+
+        // Stage it — still dirty (staged change).
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        assert!(has_uncommitted_changes(&repo), "staged change is dirty");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// Minimal schema for exercising folder sync without the full migration runner.
     fn test_conn() -> Connection {
