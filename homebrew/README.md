@@ -39,13 +39,20 @@ A "tap" is just a Git repo with a `Casks/` folder. We publish to our own tap, so
 ## How publishing works
 
 The cask's shape lives in one place: [`scripts/update-cask.sh`](../scripts/update-cask.sh).
-On every tag push, the `publish-cask` job in
-[`.github/workflows/release.yml`](../.github/workflows/release.yml):
+Publishing is a **manual step a maintainer runs locally** after a release is
+out — CI does not push to the tap, so the release pipeline needs no cross-repo
+push token (no `HOMEBREW_TAP_TOKEN` secret).
 
-1. waits for the build job to attach the `.dmg` assets to the GitHub Release,
-2. runs `update-cask.sh <tag>` to download those `.dmg`s, compute their SHA256s,
-   and render `Casks/gamut.rb`,
-3. clones the tap repo and pushes the updated cask.
+1. Push a release tag. The `build` job in
+   [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
+   apps and attaches the `.dmg` assets to the GitHub Release.
+2. Once the release is published, run
+   [`scripts/publish-cask.sh <tag>`](../scripts/publish-cask.sh) on your machine.
+   It renders `Casks/gamut.rb` via `update-cask.sh` (downloading those `.dmg`s
+   and computing their SHA256s), clones the tap, and pushes the updated cask —
+   only if it changed.
+
+This runs over your existing git/`gh` auth, so there is no token to manage in CI.
 
 ### The version string
 
@@ -62,30 +69,37 @@ release.
 
 ## One-time setup
 
-The CI publish step needs the tap repo to exist and a token that can push to it:
+Publishing needs the tap repo to exist and your machine to be able to push to it:
 
 1. **Create the tap repo.** A public repo named exactly
    `Rymera-Web-Co/homebrew-gamut` (the `homebrew-` prefix is what makes
    `brew tap rymera-web-co/gamut` work). An empty repo with a README is fine —
-   the first release populates `Casks/gamut.rb`.
+   the first publish populates `Casks/gamut.rb`.
 
-2. **Add the `HOMEBREW_TAP_TOKEN` secret** to the **Gamut** repo
-   (Settings → Secrets and variables → Actions). The built-in `GITHUB_TOKEN`
-   can't push to a different repo, so use one of:
-   - a **fine-grained PAT** scoped to `homebrew-gamut` only, with
-     **Contents: Read and write**, or
-   - a deploy key / machine-user token with write access to the tap.
+2. **Have push access from your machine** — an SSH key or `gh` credential helper
+   with write access to `homebrew-gamut`. No PAT or repo secret is involved; the
+   publish runs locally over your own credentials.
 
-## Manual publish / bootstrap
+## Publishing a release
 
-To seed the tap by hand, or to republish a specific release:
+After the release's `.dmg` assets are attached to the GitHub Release, publish the
+cask from the Gamut repo (with `gh` authenticated):
 
 ```bash
-# from the Gamut repo, with `gh` authenticated:
-scripts/update-cask.sh alpha-0.3 /path/to/homebrew-gamut/Casks/gamut.rb
+scripts/publish-cask.sh alpha-0.4
+```
+
+This renders the cask, clones the tap, commits `gamut alpha-0.4`, and pushes only
+if the cask changed. Override the tap remote with `GAMUT_TAP_REPO` if needed.
+
+To render the cask without pushing (e.g. to inspect or validate it first), use
+the generator directly:
+
+```bash
+scripts/update-cask.sh alpha-0.4 /path/to/homebrew-gamut/Casks/gamut.rb
 
 cd /path/to/homebrew-gamut
-git add Casks/gamut.rb && git commit -m "gamut alpha-0.3" && git push
+git add Casks/gamut.rb && git commit -m "gamut alpha-0.4" && git push
 ```
 
 Validate the generated cask before pushing:

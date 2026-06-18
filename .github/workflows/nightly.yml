@@ -137,6 +137,6 @@ jobs:
           prerelease: true
           args: ${{ matrix.args }}
 
-# NOTE: the `publish-cask` job from release.yml is intentionally omitted here.
-# The stable Homebrew cask must keep pointing at stable releases only — nightly
-# builds never touch the tap.
+# NOTE: nightly builds never touch the Homebrew cask. The cask is published
+# manually from a maintainer's machine for stable/alpha release tags only (see
+# homebrew/README.md) and must keep pointing at those releases, not nightlies.
