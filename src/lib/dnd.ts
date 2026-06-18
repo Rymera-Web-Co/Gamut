@@ -6,6 +6,9 @@
 export type DragItem =
   | { kind: "repo"; id: number }
   | { kind: "group"; id: number }
+  // Terminal tabs reorder within a single group; `groupId` scopes the drag so a
+  // tab can't be dropped onto another group's strip. Tab ids are strings.
+  | { kind: "tab"; groupId: number; id: string }
   | null;
 
 let current: DragItem = null;

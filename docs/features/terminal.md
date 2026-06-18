@@ -32,6 +32,9 @@ while the terminal is hidden.
 ## Tabs & splits
 
 - Each group keeps its own set of tabs. Click a tab to activate it.
+- **Reorder** — drag a tab and drop it before/after another tab in the strip; an
+  insertion line shows where it'll land. Reordering stays within the group and
+  doesn't change which tab is active or disturb running panes.
 - **Split** the active tab to show panes side-by-side; close a split with its **×**
   (shown only when a tab has more than one pane). A tab's title shows a pane count when
   split (e.g. `repo ×2`).

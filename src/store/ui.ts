@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { moveAdjacent } from "@/lib/dnd";
+
 export type View = "files" | "history" | "review" | "pulls";
 export type ReviewMode = "working" | "branch";
 
@@ -145,6 +147,16 @@ interface UiState {
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
   splitTerminal: (groupId: number, cwd: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
+  /**
+   * Reorder a tab within its group's strip, moving `srcId` adjacent to
+   * `targetId`. Leaves the active tab and all pane/PTY state untouched.
+   */
+  reorderTerminalTab: (
+    groupId: number,
+    srcId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => void;
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
   renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
   setActivePane: (groupId: number, tabId: string, paneId: string) => void;
@@ -284,6 +296,22 @@ export const useUiStore = create<UiState>((set, get) => ({
       const g = s.terminals[groupId];
       if (!g) return {};
       return { terminals: { ...s.terminals, [groupId]: { ...g, activeTabId: tabId } } };
+    }),
+  reorderTerminalTab: (groupId, srcId, targetId, position) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g || srcId === targetId) return {};
+      const order = moveAdjacent(
+        g.tabs.map((t) => t.id),
+        srcId,
+        targetId,
+        position,
+      );
+      // Rebuild from the new id order; reordering never adds/drops a tab, and
+      // `activeTabId` is preserved so the active tab stays active.
+      const byId = new Map(g.tabs.map((t) => [t.id, t]));
+      const tabs = order.map((id) => byId.get(id)!);
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   renameTerminalTab: (groupId, tabId, title) =>
     set((s) => {
