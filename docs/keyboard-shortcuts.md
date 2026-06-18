@@ -16,8 +16,16 @@ anywhere in the app; the rest apply within a specific view or input.
 | `⌘/Ctrl+J` | Toggle light / dark theme |
 | <code>⌘/Ctrl+&#96;</code> | Toggle the integrated terminal |
 | <code>⌘/Ctrl+⇧+&#96;</code> | Maximize / restore the integrated terminal |
+| `⌘/Ctrl+⇧+P` | **Pull** the active repository |
+| `⌘/Ctrl+⇧+K` | **Push** the active repository |
+| `⌘/Ctrl+⌥+F` | **Fetch** all repositories in the active group |
+| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous repository in the active group (Control on all platforms) |
 
 These are registered globally — see [`useKeyboardShortcuts`](../src/lib/useKeyboardShortcuts.ts).
+
+> The pull / push / fetch / repo-cycle shortcuts are suppressed while you're
+> typing (in the editor, terminal, or any text input) so they never clash with
+> editor bindings such as Monaco's `⌘/Ctrl+⇧+K` (delete line).
 
 ## Files
 
@@ -37,6 +45,20 @@ See [Files](features/files.md).
 | `⌘/Ctrl+Enter` | Commit staged changes (requires a commit message and staged files) |
 
 See [Review](features/review.md).
+
+## Terminal
+
+`⌘/Ctrl+T` works anywhere; the rest apply while the integrated terminal has focus.
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘/Ctrl+T` | Open a new terminal tab (reveals the terminal if hidden) |
+| `⌘/Ctrl+W` | Close the active terminal tab |
+| `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal tab |
+| `⌘/Ctrl+⌥+1`…`9` | Jump to terminal tab N (`9` jumps to the last tab) |
+| `⌘/Ctrl+D` | Split the active terminal tab (side-by-side) |
+
+See [Terminal](features/terminal.md).
 
 ## Inline inputs & editors
 

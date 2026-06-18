@@ -292,7 +292,7 @@ export function RepoSidebar() {
             size="icon"
             variant="ghost"
             className="size-7"
-            title="Fetch all repositories in this group"
+            title="Fetch all repositories in this group (⌘⌥F)"
             disabled={fetchGroup.isPending || fetchableIds.length === 0}
             onClick={() => fetchGroup.mutate(fetchableIds)}
           >
