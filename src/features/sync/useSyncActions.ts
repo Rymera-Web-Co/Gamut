@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 
+import { summarizePull } from "./summarizePull";
+
 /**
  * Pull/push mutations for a repo, shared by the `SyncControls` buttons and the
  * global keyboard shortcuts (⌘⇧P / ⌘⇧K). Pass `null` when no repo is active —
@@ -34,7 +36,7 @@ export function useSyncActions(repoId: number | null) {
     mutationFn: () => ipc.gitPull(requireRepo()),
     onSuccess: (out) => {
       invalidate();
-      toast.success(out || "Pulled");
+      toast.success(summarizePull(out));
     },
   });
   const push = useMutation({
