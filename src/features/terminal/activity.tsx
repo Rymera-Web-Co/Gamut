@@ -1,5 +1,10 @@
 import { cn } from "@/lib/utils";
-import { ACTIVITY_PRIORITY, type GroupTerminals, type TermActivityKind } from "@/store/ui";
+import {
+  ACTIVITY_PRIORITY,
+  type GroupTerminals,
+  type TermActivityKind,
+  type TermTab,
+} from "@/store/ui";
 
 /** Activity badge colour, keyed off the most salient pending event. */
 export function activityColor(kind: TermActivityKind): string {
@@ -30,6 +35,19 @@ export function ActivityDot({
   );
 }
 
+/** The most salient unseen-activity kind across a single tab's panes, if any. */
+export function tabActivityKind(
+  tab: TermTab,
+  termActivity: Record<string, TermActivityKind>,
+): TermActivityKind | undefined {
+  let best: TermActivityKind | undefined;
+  for (const p of tab.panes) {
+    const k = termActivity[p.id];
+    if (k && (!best || ACTIVITY_PRIORITY[k] > ACTIVITY_PRIORITY[best])) best = k;
+  }
+  return best;
+}
+
 /** The most salient unseen-activity kind across a group's panes, if any. */
 export function groupActivityKind(
   gt: GroupTerminals | undefined,
@@ -38,10 +56,8 @@ export function groupActivityKind(
   if (!gt) return undefined;
   let best: TermActivityKind | undefined;
   for (const tab of gt.tabs) {
-    for (const p of tab.panes) {
-      const k = termActivity[p.id];
-      if (k && (!best || ACTIVITY_PRIORITY[k] > ACTIVITY_PRIORITY[best])) best = k;
-    }
+    const k = tabActivityKind(tab, termActivity);
+    if (k && (!best || ACTIVITY_PRIORITY[k] > ACTIVITY_PRIORITY[best])) best = k;
   }
   return best;
 }
