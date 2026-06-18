@@ -2,18 +2,16 @@
 //!
 //! These replace direct frontend use of `@tauri-apps/plugin-updater`'s `check()`
 //! so the update endpoint can be chosen at runtime from the `pref.updateChannel`
-//! setting — the JS `check()` has no runtime endpoint override. The frontend
-//! (`src/lib/updater.ts`) invokes these commands and listens to
-//! `UPDATER_DOWNLOAD_EVENT` for progress.
+//! setting — the JS `check()` has no runtime endpoint override.
 //!
-//! Contract consumers:
-//!   - issue #69 (Rust): fills these stubs with channel-aware endpoint selection
-//!     via `tauri_plugin_updater::UpdaterExt` and emits real download progress.
-//!   - issue #70 (Frontend): invokes the commands, listens to the progress event,
-//!     and adds the Settings "Update channel" control.
-//!
-//! SCAFFOLD STUBS (issue #67): the signatures, serde shapes, registration, and
-//! event contract are final; the bodies are inert until #69 fills them.
+//! `check_for_update` builds a channel-aware updater via
+//! `tauri_plugin_updater::UpdaterExt`, pointing it at the stable
+//! (`releases/latest/download/latest.json`) or nightly
+//! (`releases/download/nightly/latest.json`) signed manifest, and reports whether
+//! a newer version is available. `download_and_install_update` downloads and
+//! installs the update, emitting `UPDATER_DOWNLOAD_EVENT` progress as bytes
+//! arrive. The frontend (`src/lib/updater.ts`) invokes both and listens for
+//! progress; relaunch is left to `tauri-plugin-process`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -98,7 +96,12 @@ pub async fn check_for_update(
 
 /// Download + install the pending update for the active channel, emitting
 /// `UPDATER_DOWNLOAD_EVENT` with `DownloadProgress` as bytes arrive and a final
-/// `done: true` event on completion. If no update is available, returns `Ok(())`.
+/// `done: true` event on completion.
+///
+/// Returns `true` when an update was found and installed, `false` when the
+/// channel's manifest reports no available update (e.g. the rolling release
+/// changed between the frontend's check and this download) — the caller uses
+/// this to avoid a false "restart to finish" prompt when nothing was installed.
 ///
 /// Does not relaunch — the frontend triggers relaunch via `tauri-plugin-process`
 /// after the install replaces the running bundle.
@@ -106,10 +109,10 @@ pub async fn check_for_update(
 pub async fn download_and_install_update(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let updater = build_updater(&app, &state)?;
     let Some(update) = updater.check().await? else {
-        return Ok(());
+        return Ok(false);
     };
 
     // Shared between the two callbacks: the chunk callback accumulates bytes and
@@ -154,5 +157,5 @@ pub async fn download_and_install_update(
 
     update.download_and_install(on_chunk, on_finish).await?;
 
-    Ok(())
+    Ok(true)
 }

@@ -127,10 +127,16 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
     });
 
     try {
-      await invoke<void>("download_and_install_update");
-      // The progress listener flips status to "ready" on `done`, but invoke may
-      // resolve without a terminal `done:true` event — settle it here too.
-      if (get().status === "downloading") {
+      const installed = await invoke<boolean>("download_and_install_update");
+      if (!installed) {
+        // The channel reported no update to install (e.g. the rolling release
+        // changed between the check and this download). Don't prompt a restart.
+        set({ status: "uptodate", version: null, notes: null, progress: null });
+        toast.info("No update was available to install.");
+      } else if (get().status === "downloading") {
+        // An update was installed. The progress listener flips status to "ready"
+        // on the terminal `done:true` event, but invoke may resolve without one —
+        // settle it here too.
         set({ status: "ready", progress: 1, dismissed: false });
       }
     } catch (e) {
