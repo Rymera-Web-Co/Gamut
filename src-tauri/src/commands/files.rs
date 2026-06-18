@@ -249,6 +249,86 @@ pub fn read_audio_file(path: String) -> AppResult<tauri::ipc::Response> {
     Ok(tauri::ipc::Response::new(fs::read(&path)?))
 }
 
+/// Largest image we'll load into the editor's inline preview. Generously above
+/// any reasonable repo asset while bounding the base64 payload handed to the
+/// webview.
+const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Image extensions the file editor can preview inline. Mirrors
+/// `IMAGE_EXTENSIONS` in `src/lib/images.ts`; kept here as the *authoritative*
+/// guard since the frontend's extension check is UI-only.
+const ALLOWED_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif"];
+
+/// A working-tree image rendered as a `data:` URL the webview can drop straight
+/// into an `<img>`. `read_file` reports these as `is_binary`; this command is
+/// the dedicated path that actually loads them for preview.
+#[derive(Serialize)]
+pub struct ImageContent {
+    /// `data:<mime>;base64,<…>` — safe to use as an `<img>` src.
+    pub data_url: String,
+    /// Raw byte length, for a size caption in the UI.
+    pub byte_len: u64,
+}
+
+/// Map a (lowercased) image extension to its MIME type.
+fn image_mime(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read a working-tree image for inline preview, returning it as a `data:` URL.
+///
+/// Deliberately separate from `read_file` (which flags images as binary and
+/// declines to load them): this only serves image preview, so it rejects
+/// anything without an allowed image extension and caps the size, mirroring the
+/// hardening on [`read_audio_file`]. Rendering the result in an `<img>` is safe
+/// even for SVG — `<img>` never executes embedded scripts.
+#[tauri::command]
+pub fn read_image_file(
+    state: State<AppState>,
+    repo_id: i64,
+    rel_path: String,
+) -> AppResult<ImageContent> {
+    let root = repo_path(&state, repo_id)?;
+    let path = safe_join(&root, &rel_path)?;
+
+    let ext = Path::new(&rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !ALLOWED_IMAGE_EXTS.contains(&ext.as_str()) {
+        return Err(AppError::Other("unsupported image file type".into()));
+    }
+
+    let meta = fs::metadata(&path)?;
+    if !meta.is_file() {
+        return Err(AppError::Other("not a file".into()));
+    }
+    if meta.len() > MAX_IMAGE_PREVIEW_BYTES {
+        return Err(AppError::Other(format!(
+            "image is too large to preview ({} MB)",
+            meta.len() / (1024 * 1024)
+        )));
+    }
+
+    let bytes = fs::read(&path)?;
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(ImageContent {
+        data_url: format!("data:{};base64,{}", image_mime(&ext), encoded),
+        byte_len: meta.len(),
+    })
+}
+
 /// Write edited contents back to a working-tree file.
 #[tauri::command]
 pub fn write_file(
