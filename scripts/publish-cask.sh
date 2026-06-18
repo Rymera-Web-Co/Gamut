@@ -38,12 +38,15 @@ echo "Rendering cask for $TAG ..."
 "$here/update-cask.sh" "$TAG" "$tap_dir/Casks/gamut.rb"
 
 cd "$tap_dir"
-if git diff --quiet; then
+# Stage first, then compare the staged tree against HEAD. A plain `git diff`
+# ignores untracked files, so on the very first publish (cask not yet tracked)
+# it would report "nothing to push" and skip the commit.
+git add Casks/gamut.rb
+if git diff --quiet --cached; then
   echo "Cask already up to date for $TAG — nothing to push."
   exit 0
 fi
 
-git add Casks/gamut.rb
 git commit --quiet -m "gamut $TAG"
 git push
 echo "Published cask for $TAG to $TAP_REPO"
