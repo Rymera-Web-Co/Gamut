@@ -28,6 +28,11 @@ interface UrlHit {
   width: number;
 }
 
+/** Stable identity for a hit, so unchanged links keep their decoration. */
+function hitKey(hit: UrlHit): string {
+  return `${hit.row}:${hit.col}:${hit.width}`;
+}
+
 /**
  * Walk the rows currently in (or just above) the viewport, reconstruct logical
  * lines across soft-wraps, and return every URL as one or more per-row segments
@@ -96,28 +101,56 @@ export interface LinkHighlighter {
  * via the decoration's DOM element. Rescans are coalesced into an animation
  * frame and triggered by output (`onWriteParsed`) and scrolling (`onScroll`);
  * creating decorations triggers a render, not those events, so there's no loop.
+ *
+ * Decorations are anchored to absolute buffer rows, so a link already on screen
+ * stays correctly positioned as the buffer scrolls. Each rescan therefore
+ * **diffs** against what's drawn — keeping unchanged links, only adding new ones
+ * and dropping ones that scrolled away — rather than tearing everything down and
+ * rebuilding it, which made the links blink under continuous output.
  */
 export function attachLinkHighlighter(
   term: Terminal,
   getColor: () => string,
 ): LinkHighlighter {
-  let active: IDisposable[] = [];
+  const active = new Map<string, { decoration: IDisposable; marker: IDisposable }>();
   let frame = 0;
   let disposed = false;
 
   const clear = () => {
-    for (const d of active) d.dispose();
-    active = [];
+    for (const { decoration, marker } of active.values()) {
+      decoration.dispose();
+      marker.dispose();
+    }
+    active.clear();
   };
 
   const rescan = () => {
     frame = 0;
     if (disposed) return;
-    clear();
-    const color = getColor();
     const buf = term.buffer.active;
+    // Full-screen/TUI apps (vim, htop, …) repaint constantly and their links
+    // are transient — highlighting there would only churn. Skip the alt buffer.
+    if (buf.type === "alternate") {
+      clear();
+      return;
+    }
+    const color = getColor();
     const cursorAbs = buf.baseY + buf.cursorY;
-    for (const hit of scanVisibleUrls(term)) {
+
+    const wanted = new Map<string, UrlHit>();
+    for (const hit of scanVisibleUrls(term)) wanted.set(hitKey(hit), hit);
+
+    // Drop decorations whose link has scrolled out of view or changed.
+    for (const [key, entry] of active) {
+      if (wanted.has(key)) continue;
+      entry.decoration.dispose();
+      entry.marker.dispose();
+      active.delete(key);
+    }
+
+    // Add decorations for links that aren't already drawn.
+    for (const [key, hit] of wanted) {
+      if (active.has(key)) continue;
       const marker = term.registerMarker(hit.row - cursorAbs);
       if (!marker) continue;
       const decoration = term.registerDecoration({
@@ -137,7 +170,7 @@ export function attachLinkHighlighter(
         // The decoration is a passive cue; clicks belong to the link addon.
         el.style.pointerEvents = "none";
       });
-      active.push(decoration, marker);
+      active.set(key, { decoration, marker });
     }
   };
 
@@ -149,7 +182,11 @@ export function attachLinkHighlighter(
   const listeners = [term.onWriteParsed(schedule), term.onScroll(schedule)];
 
   return {
-    refresh: rescan,
+    // The diff keys on position, not color, so a theme change needs a rebuild.
+    refresh() {
+      clear();
+      rescan();
+    },
     dispose() {
       disposed = true;
       if (frame) cancelAnimationFrame(frame);
