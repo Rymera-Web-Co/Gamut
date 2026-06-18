@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
@@ -9,6 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import "@xterm/xterm/css/xterm.css";
 
 import { useGroups, useRepos } from "@/features/repos/api";
+import { clearDrag, getDrag, setDrag } from "@/lib/dnd";
 import { visibleRepos } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
@@ -113,6 +114,7 @@ export function TerminalPane() {
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const splitTerminal = useUiStore((s) => s.splitTerminal);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const reorderTerminalTab = useUiStore((s) => s.reorderTerminalTab);
   const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
   const setActivePane = useUiStore((s) => s.setActivePane);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
@@ -134,6 +136,12 @@ export function TerminalPane() {
   // Inline tab-rename state: which tab's label is being edited, and its draft.
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
+  // While reordering by drag, which tab the cursor is over and on which side —
+  // drives the insertion line (the strip is horizontal, so left/right).
+  const [dragOverTab, setDragOverTab] = useState<{
+    id: string;
+    edge: "left" | "right";
+  } | null>(null);
 
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
   const activeTab = gt?.tabs.find((t) => t.id === gt.activeTabId);
@@ -513,6 +521,12 @@ export function TerminalPane() {
     return best;
   }
 
+  // Which side of a tab the cursor is on — before (left) or after (right).
+  function tabEdgeFor(e: DragEvent<HTMLDivElement>): "left" | "right" {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientX > rect.left + rect.width / 2 ? "right" : "left";
+  }
+
   const tabs = gt?.tabs ?? [];
   const canNewTab = defaultTarget() != null;
   const n = activePanes.length;
@@ -535,12 +549,65 @@ export function TerminalPane() {
             key={tab.id}
             role="tab"
             aria-selected={tab.id === gt?.activeTabId}
+            // Don't start a drag while the label is being renamed — the input
+            // needs normal text selection/caret behaviour.
+            draggable={editingTabId !== tab.id}
             onClick={() => activeGroupId != null && selectTerminalTab(activeGroupId, tab.id)}
+            onDragStart={(e) => {
+              if (activeGroupId == null) return;
+              setDrag({ kind: "tab", groupId: activeGroupId, id: tab.id });
+              e.dataTransfer.setData("text/plain", termTabLabel(tab));
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => {
+              clearDrag();
+              setDragOverTab(null);
+            }}
+            onDragOver={(e) => {
+              const d = getDrag();
+              // Only same-group tab drags reorder; ignore repo/group/cross-group.
+              if (d?.kind !== "tab" || d.groupId !== activeGroupId || d.id === tab.id) {
+                return;
+              }
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setDragOverTab({ id: tab.id, edge: tabEdgeFor(e) });
+            }}
+            onDragLeave={() => {
+              setDragOverTab((cur) => (cur?.id === tab.id ? null : cur));
+            }}
+            onDrop={(e) => {
+              const d = getDrag();
+              if (
+                d?.kind === "tab" &&
+                d.groupId === activeGroupId &&
+                d.id !== tab.id &&
+                activeGroupId != null
+              ) {
+                e.preventDefault();
+                reorderTerminalTab(
+                  activeGroupId,
+                  d.id,
+                  tab.id,
+                  tabEdgeFor(e) === "right" ? "after" : "before",
+                );
+              }
+              setDragOverTab(null);
+              clearDrag();
+            }}
             className={cn(
               "flex min-w-0 cursor-pointer items-center gap-1.5 border-r border-[var(--color-border)] px-3",
               tab.id === gt?.activeTabId
                 ? "bg-[var(--color-background)] text-[var(--color-foreground)]"
                 : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+              // Insertion line on the hovered edge — listed last so its colour
+              // wins over the default right border.
+              dragOverTab?.id === tab.id &&
+                dragOverTab.edge === "left" &&
+                "border-l-2 border-l-[var(--color-primary)]",
+              dragOverTab?.id === tab.id &&
+                dragOverTab.edge === "right" &&
+                "border-r-2 border-r-[var(--color-primary)]",
             )}
           >
             {tabKind && <ActivityDot kind={tabKind} />}
