@@ -26,7 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { pickAudioFile } from "@/lib/ipc";
+import { ipc, pickAudioFile } from "@/lib/ipc";
 import { useSettings, type Settings, type TerminalSound } from "@/lib/settings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useUpdater } from "@/lib/updater";
@@ -668,6 +668,7 @@ function AboutPanel() {
   const check = useUpdater((s) => s.check);
   const downloadAndInstall = useUpdater((s) => s.downloadAndInstall);
   const restart = useUpdater((s) => s.restart);
+  const updateChannel = useSettings((s) => s.values.updateChannel);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -680,6 +681,18 @@ function AboutPanel() {
   const downloading = status === "downloading";
   const pct = progress == null ? null : Math.round(progress * 100);
 
+  const onChannelChange = (value: Settings["updateChannel"]) => {
+    if (value === updateChannel) return;
+    // Update the store immediately for responsive UI, but persist straight to
+    // the DB and await it: the Rust `check_for_update` command reads
+    // `pref.updateChannel` from the DB, so the value must be committed before
+    // we re-check, not just queued via the store's fire-and-forget write.
+    useSettings.getState().set("updateChannel", value);
+    void ipc
+      .setSetting("pref.updateChannel", value)
+      .then(() => useUpdater.getState().check());
+  };
+
   return (
     <div>
       <PanelTitle>About</PanelTitle>
@@ -688,6 +701,27 @@ function AboutPanel() {
           {version ?? "—"}
         </span>
       </Field>
+      <Divider />
+      <Field
+        label="Update channel"
+        hint="Stable ships reviewed releases. Nightly tracks the latest build."
+      >
+        <Segmented<Settings["updateChannel"]>
+          value={updateChannel}
+          onChange={onChannelChange}
+          options={[
+            { value: "stable", label: "Stable" },
+            { value: "nightly", label: "Nightly" },
+          ]}
+        />
+      </Field>
+      {updateChannel === "nightly" && (
+        <div className="mt-1 text-xs text-[var(--color-destructive)]">
+          Nightly builds are unstable and ship the latest unreviewed code. On
+          macOS they're unsigned, so Gatekeeper will warn before you can open
+          them. Opt in only if you want the bleeding edge.
+        </div>
+      )}
       <Divider />
       <Field
         label="Updates"

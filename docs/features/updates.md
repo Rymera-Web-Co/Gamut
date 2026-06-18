@@ -13,8 +13,9 @@ Built on [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater/).
 - **Downloading** — the bar shows live progress.
 - **Ready** — once installed: *"Update installed — restart Gamut to finish."*
   with **Restart now**. The relaunch boots straight into the new version.
-- **Settings → About** — shows the current version and a **Check for updates**
-  button for an on-demand check at any time.
+- **Settings → About** — shows the current version, an **Update channel**
+  control (Stable / Nightly), and a **Check for updates** button for an
+  on-demand check at any time.
 
 The banner is dismissible (except mid-download); the check still surfaces again
 on the next launch.
@@ -34,6 +35,53 @@ on the next launch.
 
 The updater is only active in the **bundled desktop app**. Under `pnpm dev`
 (plain Vite, no Tauri runtime) the check is a no-op.
+
+## Update channels
+
+Gamut has two update channels, switchable in **Settings → About** under
+**Update channel**:
+
+- **Stable** (default) — tracks the normal releases. This is what you want
+  unless you have a reason not to.
+- **Nightly** — tracks the latest automated build. Opt in only if you want
+  bleeding-edge changes and are willing to put up with rough edges (see the
+  caveat below).
+
+Switching the channel changes which manifest the updater polls. Because the JS
+`@tauri-apps/plugin-updater` `check()` has no runtime endpoint override, the
+selection happens in **Rust**: the update check reads the `pref.updateChannel`
+setting and picks the matching `latest.json` endpoint before checking.
+
+### How nightlies are delivered
+
+Nightly builds run on a schedule (10pm Australia/Brisbane) for all four targets
+— macOS arm64/x64, Linux x64, Windows x64 — and are published as a **rolling
+GitHub prerelease** under a fixed `nightly` tag that is recreated on each run.
+The nightly updater polls a manifest pinned to that tag:
+
+```
+https://github.com/Rymera-Web-Co/Gamut/releases/download/nightly/latest.json
+```
+
+This URL works for a **prerelease** because it references the tag directly,
+sidestepping the `releases/latest` 404 caveat below — `releases/latest` only
+resolves to non-prerelease releases, but `releases/download/<tag>/…` resolves to
+whatever the `nightly` tag currently points at. Each scheduled run overwrites
+that tag's assets (including `latest.json`), so installs on the nightly channel
+always see the most recent build.
+
+Nightly packages are signed with the **same minisign keypair** as stable builds,
+so the existing public key in `tauri.conf.json` (`plugins.updater.pubkey`)
+verifies them too — no new signing secrets are involved.
+
+### ⚠️ Nightly caveats
+
+- Nightlies are **unstable** by design — they ship unreleased work and may break.
+- On macOS they are **unsigned**, so Gatekeeper will warn on first launch — the
+  same situation as the stable alpha builds today (see [the
+  README](../../README.md) for the one-time `xattr` workaround).
+
+If you just want a working build, stay on **Stable**.
 
 ## Signing keys
 
@@ -87,3 +135,7 @@ For auto-update to actually flow, either:
 
 Until then the plumbing is in place and verified, but the alpha builds won't
 self-update.
+
+Note this caveat applies to the **stable** channel. The **nightly** channel is
+unaffected because it polls a manifest pinned to the fixed `nightly` tag rather
+than `releases/latest` — see [Update channels](#update-channels) above.

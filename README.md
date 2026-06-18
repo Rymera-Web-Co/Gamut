@@ -86,6 +86,15 @@ The `.deb`/`.rpm` packages declare their runtime dependencies (WebKitGTK 4.1, GT
 
 > As on Windows, fetch / pull / push shell out to the `git` CLI — install `git` from your package manager if it isn't already present.
 
+## Nightly builds
+
+Gamut publishes automated **nightly** builds alongside the regular releases. To
+opt in, open **Settings → About** in the app and set **Update channel → Nightly**;
+the in-app updater then tracks the latest nightly. These builds carry the newest
+changes but are **unstable** (and unsigned on macOS, like the alpha builds), so
+stay on the default **Stable** channel unless you want bleeding-edge. See
+[`docs/features/updates.md`](docs/features/updates.md) for details.
+
 ## Stack
 
 - **Backend:** Rust / Tauri 2 — owns all git operations, the GitHub API, persistence (SQLite via `rusqlite`), and secrets (OS keychain). Frontend never touches a token or the filesystem directly.

@@ -60,6 +60,15 @@ GitHub API calls, persistence, and secret storage live in the Rust backend and a
 reached over Tauri's IPC (`src/lib/ipc.ts`). New capabilities generally mean adding a
 command in `src-tauri/src/commands/` and a typed wrapper on the frontend.
 
+## Testing nightly builds
+
+If you want to test the latest changes without building locally, install a
+release build and switch to the nightly channel in **Settings → About**
+(**Update channel → Nightly**). Nightlies are published as a rolling GitHub
+prerelease under a fixed `nightly` tag, rebuilt on a schedule for macOS, Linux,
+and Windows. They're useful for reproducing bugs against the newest code, but
+are unstable by nature — see [`docs/features/updates.md`](docs/features/updates.md).
+
 ## Coding conventions
 
 - **TypeScript** runs in `strict` mode with `noUnusedLocals`/`noUnusedParameters`.

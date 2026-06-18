@@ -146,6 +146,8 @@ pub fn run() {
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_kill,
+            commands::updater::check_for_update,
+            commands::updater::download_and_install_update,
         ])
         .on_window_event(|window, event| {
             // Tear down all PTYs when the main window closes so no shell is left
