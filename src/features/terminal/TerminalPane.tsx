@@ -24,6 +24,7 @@ import {
   type TermTab,
 } from "@/store/ui";
 import { ActivityDot } from "./activity";
+import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -31,6 +32,8 @@ interface SessionEntry {
   term: Terminal;
   fit: FitAddon;
   el: HTMLDivElement;
+  /** Persistent highlighting of clickable URLs in the output. */
+  linkHighlighter: LinkHighlighter;
   /** True once the backend PTY has been spawned for this session. */
   spawned: boolean;
 }
@@ -162,6 +165,10 @@ export function TerminalPane() {
   const visiblePaneRef = useRef<string | null>(visiblePaneId);
   visiblePaneRef.current = visiblePaneId;
 
+  // Latest theme for the link highlighter's color getter (created per session).
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+
   // Whether the Gamut window itself is focused. Focused-pane suppression only
   // makes sense while the user is actually looking at the app; when the window
   // is backgrounded (e.g. Claude finishes a task or asks for input while you're
@@ -231,6 +238,9 @@ export function TerminalPane() {
       }),
     );
     term.open(el);
+    // The addon only reveals links on hover, so persistently tint + underline
+    // them too — otherwise there's no hint the output is interactive (#78).
+    const linkHighlighter = attachLinkHighlighter(term, () => linkColor(themeRef.current));
     term.onData((data) => {
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
     });
@@ -249,7 +259,7 @@ export function TerminalPane() {
       const { groupId, tabId } = ctxRef.current;
       if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
     });
-    const entry: SessionEntry = { term, fit, el, spawned: false };
+    const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false };
     sessionsRef.current.set(pane.id, entry);
     return entry;
   }
@@ -316,6 +326,8 @@ export function TerminalPane() {
     const t = xtermTheme(theme);
     for (const entry of sessionsRef.current.values()) {
       entry.term.options.theme = t;
+      // Repaint link highlights in the new theme's accent.
+      entry.linkHighlighter.refresh();
     }
   }, [theme]);
 
@@ -366,6 +378,7 @@ export function TerminalPane() {
   function disposeEntry(id: string) {
     const e = sessionsRef.current.get(id);
     if (e) {
+      e.linkHighlighter.dispose();
       e.term.dispose();
       e.el.remove();
       sessionsRef.current.delete(id);
