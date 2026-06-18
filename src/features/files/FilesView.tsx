@@ -27,7 +27,9 @@ import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRepos } from "@/features/repos/api";
+import { isImagePath } from "@/lib/images";
 import { useFileContent, useWorktreeStatus } from "./api";
+import { ImageView } from "./ImageView";
 import { RepoTree, type TreeChanges } from "./RepoTree";
 import { SearchPanel } from "./SearchPanel";
 
@@ -116,7 +118,10 @@ export function FilesView() {
   const [editorReady, setEditorReady] = useState(false);
   const [pendingReveal, setPendingReveal] = useState<RevealTarget | null>(null);
 
-  const content = useFileContent(repoId, selectedPath);
+  // Images get their own preview path (loaded as a data: URL), so skip the
+  // text read for them — it would only report them as binary.
+  const isImage = selectedPath != null && isImagePath(selectedPath);
+  const content = useFileContent(repoId, isImage ? null : selectedPath);
   const editable = content.data?.text != null;
   const dirty = editable && value !== baseline;
 
@@ -414,6 +419,8 @@ export function FilesView() {
             <div className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--color-muted-foreground)]">
               Select a file to open it.
             </div>
+          ) : isImage ? (
+            <ImageView repoId={repoId} path={selectedPath} />
           ) : content.isLoading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />

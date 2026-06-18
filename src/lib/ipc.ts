@@ -152,6 +152,13 @@ export interface FileContent {
   encoding_error: boolean;
 }
 
+/** A working-tree image loaded for inline preview (see `read_image_file`). */
+export interface ImageContent {
+  /** `data:<mime>;base64,<…>` — usable directly as an `<img>` src. */
+  data_url: string;
+  byte_len: number;
+}
+
 export interface BlameHunk {
   start_line: number;
   line_count: number;
@@ -543,6 +550,8 @@ export const ipc = {
     invoke<DirEntry[]>("list_dir", { repoId, relPath }),
   readFile: (repoId: number, relPath: string) =>
     invoke<FileContent>("read_file", { repoId, relPath }),
+  readImageFile: (repoId: number, relPath: string) =>
+    invoke<ImageContent>("read_image_file", { repoId, relPath }),
   writeFile: (repoId: number, relPath: string, contents: string) =>
     invoke<void>("write_file", { repoId, relPath, contents }),
   /** Create an empty file; rejects if the path already exists. */

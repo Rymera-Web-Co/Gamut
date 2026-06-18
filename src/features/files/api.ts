@@ -24,6 +24,16 @@ export function useFileContent(repoId: number | null, path: string | null) {
   });
 }
 
+/** An image file loaded as a `data:` URL for inline preview. Only fires for the
+ * image-preview path — `useFileContent` is disabled for images. */
+export function useImageFile(repoId: number | null, path: string | null) {
+  return useQuery({
+    queryKey: ["image", repoId, path],
+    queryFn: () => ipc.readImageFile(repoId!, path!),
+    enabled: repoId != null && path != null,
+  });
+}
+
 /** Staged + unstaged changes, used to highlight changed files in the tree. */
 export function useWorktreeStatus(repoId: number | null) {
   return useQuery({

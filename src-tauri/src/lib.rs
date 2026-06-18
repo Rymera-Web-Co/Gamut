@@ -88,6 +88,7 @@ pub fn run() {
             commands::history::blame,
             commands::files::list_dir,
             commands::files::read_file,
+            commands::files::read_image_file,
             commands::files::read_audio_file,
             commands::files::write_file,
             commands::files::create_file,
