@@ -22,6 +22,9 @@ pub enum AppError {
     #[error("keychain error: {0}")]
     Keyring(#[from] keyring::Error),
 
+    #[error("updater error: {0}")]
+    Updater(#[from] tauri_plugin_updater::Error),
+
     #[error("{0}")]
     Other(String),
 }

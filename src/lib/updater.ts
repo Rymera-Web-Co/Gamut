@@ -1,23 +1,24 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { create } from "zustand";
 
 import { toast } from "@/store/toast";
 
 /**
- * In-app auto-update (issue #1).
+ * In-app auto-update (issue #1, rewired for nightly channels in #70).
  *
- * The flow is: `check()` polls the signed `latest.json` on the GitHub Release;
- * if a newer version is found we surface it (banner + Settings), the user opts
- * in to `downloadAndInstall()`, and `restart()` relaunches into the new build.
+ * The flow is: `check_for_update` polls the signed `latest.json` on the GitHub
+ * Release for the channel recorded in `pref.updateChannel`; if a newer version
+ * is found we surface it (banner + Settings), the user opts in to
+ * `download_and_install_update`, and `restart()` relaunches into the new build.
  *
  * Tauri verifies each update's signature against the public key baked into
  * `tauri.conf.json`, so a tampered package is rejected before install.
  *
- * The updater plugin only exists inside the bundled desktop app — under
- * `pnpm dev` (plain Vite, no Tauri runtime) `check()` would throw, so every
- * entry point guards on `isTauri()` first.
+ * The Rust commands only exist inside the bundled desktop app — under
+ * `pnpm dev` (plain Vite, no Tauri runtime) `invoke`/`listen` would throw, so
+ * every entry point guards on `isTauri()` first.
  */
 
 export type UpdateStatus =
@@ -29,10 +30,24 @@ export type UpdateStatus =
   | "uptodate"
   | "error";
 
+/** Shape returned by the Rust `check_for_update` command. */
+interface UpdateInfo {
+  version: string;
+  notes: string | null;
+  date: string | null;
+}
+
+/** Payload emitted on the `updater://download` progress event. */
+interface DownloadProgress {
+  downloaded: number;
+  total: number;
+  done: boolean;
+}
+
+const PROGRESS_EVENT = "updater://download";
+
 interface UpdaterState {
   status: UpdateStatus;
-  /** The pending update handle, kept alive between check and install. */
-  update: Update | null;
   /** Version offered by the manifest (set once an update is found). */
   version: string | null;
   /** Release notes from the manifest, if any. */
@@ -56,7 +71,6 @@ interface UpdaterState {
 
 export const useUpdater = create<UpdaterState>((set, get) => ({
   status: "idle",
-  update: null,
   version: null,
   notes: null,
   progress: null,
@@ -72,17 +86,16 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
     if (status === "checking" || status === "downloading") return;
     set({ status: "checking", error: null });
     try {
-      const update = await check();
+      const update = await invoke<UpdateInfo | null>("check_for_update");
       if (update) {
         set({
           status: "available",
-          update,
           version: update.version,
-          notes: update.body ?? null,
+          notes: update.notes,
           dismissed: false,
         });
       } else {
-        set({ status: "uptodate", update: null, version: null, notes: null });
+        set({ status: "uptodate", version: null, notes: null });
         if (!silent) toast.success("Gamut is up to date.");
       }
     } catch (e) {
@@ -93,35 +106,45 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
   },
 
   downloadAndInstall: async () => {
-    const { update, status } = get();
+    if (!isTauri()) return;
+    const { status } = get();
     // Guard against concurrent invocation — the banner and Settings → About
     // both call this, and a double-click could otherwise start a second
-    // download that interleaves progress with the first.
-    if (!update || status === "downloading") return;
+    // download that interleaves progress with the first. Only an available
+    // update can be installed.
+    if (status !== "available") return;
     set({ status: "downloading", progress: 0, error: null });
+
+    // Subscribe to progress before invoking so we don't miss early events;
+    // tear the listener down once the install finishes or errors out.
+    const unlisten = await listen<DownloadProgress>(PROGRESS_EVENT, (event) => {
+      const { downloaded, total, done } = event.payload;
+      if (done) {
+        set({ status: "ready", progress: 1, dismissed: false });
+      } else {
+        set({ progress: total > 0 ? downloaded / total : null });
+      }
+    });
+
     try {
-      let downloaded = 0;
-      let total = 0;
-      await update.downloadAndInstall((event) => {
-        switch (event.event) {
-          case "Started":
-            total = event.data.contentLength ?? 0;
-            set({ progress: 0 });
-            break;
-          case "Progress":
-            downloaded += event.data.chunkLength;
-            set({ progress: total > 0 ? downloaded / total : null });
-            break;
-          case "Finished":
-            set({ progress: 1 });
-            break;
-        }
-      });
-      set({ status: "ready", progress: 1, dismissed: false });
+      const installed = await invoke<boolean>("download_and_install_update");
+      if (!installed) {
+        // The channel reported no update to install (e.g. the rolling release
+        // changed between the check and this download). Don't prompt a restart.
+        set({ status: "uptodate", version: null, notes: null, progress: null });
+        toast.info("No update was available to install.");
+      } else if (get().status === "downloading") {
+        // An update was installed. The progress listener flips status to "ready"
+        // on the terminal `done:true` event, but invoke may resolve without one —
+        // settle it here too.
+        set({ status: "ready", progress: 1, dismissed: false });
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
       toast.error(`Update failed: ${msg}`);
+    } finally {
+      unlisten();
     }
   },
 

@@ -50,6 +50,9 @@ export interface Settings {
   terminalNotifySoundCustom: string; // absolute path to a user-chosen sound file
   terminalNotifyDesktop: boolean; // also show a native OS notification
   terminalNotifyAlways: boolean; // notify even when the event pane is focused
+
+  // Updates
+  updateChannel: "stable" | "nightly";
 }
 
 /**
@@ -102,6 +105,9 @@ export const DEFAULTS: Settings = {
   // Off by default: only notify for backgrounded panes / when the app window is
   // unfocused. Opt in to also be cued while looking right at the active pane.
   terminalNotifyAlways: false,
+
+  // Updates
+  updateChannel: "stable",
 };
 
 type Key = keyof Settings;
@@ -112,6 +118,7 @@ const ENUMS: Partial<Record<Key, readonly string[]>> = {
   terminalNotifySoundName: TERMINAL_SOUNDS,
   reviewMode: ["working", "branch"],
   mergeStrategy: ["merge", "squash", "rebase"],
+  updateChannel: ["stable", "nightly"],
 };
 
 /** localStorage mirror of the DB, for synchronous hydration before IPC loads. */
