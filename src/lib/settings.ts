@@ -53,6 +53,15 @@ export interface Settings {
 
   // Updates
   updateChannel: "stable" | "nightly";
+
+  // Keyboard — JSON map of per-command binding overrides (see lib/shortcuts.ts).
+  // "" means no overrides (every command uses its default).
+  keybindings: string;
+
+  // GitHub (incl. GitHub Enterprise Server)
+  githubApiBase: string; // "" → https://api.github.com
+  githubGraphqlBase: string; // "" → https://api.github.com/graphql
+  githubPrPageSize: number; // open PRs fetched per repo
 }
 
 /**
@@ -108,6 +117,12 @@ export const DEFAULTS: Settings = {
 
   // Updates
   updateChannel: "stable",
+
+  keybindings: "",
+
+  githubApiBase: "",
+  githubGraphqlBase: "",
+  githubPrPageSize: 50,
 };
 
 type Key = keyof Settings;

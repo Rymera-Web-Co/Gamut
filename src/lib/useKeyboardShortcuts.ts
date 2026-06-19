@@ -1,32 +1,36 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useFetchGroup, useGroups, useRepos } from "@/features/repos/api";
 import { useSyncActions } from "@/features/sync/useSyncActions";
 import { ipc } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
+import {
+  matchesBinding,
+  parseOverrides,
+  resolveBindings,
+  SHORTCUTS,
+  type Binding,
+  type ShortcutId,
+} from "@/lib/shortcuts";
 import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/store/ui";
 
 /**
- * Global shortcuts:
- *   ⌘/Ctrl+1 → Files   ⌘/Ctrl+2 → History   ⌘/Ctrl+3 → Review
- *   ⌘/Ctrl+4 → Pull Requests
- *   ⌘/Ctrl+B → toggle repo sidebar   ⌘/Ctrl+J → toggle theme
- *   ⌘/Ctrl+K → command palette (search repos, groups & terminals)
- *   ⌘/Ctrl+⇧+F → repo-wide search (Files view)
- *   ⌘/Ctrl+` → toggle integrated terminal
- *   ⌘/Ctrl+⇧+` → maximize / restore the terminal
- *   ⌘/Ctrl+, → settings
- *   ⌘/Ctrl+⇧+K → push   ⌘/Ctrl+⇧+P → pull (active repo)
- *   ⌘/Ctrl+⌥+F → fetch all repos in the active group
- *   ⌃Tab / ⌃⇧Tab → cycle repos in the active group
+ * Global keyboard shortcuts, dispatched from the user-configurable binding map
+ * (see `lib/shortcuts.ts` for the command set and `Settings → Keyboard` for
+ * remapping). Defaults reproduce the original hardcoded bindings:
+ *   ⌘/Ctrl+1–4 → Files / History / Review / Pull Requests
+ *   ⌘/Ctrl+B repo sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
+ *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal   ⌘/Ctrl+⇧+` maximize terminal
+ *   ⌘/Ctrl+, settings   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
+ *   ⌘/Ctrl+⌥+F fetch group   ⌃Tab / ⌃⇧Tab cycle repos in the active group
  *
- * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view,
- * where the Monaco instance lives. Terminal tab shortcuts (⌘T/⌘W/⌘D/⌘⇧[ ]/
- * ⌘⌥1–9) live in TerminalPane, which owns the PTY sessions.
+ * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view, and
+ * terminal tab shortcuts (⌘T/⌘W/⌘D/⌘⇧[ ]/⌘⌥1–9) live in TerminalPane.
  *
- * Git-sync and repo-cycle shortcuts are suppressed while the user is typing
- * (editor, terminal, inputs) so they don't clash with editor bindings such as
- * Monaco's ⌘⇧K (delete line).
+ * Commands flagged `whenTyping: false` (git sync, repo cycling) are suppressed
+ * while the user is typing in an input, the editor, or a terminal, so they don't
+ * clash with editor bindings such as Monaco's ⌘⇧K (delete line).
  */
 export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
@@ -46,6 +50,15 @@ export function useKeyboardShortcuts() {
   const fetchGroup = useFetchGroup();
   const { pull, push, busy } = useSyncActions(activeRepoId);
 
+  // Effective binding for every command (defaults overlaid with user overrides).
+  const keybindings = useSettings((s) => s.values.keybindings);
+  const bindings = useMemo(
+    () => resolveBindings(parseOverrides(keybindings)),
+    [keybindings],
+  );
+  const bindingsRef = useRef(bindings);
+  bindingsRef.current = bindings;
+
   // Latest dynamic state for the (mount-once) keydown listener, so it never
   // works off stale repo/group/mutation snapshots without re-binding. Built
   // once per render and reused as both the initializer and the live value.
@@ -59,6 +72,14 @@ export function useKeyboardShortcuts() {
     push,
     busy,
     setActiveRepo,
+    setView,
+    toggleRepoSidebar,
+    toggleTerminal,
+    toggleTerminalMaximized,
+    toggleSettings,
+    toggleCommandPalette,
+    focusRepoSearch,
+    toggleTheme,
   };
   const ref = useRef(snapshot);
   ref.current = snapshot;
@@ -114,105 +135,49 @@ export function useKeyboardShortcuts() {
       );
     }
 
-    function onKey(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey)) return;
-
-      // Repo-action / repo-cycle shortcuts: only when not typing somewhere.
-      if (!isTypingTarget()) {
+    // Each handler returns `false` to decline the event (so it isn't swallowed);
+    // anything else means handled → preventDefault. Most always handle; only
+    // repo-cycling declines when there's nothing to cycle to.
+    const handlers: Record<ShortcutId, () => boolean | void> = {
+      "view.files": () => ref.current.setView("files"),
+      "view.history": () => ref.current.setView("history"),
+      "view.review": () => ref.current.setView("review"),
+      "view.pulls": () => ref.current.setView("pulls"),
+      toggleSidebar: () => ref.current.toggleRepoSidebar(),
+      repoSearch: () => ref.current.focusRepoSearch(),
+      toggleTheme: () => ref.current.toggleTheme(),
+      commandPalette: () => ref.current.toggleCommandPalette(),
+      toggleTerminal: () => ref.current.toggleTerminal(),
+      maximizeTerminal: () => ref.current.toggleTerminalMaximized(),
+      openSettings: () => ref.current.toggleSettings(),
+      push: () => {
         const s = ref.current;
-        // ⌘⌥F → fetch the active group. ⌥ combos mangle e.key on macOS, so
-        // match the physical code instead.
-        if (e.altKey && e.code === "KeyF") {
-          e.preventDefault();
-          fetchActiveGroup();
-          return;
-        }
-        // ⌃Tab / ⌃⇧Tab → cycle repos in the active group. Gated on Control
-        // specifically (⌘Tab is the OS app switcher), and only swallowed when
-        // there's actually a repo to cycle to.
-        if (e.ctrlKey && e.key === "Tab") {
-          if (cycleRepo(e.shiftKey ? -1 : 1)) e.preventDefault();
-          return;
-        }
-        if (e.shiftKey && !e.altKey) {
-          // ⌘⇧K → push, ⌘⇧P → pull. Require an explicit Shift so Caps Lock
-          // (which also yields uppercase e.key) can't fire these on plain ⌘K/⌘P.
-          if (e.key === "K") {
-            e.preventDefault();
-            if (s.activeRepoId != null && !s.busy) s.push.mutate();
-            return;
-          }
-          if (e.key === "P") {
-            e.preventDefault();
-            if (s.activeRepoId != null && !s.busy) s.pull.mutate();
-            return;
-          }
-        }
-      }
+        if (s.activeRepoId != null && !s.busy) s.push.mutate();
+      },
+      pull: () => {
+        const s = ref.current;
+        if (s.activeRepoId != null && !s.busy) s.pull.mutate();
+      },
+      fetchGroup: () => fetchActiveGroup(),
+      cycleRepoNext: () => cycleRepo(1),
+      cycleRepoPrev: () => cycleRepo(-1),
+    };
 
-      // No other ⌥ combos are handled here.
-      if (e.altKey) return;
-
-      switch (e.key) {
-        case "1":
-          e.preventDefault();
-          setView("files");
-          break;
-        case "2":
-          e.preventDefault();
-          setView("history");
-          break;
-        case "3":
-          e.preventDefault();
-          setView("review");
-          break;
-        case "4":
-          e.preventDefault();
-          setView("pulls");
-          break;
-        case "b":
-          e.preventDefault();
-          toggleRepoSidebar();
-          break;
-        // ⇧+F arrives as "F"; opens repo-wide search (plain ⌘/Ctrl+F is the
-        // editor's per-file find, handled in the Files view).
-        case "F":
-          e.preventDefault();
-          focusRepoSearch();
-          break;
-        case "j":
-          e.preventDefault();
-          toggleTheme();
-          break;
-        case "k":
-          e.preventDefault();
-          toggleCommandPalette();
-          break;
-        case "`":
-          e.preventDefault();
-          toggleTerminal();
-          break;
-        // Shift+` reports as "~" on most layouts.
-        case "~":
-          e.preventDefault();
-          toggleTerminalMaximized();
-          break;
-        case ",":
-          e.preventDefault();
-          toggleSettings();
-          break;
+    function onKey(e: KeyboardEvent) {
+      const bindings = bindingsRef.current;
+      const typing = isTypingTarget();
+      for (const def of SHORTCUTS) {
+        const binding: Binding = bindings[def.id];
+        if (!matchesBinding(e, binding)) continue;
+        // Suppressed while typing — let the keystroke through to the input.
+        if (!def.whenTyping && typing) return;
+        const handled = handlers[def.id]();
+        if (handled !== false) e.preventDefault();
+        return;
       }
     }
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [
-    setView,
-    toggleRepoSidebar,
-    toggleTerminal,
-    toggleTerminalMaximized,
-    toggleSettings,
-    toggleCommandPalette,
-    focusRepoSearch,
-    toggleTheme,
-  ]);
+  }, []);
 }
