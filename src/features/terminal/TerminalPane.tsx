@@ -552,7 +552,15 @@ export function TerminalPane() {
       style={{ background: xtermTheme(theme).background }}
     >
       {/* Tab strip + controls. */}
-      <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs">
+      <div
+        className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs"
+        // Double-clicking the empty part of the bar toggles maximize, mirroring
+        // the desktop window-title convention. The guard limits this to the bar
+        // itself so tab labels (rename) and control buttons keep their handlers.
+        onDoubleClick={(e) => {
+          if (e.target === e.currentTarget) toggleTerminalMaximized();
+        }}
+      >
         {tabs.map((tab) => {
           // Inactive tabs surface unseen background activity with a dot; the
           // active tab's focused pane is already "seen" (and cleared).
