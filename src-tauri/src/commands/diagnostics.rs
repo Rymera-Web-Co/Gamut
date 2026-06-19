@@ -149,7 +149,11 @@ fn op_stats(log: &VecDeque<OpTiming>) -> Vec<OpStat> {
             count,
             fail_count,
             max_ms,
-            avg_ms: if count > 0 { total_ms / count as u64 } else { 0 },
+            avg_ms: if count > 0 {
+                total_ms / count as u64
+            } else {
+                0
+            },
         })
         .collect();
     // Slowest (by max) first — that's what a hang investigation wants.
