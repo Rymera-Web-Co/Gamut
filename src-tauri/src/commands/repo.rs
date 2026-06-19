@@ -337,14 +337,7 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
     // worker threads. This whole scan holds a single git-status permit, so it
     // can't stampede alongside per-repo worktree-status calls and trigger the
     // libiconv lock convoy (issue #89).
-    let _permit = state
-        .git_gate
-        .acquire()
-        .await
-        .map_err(|e| AppError::Other(format!("git status gate closed: {e}")))?;
-    tauri::async_runtime::spawn_blocking(move || compute_repo_statuses(rows))
-        .await
-        .map_err(|e| AppError::Other(format!("repo statuses task panicked: {e}")))?
+    crate::commands::run_git_gated(&state, move || compute_repo_statuses(rows)).await
 }
 
 /// Blocking core of [`repo_statuses`]: compute each repo's status from its path.
