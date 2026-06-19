@@ -8,7 +8,7 @@ use crate::commands::history::{
     blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
 };
 use crate::commands::sync::run_git;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::state::AppState;
 
 /// The working tree split the way a staging UI needs it: what's staged for the
@@ -45,9 +45,7 @@ pub async fn git_worktree_status(
     repo_id: i64,
 ) -> AppResult<WorktreeStatus> {
     let path = repo_path(&state, repo_id)?;
-    tauri::async_runtime::spawn_blocking(move || worktree_status_at(&path))
-        .await
-        .map_err(|e| AppError::Other(format!("worktree status task panicked: {e}")))?
+    crate::commands::run_git_blocking(path, worktree_status_at).await
 }
 
 /// Blocking core of [`git_worktree_status`]; opens the repo from `path` so it
