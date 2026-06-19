@@ -36,9 +36,20 @@ pub struct SyncStatus {
 
 /// Ahead/behind counts of the current branch vs its upstream (local-only; run
 /// after a fetch to refresh the numbers).
+///
+/// Runs the git2 work on a blocking thread so it never executes on the main/UI
+/// thread (issue #88).
 #[tauri::command]
-pub fn git_sync_status(state: State<AppState>, repo_id: i64) -> AppResult<SyncStatus> {
-    let repo = open_repo(&state, repo_id)?;
+pub async fn git_sync_status(state: State<'_, AppState>, repo_id: i64) -> AppResult<SyncStatus> {
+    let path = repo_path(&state, repo_id)?;
+    tauri::async_runtime::spawn_blocking(move || sync_status_at(&path))
+        .await
+        .map_err(|e| AppError::Other(format!("sync status task panicked: {e}")))?
+}
+
+/// Blocking core of [`git_sync_status`]; opens the repo from `path`.
+fn sync_status_at(path: &std::path::Path) -> AppResult<SyncStatus> {
+    let repo = crate::git::open(path)?;
     let none = SyncStatus {
         upstream: None,
         ahead: 0,
