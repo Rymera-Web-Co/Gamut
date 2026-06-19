@@ -22,6 +22,7 @@ import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
+import { useMainThreadWatchdog } from "@/lib/useMainThreadWatchdog";
 import { useUiStore } from "@/store/ui";
 
 function StatusBar() {
@@ -59,6 +60,7 @@ export default function App() {
   useGitWatch();
   useAutoFetch();
   useActiveRepoReconciler();
+  useMainThreadWatchdog();
 
   // Reconcile preferences with the DB once on startup (state is mirror-hydrated
   // synchronously, so this only corrects drift / picks up another window's edits).

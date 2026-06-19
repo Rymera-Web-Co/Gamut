@@ -44,7 +44,19 @@ pub async fn git_worktree_status(
     repo_id: i64,
 ) -> AppResult<WorktreeStatus> {
     let path = repo_path(&state, repo_id)?;
-    crate::commands::run_git_gated(&state, move || worktree_status_at(&path)).await
+    let started = std::time::Instant::now();
+    let result = crate::commands::run_git_gated(&state, move || worktree_status_at(&path)).await;
+    crate::commands::diagnostics::record(
+        &state,
+        crate::commands::diagnostics::OpTiming::finished(
+            "git_worktree_status",
+            Some(repo_id),
+            started,
+            result.is_ok(),
+            result.as_ref().err().map(|e| e.to_string()),
+        ),
+    );
+    result
 }
 
 /// Blocking core of [`git_worktree_status`]; opens the repo from `path` so it

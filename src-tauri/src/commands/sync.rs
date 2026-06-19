@@ -126,7 +126,19 @@ pub async fn git_fetch_many(
             });
             continue;
         }
-        let result = match run_git(&dir.to_string_lossy(), &["fetch", "--all", "--prune"]).await {
+        let started = std::time::Instant::now();
+        let fetched = run_git(&dir.to_string_lossy(), &["fetch", "--all", "--prune"]).await;
+        crate::commands::diagnostics::record(
+            &state,
+            crate::commands::diagnostics::OpTiming::finished(
+                "git_fetch",
+                Some(repo_id),
+                started,
+                fetched.is_ok(),
+                fetched.as_ref().err().map(|e| e.to_string()),
+            ),
+        );
+        let result = match fetched {
             Ok(_) => FetchResult {
                 repo_id,
                 ok: true,

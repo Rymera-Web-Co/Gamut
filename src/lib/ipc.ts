@@ -1,5 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 
 /**
  * Typed wrappers over Tauri's `invoke`. Every backend command should be
@@ -427,6 +430,38 @@ export interface ReplaceResult {
   skipped: SkippedFile[];
 }
 
+/** One recorded git-operation timing in the diagnostics log (#90). */
+export interface OpTiming {
+  op: string;
+  repo_id: number | null;
+  duration_ms: number;
+  ok: boolean;
+  at_ms: number;
+  detail: string | null;
+}
+
+/** Per-operation aggregate over the diagnostics log. */
+export interface OpStat {
+  op: string;
+  count: number;
+  fail_count: number;
+  max_ms: number;
+  avg_ms: number;
+}
+
+/** A point-in-time diagnostics bundle (#90). */
+export interface Diagnostics {
+  app_version: string;
+  os: string;
+  arch: string;
+  generated_at_ms: number;
+  repo_count: number;
+  group_count: number;
+  watched_path_count: number;
+  op_stats: OpStat[];
+  recent_ops: OpTiming[];
+}
+
 export const ipc = {
   ping: (name?: string) => invoke<string>("ping", { name }),
   dbHealth: () => invoke<DbHealth>("db_health"),
@@ -720,7 +755,22 @@ export const ipc = {
   /** Read a custom notification sound file's raw bytes by path (#28). The
    * backend rejects non-audio extensions, so this isn't a general file read. */
   readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),
+
+  // diagnostics (#90)
+  diagnostics: () => invoke<Diagnostics>("diagnostics_snapshot"),
+  diagnosticsWrite: (path: string) =>
+    invoke<void>("diagnostics_write", { path }),
+  recordStall: (gapMs: number) =>
+    invoke<void>("diagnostics_record_stall", { gapMs }),
 };
+
+/** Open the native save dialog. Returns the chosen path, or null if cancelled. */
+export async function pickSavePath(
+  defaultName: string,
+): Promise<string | null> {
+  const result = await saveDialog({ defaultPath: defaultName });
+  return typeof result === "string" ? result : null;
+}
 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */
 export async function pickDirectory(title?: string): Promise<string | null> {

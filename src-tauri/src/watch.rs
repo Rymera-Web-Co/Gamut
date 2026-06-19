@@ -101,6 +101,11 @@ impl RepoWatcher {
         })
     }
 
+    /// Number of directories currently watched (for diagnostics).
+    pub fn watched_count(&self) -> usize {
+        self.watched.len()
+    }
+
     /// Watch exactly the given set of directories (add new, drop removed), each
     /// with its requested recursion mode.
     pub fn sync(&mut self, desired: HashMap<PathBuf, RecursiveMode>) {

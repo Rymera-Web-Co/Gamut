@@ -322,6 +322,7 @@ fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
 /// behind count reflects the last fetch — "new commits available" after fetching).
 #[tauri::command]
 pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStatus>> {
+    let started = std::time::Instant::now();
     let rows: Vec<(i64, String)> = {
         let conn = lock(&state)?;
         let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
@@ -337,7 +338,23 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
     // worker threads. This whole scan holds a single git-status permit, so it
     // can't stampede alongside per-repo worktree-status calls and trigger the
     // libiconv lock convoy (issue #89).
-    crate::commands::run_git_gated(&state, move || compute_repo_statuses(rows)).await
+    let result = crate::commands::run_git_gated(&state, move || compute_repo_statuses(rows)).await;
+    crate::commands::diagnostics::record(
+        &state,
+        crate::commands::diagnostics::OpTiming::finished(
+            "repo_statuses",
+            None,
+            started,
+            result.is_ok(),
+            Some(
+                result
+                    .as_ref()
+                    .map(|v| format!("{} repos", v.len()))
+                    .unwrap_or_else(|e| e.to_string()),
+            ),
+        ),
+    );
+    result
 }
 
 /// Blocking core of [`repo_statuses`]: compute each repo's status from its path.
