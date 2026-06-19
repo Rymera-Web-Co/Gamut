@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ipc } from "@/lib/ipc";
 import { toast } from "@/store/toast";
@@ -55,13 +51,9 @@ export function useFetchGroup() {
       const failed = results.filter((r) => !r.ok);
       const fetched = results.length - failed.length;
       if (failed.length === 0) {
-        toast.success(
-          fetched === 1 ? "Fetched 1 repository" : `Fetched ${fetched} repositories`,
-        );
+        toast.success(fetched === 1 ? "Fetched 1 repository" : `Fetched ${fetched} repositories`);
       } else {
-        toast.error(
-          `Fetched ${fetched} of ${results.length} — ${failed.length} failed`,
-        );
+        toast.error(`Fetched ${fetched} of ${results.length} — ${failed.length} failed`);
       }
     },
   });
@@ -151,15 +143,8 @@ export function useUnbindGroupFolder() {
 export function useUpdateGroup() {
   const invalidate = useInvalidateTree();
   return useMutation({
-    mutationFn: ({
-      id,
-      name,
-      icon,
-    }: {
-      id: number;
-      name: string | null;
-      icon: string | null;
-    }) => ipc.updateGroup(id, name, icon),
+    mutationFn: ({ id, name, icon }: { id: number; name: string | null; icon: string | null }) =>
+      ipc.updateGroup(id, name, icon),
     onSuccess: invalidate,
   });
 }

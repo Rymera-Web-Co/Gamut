@@ -70,14 +70,7 @@ export interface Settings {
  * `"custom"` plays a user-supplied file (`terminalNotifySoundCustom`). The list
  * doubles as the enum guard for the `terminalNotifySoundName` setting.
  */
-export const TERMINAL_SOUNDS = [
-  "chime",
-  "ping",
-  "blip",
-  "knock",
-  "alert",
-  "custom",
-] as const;
+export const TERMINAL_SOUNDS = ["chime", "ping", "blip", "knock", "alert", "custom"] as const;
 export type TerminalSound = (typeof TERMINAL_SOUNDS)[number];
 
 export const DEFAULTS: Settings = {

@@ -108,10 +108,7 @@ export interface LinkHighlighter {
  * and dropping ones that scrolled away — rather than tearing everything down and
  * rebuilding it, which made the links blink under continuous output.
  */
-export function attachLinkHighlighter(
-  term: Terminal,
-  getColor: () => string,
-): LinkHighlighter {
+export function attachLinkHighlighter(term: Terminal, getColor: () => string): LinkHighlighter {
   const active = new Map<string, { decoration: IDisposable; marker: IDisposable }>();
   let frame = 0;
   let disposed = false;

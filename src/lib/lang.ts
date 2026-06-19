@@ -42,8 +42,5 @@ export function languageFor(path: string): string {
 
 /** Whether the current document is in dark mode (for Monaco theming). */
 export function isDarkTheme(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.documentElement.classList.contains("dark")
-  );
+  return typeof document !== "undefined" && document.documentElement.classList.contains("dark");
 }

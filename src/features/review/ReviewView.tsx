@@ -80,9 +80,7 @@ export function ReviewView() {
 
   const currentBranch = branches.data?.find((b) => b.is_head)?.name;
   const matchingPr =
-    currentBranch != null
-      ? prs.data?.find((p) => p.head_ref === currentBranch)
-      : undefined;
+    currentBranch != null ? prs.data?.find((p) => p.head_ref === currentBranch) : undefined;
 
   return (
     <div className="flex h-full flex-col">
@@ -134,9 +132,7 @@ export function ReviewView() {
             repoId={repoId}
             source={mode}
             pr={
-              matchingPr
-                ? { number: matchingPr.number, headSha: matchingPr.head_sha }
-                : undefined
+              matchingPr ? { number: matchingPr.number, headSha: matchingPr.head_sha } : undefined
             }
           />
         )}

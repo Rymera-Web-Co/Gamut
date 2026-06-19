@@ -159,11 +159,7 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
     );
   }
   if (!resolved) {
-    return (
-      <span className="text-xs text-[var(--color-muted-foreground)]">
-        Loading image…
-      </span>
-    );
+    return <span className="text-xs text-[var(--color-muted-foreground)]">Loading image…</span>;
   }
   return <img src={resolved} alt={alt} {...props} />;
 }
@@ -209,9 +205,7 @@ export function Markdown({
                 type="checkbox"
                 checked={!!props.checked}
                 disabled={!onToggleTask}
-                onChange={(e) =>
-                  onToggleTask?.(index, e.currentTarget.checked)
-                }
+                onChange={(e) => onToggleTask?.(index, e.currentTarget.checked)}
               />
             );
           },

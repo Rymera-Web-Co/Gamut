@@ -37,12 +37,7 @@ export function LocalReview({
     setSelected(null);
   }, [source, repoId]);
 
-  const diff = useReviewFileDiff(
-    repoId,
-    source,
-    selected?.path ?? null,
-    selected?.old_path,
-  );
+  const diff = useReviewFileDiff(repoId, source, selected?.path ?? null, selected?.old_path);
 
   // ---- Inline PR comments (only meaningful when a PR matches) ----
   const mentionables = useMentionables(repoId, !!pr);
@@ -51,8 +46,7 @@ export function LocalReview({
   const drafts = useDraftsFor(repoId, pr?.number ?? -1);
 
   const modifiedRef = useRef<Monaco.editor.ICodeEditor | null>(null);
-  const decorationsRef =
-    useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   // Latest values for use inside Monaco event callbacks (avoid stale closures).
   const prRef = useRef<PrContext | undefined>(pr);
   prRef.current = pr;
@@ -69,9 +63,7 @@ export function LocalReview({
     const modified = modifiedRef.current;
     const c = composerRef.current;
     if (!modified || !c) return;
-    setOverlayTop(
-      modified.getTopForLineNumber(c.endLine + 1) - modified.getScrollTop(),
-    );
+    setOverlayTop(modified.getTopForLineNumber(c.endLine + 1) - modified.getScrollTop());
   }
 
   function openComposer(startLine: number, endLine: number) {
@@ -95,10 +87,7 @@ export function LocalReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.path, source]);
 
-  function handleMount(
-    editor: Monaco.editor.IStandaloneDiffEditor,
-    monaco: typeof Monaco,
-  ) {
+  function handleMount(editor: Monaco.editor.IStandaloneDiffEditor, monaco: typeof Monaco) {
     const modified = editor.getModifiedEditor();
     modifiedRef.current = modified;
     decorationsRef.current = modified.createDecorationsCollection();
@@ -139,12 +128,7 @@ export function LocalReview({
       const clicked = e.target.position?.lineNumber;
       if (clicked == null) return;
       const sel = modified.getSelection();
-      if (
-        sel &&
-        !sel.isEmpty() &&
-        clicked >= sel.startLineNumber &&
-        clicked <= sel.endLineNumber
-      ) {
+      if (sel && !sel.isEmpty() && clicked >= sel.startLineNumber && clicked <= sel.endLineNumber) {
         openComposer(sel.startLineNumber, sel.endLineNumber);
       } else {
         openComposer(clicked, clicked);
@@ -226,15 +210,11 @@ export function LocalReview({
       <Panel defaultSize={28} minSize={15} maxSize={55} className="flex min-w-0 flex-col">
         <div className="border-b px-3 py-1.5 text-xs text-[var(--color-muted-foreground)]">
           <span className="font-mono">{data.base_label}</span> →{" "}
-          <span className="font-mono">{data.head_label}</span> · {data.files.length}{" "}
-          file{data.files.length === 1 ? "" : "s"}
+          <span className="font-mono">{data.head_label}</span> · {data.files.length} file
+          {data.files.length === 1 ? "" : "s"}
         </div>
         <div className="min-h-0 flex-1 overflow-auto py-1">
-          <FileTree
-            files={data.files}
-            onOpen={setSelected}
-            selectedPath={selected?.path}
-          />
+          <FileTree files={data.files} onOpen={setSelected} selectedPath={selected?.path} />
         </div>
       </Panel>
 
@@ -271,10 +251,7 @@ export function LocalReview({
               }}
             />
             {composer && (
-              <div
-                className="absolute inset-x-2 z-20"
-                style={{ top: Math.max(0, overlayTop) }}
-              >
+              <div className="absolute inset-x-2 z-20" style={{ top: Math.max(0, overlayTop) }}>
                 <InlineCommentBox
                   lineLabel={lineLabel}
                   mentions={mentionables.data ?? []}

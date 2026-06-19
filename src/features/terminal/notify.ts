@@ -251,10 +251,7 @@ async function showDesktop(ev: TerminalEvent) {
   if (!granted) return;
 
   await ensureActionListener();
-  const body =
-    ev.kind === "exit"
-      ? `${ev.title} — process exited`
-      : `Terminal bell in ${ev.title}`;
+  const body = ev.kind === "exit" ? `${ev.title} — process exited` : `Terminal bell in ${ev.title}`;
   sendNotification({
     title: "Gamut terminal",
     body,

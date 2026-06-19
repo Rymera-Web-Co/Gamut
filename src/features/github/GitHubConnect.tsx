@@ -15,11 +15,7 @@ import { Input } from "@/components/ui/input";
 import { copy } from "@/lib/clipboard";
 import { ipc, type DeviceCode } from "@/lib/ipc";
 import { toast } from "@/store/toast";
-import {
-  useGithubAuth,
-  useLogout,
-  useSetToken,
-} from "@/features/review/api";
+import { useGithubAuth, useLogout, useSetToken } from "@/features/review/api";
 
 function ConnectBody({ onDone }: { onDone: () => void }) {
   const qc = useQueryClient();
@@ -33,8 +29,7 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
   const setTokenMut = useSetToken();
 
   const poll = useMutation({
-    mutationFn: (d: DeviceCode) =>
-      ipc.githubDevicePoll(d.device_code, d.interval, d.expires_in),
+    mutationFn: (d: DeviceCode) => ipc.githubDevicePoll(d.device_code, d.interval, d.expires_in),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["github-auth"] });
       toast.success("Connected to GitHub");
@@ -71,9 +66,7 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() =>
-            openUrl(device.verification_uri_complete ?? device.verification_uri)
-          }
+          onClick={() => openUrl(device.verification_uri_complete ?? device.verification_uri)}
         >
           <ExternalLink /> Open GitHub
         </Button>
@@ -102,8 +95,8 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex flex-col gap-3 py-2">
       <p className="text-sm text-[var(--color-muted-foreground)]">
-        Paste a GitHub personal-access token (with <code>repo</code> and{" "}
-        <code>read:org</code> scopes). It's stored in your OS keychain.
+        Paste a GitHub personal-access token (with <code>repo</code> and <code>read:org</code>{" "}
+        scopes). It's stored in your OS keychain.
       </p>
       <div className="flex gap-2">
         <Input
@@ -112,9 +105,7 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
           value={token}
           onChange={(e) => setToken(e.target.value)}
           onKeyDown={(e) =>
-            e.key === "Enter" &&
-            token &&
-            setTokenMut.mutate(token, { onSuccess: onDone })
+            e.key === "Enter" && token && setTokenMut.mutate(token, { onSuccess: onDone })
           }
         />
         <Button
@@ -158,15 +149,12 @@ export function GitHubConnect() {
           {connected ? (
             <div className="flex flex-col gap-3 py-2">
               <p className="text-sm">
-                Signed in as{" "}
-                <span className="font-medium">{auth.data?.login}</span>
+                Signed in as <span className="font-medium">{auth.data?.login}</span>
               </p>
               <DialogFooter>
                 <Button
                   variant="outline"
-                  onClick={() =>
-                    logout.mutate(undefined, { onSuccess: () => setOpen(false) })
-                  }
+                  onClick={() => logout.mutate(undefined, { onSuccess: () => setOpen(false) })}
                 >
                   <LogOut /> Sign out
                 </Button>

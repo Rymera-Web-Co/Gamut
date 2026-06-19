@@ -52,10 +52,7 @@ export function useKeyboardShortcuts() {
 
   // Effective binding for every command (defaults overlaid with user overrides).
   const keybindings = useSettings((s) => s.values.keybindings);
-  const bindings = useMemo(
-    () => resolveBindings(parseOverrides(keybindings)),
-    [keybindings],
-  );
+  const bindings = useMemo(() => resolveBindings(parseOverrides(keybindings)), [keybindings]);
   const bindingsRef = useRef(bindings);
   bindingsRef.current = bindings;
 
@@ -105,8 +102,7 @@ export function useKeyboardShortcuts() {
       const visible = visibleRepos();
       if (visible.length < 2) return false;
       const cur = visible.findIndex((r) => r.id === s.activeRepoId);
-      const next =
-        cur < 0 ? visible[0] : visible[(cur + dir + visible.length) % visible.length];
+      const next = cur < 0 ? visible[0] : visible[(cur + dir + visible.length) % visible.length];
       s.setActiveRepo(next.id);
       ipc.touchRepo(next.id);
       return true;

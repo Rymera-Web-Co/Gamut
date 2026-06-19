@@ -65,11 +65,7 @@ export function TopTabs() {
           size="icon"
           variant="ghost"
           className="size-7"
-          title={
-            repoSidebarHidden
-              ? "Show repositories (⌘B)"
-              : "Hide repositories (⌘B)"
-          }
+          title={repoSidebarHidden ? "Show repositories (⌘B)" : "Hide repositories (⌘B)"}
           onClick={toggleRepoSidebar}
         >
           {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
@@ -94,9 +90,7 @@ export function TopTabs() {
         >
           {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
           {repoSidebarHidden ? "Show repositories" : "Hide repositories"}
-          <span className="ml-auto pl-4 text-xs text-[var(--color-muted-foreground)]">
-            ⌘B
-          </span>
+          <span className="ml-auto pl-4 text-xs text-[var(--color-muted-foreground)]">⌘B</span>
         </ContextMenuItem>
       </ContextMenu>
     </div>

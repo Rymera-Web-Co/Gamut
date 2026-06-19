@@ -13,11 +13,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
@@ -173,8 +169,7 @@ function RepoRow({
               <p className="text-sm text-[var(--color-muted-foreground)]">
                 Remove{" "}
                 <span className="font-medium text-[var(--color-foreground)]">{repo.name}</span> from
-                Gamut? This only removes it from the list — your files on disk
-                are not touched.
+                Gamut? This only removes it from the list — your files on disk are not touched.
               </p>
               <div className="mt-3 flex justify-end gap-2">
                 <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)}>
@@ -201,11 +196,7 @@ function RepoRow({
           onDragStart={(e) => e.stopPropagation()}
         >
           <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
-          <SyncControls
-            repoId={repo.id}
-            ahead={status?.ahead}
-            behind={status?.behind}
-          />
+          <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
         </div>
       </div>
     </div>
@@ -264,10 +255,7 @@ export function RepoSidebar() {
   }
 
   return (
-    <aside
-      className="flex h-full w-full flex-col"
-      style={{ background: "var(--color-sidebar)" }}
-    >
+    <aside className="flex h-full w-full flex-col" style={{ background: "var(--color-sidebar)" }}>
       <header className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
         <div className="group flex min-w-0 items-center gap-1">
           <span
@@ -296,11 +284,7 @@ export function RepoSidebar() {
             disabled={fetchGroup.isPending || fetchableIds.length === 0}
             onClick={() => fetchGroup.mutate(fetchableIds)}
           >
-            {fetchGroup.isPending ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <RefreshCw />
-            )}
+            {fetchGroup.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           </Button>
           {groupFolder && activeGroup && (
             <Button
@@ -308,14 +292,18 @@ export function RepoSidebar() {
               variant="ghost"
               className="size-7"
               title={`Open terminal at ${activeGroup.name} folder`}
-              onClick={() =>
-                addTerminalTab(activeGroup.id, groupFolder, activeGroup.name)
-              }
+              onClick={() => addTerminalTab(activeGroup.id, groupFolder, activeGroup.name)}
             >
               <SquareTerminal />
             </Button>
           )}
-          <Button size="icon" variant="ghost" className="size-7" title="Add repository" onClick={addRepo}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            title="Add repository"
+            onClick={addRepo}
+          >
             <Plus />
           </Button>
           <Button

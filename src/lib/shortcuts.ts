@@ -65,22 +65,118 @@ export interface ShortcutDef {
  * hardcoded `useKeyboardShortcuts` switch exactly, so defaults are unchanged.
  */
 export const SHORTCUTS: ShortcutDef[] = [
-  { id: "view.files", label: "Go to Files", category: "View", defaultBinding: { mod: true, code: "Digit1" }, whenTyping: true },
-  { id: "view.history", label: "Go to History", category: "View", defaultBinding: { mod: true, code: "Digit2" }, whenTyping: true },
-  { id: "view.review", label: "Go to Review", category: "View", defaultBinding: { mod: true, code: "Digit3" }, whenTyping: true },
-  { id: "view.pulls", label: "Go to Pull Requests", category: "View", defaultBinding: { mod: true, code: "Digit4" }, whenTyping: true },
-  { id: "toggleSidebar", label: "Toggle repo sidebar", category: "Layout", defaultBinding: { mod: true, code: "KeyB" }, whenTyping: true },
-  { id: "repoSearch", label: "Repo-wide search", category: "Layout", defaultBinding: { mod: true, shift: true, code: "KeyF" }, whenTyping: true },
-  { id: "toggleTheme", label: "Toggle light/dark theme", category: "Layout", defaultBinding: { mod: true, code: "KeyJ" }, whenTyping: true },
-  { id: "commandPalette", label: "Command palette", category: "Layout", defaultBinding: { mod: true, code: "KeyK" }, whenTyping: true },
-  { id: "toggleTerminal", label: "Toggle terminal", category: "Layout", defaultBinding: { mod: true, code: "Backquote" }, whenTyping: true },
-  { id: "maximizeTerminal", label: "Maximize / restore terminal", category: "Layout", defaultBinding: { mod: true, shift: true, code: "Backquote" }, whenTyping: true },
-  { id: "openSettings", label: "Open settings", category: "Layout", defaultBinding: { mod: true, code: "Comma" }, whenTyping: true },
-  { id: "push", label: "Push active repo", category: "Git", defaultBinding: { mod: true, shift: true, code: "KeyK" }, whenTyping: false },
-  { id: "pull", label: "Pull active repo", category: "Git", defaultBinding: { mod: true, shift: true, code: "KeyP" }, whenTyping: false },
-  { id: "fetchGroup", label: "Fetch all repos in group", category: "Git", defaultBinding: { mod: true, alt: true, code: "KeyF" }, whenTyping: false },
-  { id: "cycleRepoNext", label: "Next repo in group", category: "Repos", defaultBinding: { ctrl: true, code: "Tab" }, whenTyping: false },
-  { id: "cycleRepoPrev", label: "Previous repo in group", category: "Repos", defaultBinding: { ctrl: true, shift: true, code: "Tab" }, whenTyping: false },
+  {
+    id: "view.files",
+    label: "Go to Files",
+    category: "View",
+    defaultBinding: { mod: true, code: "Digit1" },
+    whenTyping: true,
+  },
+  {
+    id: "view.history",
+    label: "Go to History",
+    category: "View",
+    defaultBinding: { mod: true, code: "Digit2" },
+    whenTyping: true,
+  },
+  {
+    id: "view.review",
+    label: "Go to Review",
+    category: "View",
+    defaultBinding: { mod: true, code: "Digit3" },
+    whenTyping: true,
+  },
+  {
+    id: "view.pulls",
+    label: "Go to Pull Requests",
+    category: "View",
+    defaultBinding: { mod: true, code: "Digit4" },
+    whenTyping: true,
+  },
+  {
+    id: "toggleSidebar",
+    label: "Toggle repo sidebar",
+    category: "Layout",
+    defaultBinding: { mod: true, code: "KeyB" },
+    whenTyping: true,
+  },
+  {
+    id: "repoSearch",
+    label: "Repo-wide search",
+    category: "Layout",
+    defaultBinding: { mod: true, shift: true, code: "KeyF" },
+    whenTyping: true,
+  },
+  {
+    id: "toggleTheme",
+    label: "Toggle light/dark theme",
+    category: "Layout",
+    defaultBinding: { mod: true, code: "KeyJ" },
+    whenTyping: true,
+  },
+  {
+    id: "commandPalette",
+    label: "Command palette",
+    category: "Layout",
+    defaultBinding: { mod: true, code: "KeyK" },
+    whenTyping: true,
+  },
+  {
+    id: "toggleTerminal",
+    label: "Toggle terminal",
+    category: "Layout",
+    defaultBinding: { mod: true, code: "Backquote" },
+    whenTyping: true,
+  },
+  {
+    id: "maximizeTerminal",
+    label: "Maximize / restore terminal",
+    category: "Layout",
+    defaultBinding: { mod: true, shift: true, code: "Backquote" },
+    whenTyping: true,
+  },
+  {
+    id: "openSettings",
+    label: "Open settings",
+    category: "Layout",
+    defaultBinding: { mod: true, code: "Comma" },
+    whenTyping: true,
+  },
+  {
+    id: "push",
+    label: "Push active repo",
+    category: "Git",
+    defaultBinding: { mod: true, shift: true, code: "KeyK" },
+    whenTyping: false,
+  },
+  {
+    id: "pull",
+    label: "Pull active repo",
+    category: "Git",
+    defaultBinding: { mod: true, shift: true, code: "KeyP" },
+    whenTyping: false,
+  },
+  {
+    id: "fetchGroup",
+    label: "Fetch all repos in group",
+    category: "Git",
+    defaultBinding: { mod: true, alt: true, code: "KeyF" },
+    whenTyping: false,
+  },
+  {
+    id: "cycleRepoNext",
+    label: "Next repo in group",
+    category: "Repos",
+    defaultBinding: { ctrl: true, code: "Tab" },
+    whenTyping: false,
+  },
+  {
+    id: "cycleRepoPrev",
+    label: "Previous repo in group",
+    category: "Repos",
+    defaultBinding: { ctrl: true, shift: true, code: "Tab" },
+    whenTyping: false,
+  },
 ];
 
 export const SHORTCUT_BY_ID: Record<ShortcutId, ShortcutDef> = Object.fromEntries(
@@ -115,10 +211,7 @@ export function matchesBinding(e: KeyboardEvent, b: Binding, mac = isMac()): boo
   if (e.code !== b.code) return false;
   const r = resolved(b, mac);
   return (
-    e.metaKey === r.meta &&
-    e.ctrlKey === r.ctrl &&
-    e.altKey === r.alt &&
-    e.shiftKey === r.shift
+    e.metaKey === r.meta && e.ctrlKey === r.ctrl && e.altKey === r.alt && e.shiftKey === r.shift
   );
 }
 

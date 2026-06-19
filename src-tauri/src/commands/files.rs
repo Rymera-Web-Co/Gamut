@@ -430,3 +430,25 @@ pub fn reveal_in_file_manager(
     tauri_plugin_opener::reveal_item_in_dir(&target)
         .map_err(|e| AppError::Other(format!("could not reveal in file manager: {e}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_mime_maps_known_extensions() {
+        assert_eq!(image_mime("png"), "image/png");
+        assert_eq!(image_mime("jpg"), "image/jpeg");
+        assert_eq!(image_mime("jpeg"), "image/jpeg");
+        assert_eq!(image_mime("svg"), "image/svg+xml");
+        assert_eq!(image_mime("ico"), "image/x-icon");
+    }
+
+    #[test]
+    fn image_mime_falls_back_for_unknown_extensions() {
+        assert_eq!(image_mime("txt"), "application/octet-stream");
+        assert_eq!(image_mime(""), "application/octet-stream");
+        // The match is case-sensitive and expects already-lowercased input.
+        assert_eq!(image_mime("PNG"), "application/octet-stream");
+    }
+}

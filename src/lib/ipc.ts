@@ -1,8 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import {
-  open as openDialog,
-  save as saveDialog,
-} from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 /**
  * Typed wrappers over Tauri's `invoke`. Every backend command should be
@@ -469,8 +466,7 @@ export const ipc = {
   // settings (generic key/value, `pref.`-namespaced user preferences)
   getSettings: () => invoke<Record<string, string>>("get_settings"),
   getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
-  setSetting: (key: string, value: string) =>
-    invoke<void>("set_setting", { key, value }),
+  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
   deleteSetting: (key: string) => invoke<void>("delete_setting", { key }),
   resetSettings: () => invoke<void>("reset_settings"),
 
@@ -480,52 +476,35 @@ export const ipc = {
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
-  reorderRepos: (repoIds: number[]) =>
-    invoke<void>("reorder_repos", { repoIds }),
+  reorderRepos: (repoIds: number[]) => invoke<void>("reorder_repos", { repoIds }),
   discoverRepos: (root: string, maxDepth?: number) =>
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
-  listBranches: (repoId: number) =>
-    invoke<BranchInfo[]>("list_branches", { repoId }),
-  listGitTags: (repoId: number) =>
-    invoke<string[]>("list_git_tags", { repoId }),
+  listBranches: (repoId: number) => invoke<BranchInfo[]>("list_branches", { repoId }),
+  listGitTags: (repoId: number) => invoke<string[]>("list_git_tags", { repoId }),
   checkoutBranch: (repoId: number, name: string) =>
     invoke<void>("checkout_branch", { repoId, name }),
-  listStaleBranches: (repoId: number) =>
-    invoke<StaleBranch[]>("list_stale_branches", { repoId }),
+  listStaleBranches: (repoId: number) => invoke<StaleBranch[]>("list_stale_branches", { repoId }),
   deleteBranches: (repoId: number, names: string[]) =>
     invoke<DeleteResult[]>("delete_branches", { repoId, names }),
 
   // sync (network ops via git CLI)
-  gitSyncStatus: (repoId: number) =>
-    invoke<SyncStatus>("git_sync_status", { repoId }),
+  gitSyncStatus: (repoId: number) => invoke<SyncStatus>("git_sync_status", { repoId }),
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
-  gitFetchMany: (repoIds: number[]) =>
-    invoke<FetchResult[]>("git_fetch_many", { repoIds }),
+  gitFetchMany: (repoIds: number[]) => invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),
 
   // working tree (staging / commit / stash)
-  worktreeStatus: (repoId: number) =>
-    invoke<WorktreeStatus>("git_worktree_status", { repoId }),
-  worktreeFileDiff: (
-    repoId: number,
-    path: string,
-    staged: boolean,
-    oldPath?: string,
-  ) =>
+  worktreeStatus: (repoId: number) => invoke<WorktreeStatus>("git_worktree_status", { repoId }),
+  worktreeFileDiff: (repoId: number, path: string, staged: boolean, oldPath?: string) =>
     invoke<FileDiff>("worktree_file_diff", { repoId, path, staged, oldPath }),
-  gitStage: (repoId: number, paths: string[]) =>
-    invoke<void>("git_stage", { repoId, paths }),
-  gitUnstage: (repoId: number, paths: string[]) =>
-    invoke<void>("git_unstage", { repoId, paths }),
-  gitDiscard: (repoId: number, paths: string[]) =>
-    invoke<void>("git_discard", { repoId, paths }),
-  gitCommit: (repoId: number, message: string) =>
-    invoke<string>("git_commit", { repoId, message }),
-  gitStashList: (repoId: number) =>
-    invoke<StashEntry[]>("git_stash_list", { repoId }),
+  gitStage: (repoId: number, paths: string[]) => invoke<void>("git_stage", { repoId, paths }),
+  gitUnstage: (repoId: number, paths: string[]) => invoke<void>("git_unstage", { repoId, paths }),
+  gitDiscard: (repoId: number, paths: string[]) => invoke<void>("git_discard", { repoId, paths }),
+  gitCommit: (repoId: number, message: string) => invoke<string>("git_commit", { repoId, message }),
+  gitStashList: (repoId: number) => invoke<StashEntry[]>("git_stash_list", { repoId }),
   gitStashPush: (repoId: number, message: string | null, includeUntracked: boolean) =>
     invoke<string>("git_stash_push", { repoId, message, includeUntracked }),
   gitStashPop: (repoId: number, index: number) =>
@@ -537,8 +516,7 @@ export const ipc = {
 
   // tags
   listTags: () => invoke<Tag[]>("list_tags"),
-  createTag: (name: string, color: string) =>
-    invoke<Tag>("create_tag", { name, color }),
+  createTag: (name: string, color: string) => invoke<Tag>("create_tag", { name, color }),
   deleteTag: (id: number) => invoke<void>("delete_tag", { id }),
   setRepoTags: (repoId: number, tagIds: number[]) =>
     invoke<void>("set_repo_tags", { repoId, tagIds }),
@@ -554,16 +532,13 @@ export const ipc = {
   updateGroup: (id: number, name: string | null, icon: string | null) =>
     invoke<void>("update_group", { id, name, icon }),
   /** Scan a folder-bound group's folder now; returns the count of new repos. */
-  syncGroupFolder: (groupId: number) =>
-    invoke<number>("sync_group_folder", { groupId }),
+  syncGroupFolder: (groupId: number) => invoke<number>("sync_group_folder", { groupId }),
   /** Bind a currently-unbound group to a folder (first bind; immutable after). */
   bindGroupFolder: (id: number, folderPath: string) =>
     invoke<void>("bind_group_folder", { id, folderPath }),
   /** Detach a group from its bound folder (keeps existing members). */
-  unbindGroupFolder: (id: number) =>
-    invoke<void>("unbind_group_folder", { id }),
-  reorderGroups: (groupIds: number[]) =>
-    invoke<void>("reorder_groups", { groupIds }),
+  unbindGroupFolder: (id: number) => invoke<void>("unbind_group_folder", { id }),
+  reorderGroups: (groupIds: number[]) => invoke<void>("reorder_groups", { groupIds }),
   deleteGroup: (id: number) => invoke<void>("delete_group", { id }),
   setRepoGroups: (repoId: number, groupIds: number[]) =>
     invoke<void>("set_repo_groups", { repoId, groupIds }),
@@ -581,8 +556,7 @@ export const ipc = {
     invoke<BlameHunk[]>("blame", { repoId, sha, path }),
 
   // working-tree files (browse / edit)
-  listDir: (repoId: number, relPath: string) =>
-    invoke<DirEntry[]>("list_dir", { repoId, relPath }),
+  listDir: (repoId: number, relPath: string) => invoke<DirEntry[]>("list_dir", { repoId, relPath }),
   readFile: (repoId: number, relPath: string) =>
     invoke<FileContent>("read_file", { repoId, relPath }),
   readImageFile: (repoId: number, relPath: string) =>
@@ -590,14 +564,11 @@ export const ipc = {
   writeFile: (repoId: number, relPath: string, contents: string) =>
     invoke<void>("write_file", { repoId, relPath, contents }),
   /** Create an empty file; rejects if the path already exists. */
-  createFile: (repoId: number, relPath: string) =>
-    invoke<void>("create_file", { repoId, relPath }),
+  createFile: (repoId: number, relPath: string) => invoke<void>("create_file", { repoId, relPath }),
   /** Create a directory; rejects if the path already exists. */
-  createDir: (repoId: number, relPath: string) =>
-    invoke<void>("create_dir", { repoId, relPath }),
+  createDir: (repoId: number, relPath: string) => invoke<void>("create_dir", { repoId, relPath }),
   /** Delete a file or directory (directories are removed recursively). */
-  deletePath: (repoId: number, relPath: string) =>
-    invoke<void>("delete_path", { repoId, relPath }),
+  deletePath: (repoId: number, relPath: string) => invoke<void>("delete_path", { repoId, relPath }),
   /** Resolve a repo-relative tree path to its absolute filesystem path. */
   resolvePath: (repoId: number, relPath: string) =>
     invoke<string>("resolve_path", { repoId, relPath }),
@@ -639,8 +610,7 @@ export const ipc = {
     }),
 
   // github
-  githubSetToken: (token: string) =>
-    invoke<AuthStatus>("github_set_token", { token }),
+  githubSetToken: (token: string) => invoke<AuthStatus>("github_set_token", { token }),
   githubAuthStatus: () => invoke<AuthStatus>("github_auth_status"),
   githubLogout: () => invoke<void>("github_logout"),
   /** Verify the stored token against the configured API host (GHES) (issue #34). */
@@ -653,20 +623,17 @@ export const ipc = {
       interval,
       expiresIn,
     }),
-  githubListPrs: (repoId: number) =>
-    invoke<PrSummary[]>("github_list_prs", { repoId }),
+  githubListPrs: (repoId: number) => invoke<PrSummary[]>("github_list_prs", { repoId }),
   /**
    * Resolve a GitHub PR web URL to a tracked repo + PR number, or `null` when the
    * URL isn't a PR or its repo isn't tracked. Used to open PR links from the
    * integrated terminal in-app rather than the browser (issue #51).
    */
-  githubResolvePrUrl: (url: string) =>
-    invoke<PrRef | null>("github_resolve_pr_url", { url }),
+  githubResolvePrUrl: (url: string) => invoke<PrRef | null>("github_resolve_pr_url", { url }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
   /** Fetch a GitHub-hosted attachment image as a `data:` URL (issue #36). */
-  githubFetchImage: (url: string) =>
-    invoke<string>("github_fetch_image", { url }),
+  githubFetchImage: (url: string) => invoke<string>("github_fetch_image", { url }),
   githubPrThread: (repoId: number, number: number) =>
     invoke<PrThread>("github_pr_thread", { repoId, number }),
   githubPrTimeline: (repoId: number, number: number) =>
@@ -687,12 +654,7 @@ export const ipc = {
       commitId: commitId ?? null,
       comments: comments ?? null,
     }),
-  githubPrComment: (
-    repoId: number,
-    number: number,
-    commitId: string,
-    comment: DraftComment,
-  ) =>
+  githubPrComment: (repoId: number, number: number, commitId: string, comment: DraftComment) =>
     invoke<void>("github_pr_comment", { repoId, number, commitId, comment }),
   githubUpdateBody: (
     repoId: number,
@@ -700,18 +662,11 @@ export const ipc = {
     target: BodyTarget,
     id: number | null,
     body: string,
-  ) =>
-    invoke<void>("github_update_body", { repoId, number, target, id, body }),
-  githubMentionables: (repoId: number) =>
-    invoke<string[]>("github_mentionables", { repoId }),
+  ) => invoke<void>("github_update_body", { repoId, number, target, id, body }),
+  githubMentionables: (repoId: number) => invoke<string[]>("github_mentionables", { repoId }),
   githubReviewThreads: (repoId: number, number: number) =>
     invoke<ReviewThread[]>("github_review_threads", { repoId, number }),
-  githubReplyReviewComment: (
-    repoId: number,
-    number: number,
-    commentId: number,
-    body: string,
-  ) =>
+  githubReplyReviewComment: (repoId: number, number: number, commentId: number, body: string) =>
     invoke<void>("github_reply_review_comment", {
       repoId,
       number,
@@ -752,24 +707,19 @@ export const ipc = {
     invoke<void>("terminal_write", { sessionId, data: Array.from(data) }),
   terminalResize: (sessionId: string, cols: number, rows: number) =>
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
-  terminalKill: (sessionId: string) =>
-    invoke<void>("terminal_kill", { sessionId }),
+  terminalKill: (sessionId: string) => invoke<void>("terminal_kill", { sessionId }),
   /** Read a custom notification sound file's raw bytes by path (#28). The
    * backend rejects non-audio extensions, so this isn't a general file read. */
   readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),
 
   // diagnostics (#90)
   diagnostics: () => invoke<Diagnostics>("diagnostics_snapshot"),
-  diagnosticsWrite: (path: string) =>
-    invoke<void>("diagnostics_write", { path }),
-  recordStall: (gapMs: number) =>
-    invoke<void>("diagnostics_record_stall", { gapMs }),
+  diagnosticsWrite: (path: string) => invoke<void>("diagnostics_write", { path }),
+  recordStall: (gapMs: number) => invoke<void>("diagnostics_record_stall", { gapMs }),
 };
 
 /** Open the native save dialog. Returns the chosen path, or null if cancelled. */
-export async function pickSavePath(
-  defaultName: string,
-): Promise<string | null> {
+export async function pickSavePath(defaultName: string): Promise<string | null> {
   const result = await saveDialog({ defaultPath: defaultName });
   return typeof result === "string" ? result : null;
 }

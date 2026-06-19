@@ -10,9 +10,7 @@ import type { Group, Repo } from "@/lib/ipc";
  */
 export function repoInGroup(repo: Repo, group: Group | undefined): boolean {
   if (!group) return false;
-  return group.is_default
-    ? repo.group_ids.length === 0
-    : repo.group_ids.includes(group.id);
+  return group.is_default ? repo.group_ids.length === 0 : repo.group_ids.includes(group.id);
 }
 
 /** The repos shown for a group, in their original order. */

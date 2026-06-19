@@ -12,12 +12,7 @@ import {
 import { ipc, pickDirectory, type DiscoveredRepo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
-import {
-  useBindGroupFolder,
-  useGroups,
-  useRegisterRepo,
-  useSetRepoGroups,
-} from "./api";
+import { useBindGroupFolder, useGroups, useRegisterRepo, useSetRepoGroups } from "./api";
 
 export function DiscoverDialog({
   open,
@@ -44,8 +39,7 @@ export function DiscoverDialog({
   // bindable too — it just auto-registers repos as ungrouped rather than as
   // explicit members.
   const canSync =
-    activeGroup != null &&
-    !(activeGroup.folder_path && activeGroup.folder_path !== "");
+    activeGroup != null && !(activeGroup.folder_path && activeGroup.folder_path !== "");
 
   function reset() {
     setRoot(null);
@@ -64,9 +58,7 @@ export function DiscoverDialog({
       const found = await ipc.discoverRepos(dir);
       setCandidates(found);
       // Pre-select everything not already registered.
-      setSelected(
-        new Set(found.filter((c) => !c.already_registered).map((c) => c.path)),
-      );
+      setSelected(new Set(found.filter((c) => !c.already_registered).map((c) => c.path)));
     } finally {
       setScanning(false);
     }
@@ -75,15 +67,15 @@ export function DiscoverDialog({
   function toggle(path: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }
 
   async function addSelected() {
     setAdding(true);
-    const assignToGroup =
-      activeGroupId != null && activeGroup != null && !activeGroup.is_default;
+    const assignToGroup = activeGroupId != null && activeGroup != null && !activeGroup.is_default;
     try {
       if (keepSynced && canSync && root && activeGroupId != null) {
         // Bind the active group to this folder; its initial scan add-adds every
@@ -170,9 +162,7 @@ export function DiscoverDialog({
                       </span>
                     )}
                     {c.already_registered && (
-                      <span className="text-xs text-[var(--color-muted-foreground)]">
-                        · added
-                      </span>
+                      <span className="text-xs text-[var(--color-muted-foreground)]">· added</span>
                     )}
                   </div>
                   <div className="truncate text-xs text-[var(--color-muted-foreground)]">

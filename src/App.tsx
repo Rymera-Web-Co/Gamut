@@ -121,17 +121,8 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           {terminalMaximized && <TopTabs />}
           <PanelGroup direction="vertical" className="min-h-0 flex-1">
-            <Panel
-              id="content"
-              order={1}
-              minSize={terminalMaximized ? 0 : 20}
-              className="min-h-0"
-            >
-              <PanelGroup
-                direction="horizontal"
-                autoSaveId="gamut.layout.main"
-                className="min-w-0"
-              >
+            <Panel id="content" order={1} minSize={terminalMaximized ? 0 : 20} className="min-h-0">
+              <PanelGroup direction="horizontal" autoSaveId="gamut.layout.main" className="min-w-0">
                 {!repoSidebarHidden && (
                   <Panel
                     id="repos"

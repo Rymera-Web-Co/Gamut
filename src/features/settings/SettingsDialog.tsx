@@ -23,12 +23,7 @@ import {
 import { isTauri } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -52,11 +47,7 @@ import { useGithubAuth, useLogout } from "@/features/review/api";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useUpdater } from "@/lib/updater";
 import { useUiStore } from "@/store/ui";
-import {
-  BUILTIN_SOUNDS,
-  ensureDesktopPermission,
-  playSound,
-} from "@/features/terminal/notify";
+import { BUILTIN_SOUNDS, ensureDesktopPermission, playSound } from "@/features/terminal/notify";
 
 const CATEGORIES = [
   { id: "appearance", label: "Appearance", icon: Palette },
@@ -129,24 +120,12 @@ export function SettingsDialog() {
 
 // ---- Layout primitives ----------------------------------------------------
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-}) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-6 py-3">
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
-        {hint && (
-          <div className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-            {hint}
-          </div>
-        )}
+        {hint && <div className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{hint}</div>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -154,9 +133,7 @@ function Field({
 }
 
 function PanelTitle({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-1 text-base font-semibold">{children}</h2>
-  );
+  return <h2 className="mb-1 text-base font-semibold">{children}</h2>;
 }
 
 function Divider() {
@@ -243,11 +220,7 @@ function NumberField({
         onChange={(e) => commit(e.target.value)}
         onBlur={() => setText(String(value))}
       />
-      {suffix && (
-        <span className="text-xs text-[var(--color-muted-foreground)]">
-          {suffix}
-        </span>
-      )}
+      {suffix && <span className="text-xs text-[var(--color-muted-foreground)]">{suffix}</span>}
     </div>
   );
 }
@@ -273,13 +246,7 @@ function TextField({
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
   return (
     <button
       role="switch"
@@ -368,10 +335,7 @@ function AppearancePanel() {
           suffix="px"
         />
       </Field>
-      <Field
-        label="Editor font family"
-        hint="Leave blank for the editor default."
-      >
+      <Field label="Editor font family" hint="Leave blank for the editor default.">
         <TextField
           value={editorFontFamily}
           onChange={setEditorFontFamily}
@@ -411,10 +375,7 @@ function DiffPanel() {
         />
       </Field>
       <Divider />
-      <Field
-        label="Default review mode"
-        hint="Which view a repository's Review tab opens in."
-      >
+      <Field label="Default review mode" hint="Which view a repository's Review tab opens in.">
         <Segmented
           value={reviewMode}
           onChange={setReviewMode}
@@ -436,9 +397,7 @@ function GitPanel() {
   const [watchDebounceMs, setWatchDebounce] = useSetting("watchDebounceMs");
   const [mergeStrategy, setMergeStrategy] = useSetting("mergeStrategy");
   const [autoFetch, setAutoFetch] = useSetting("autoFetch");
-  const [autoFetchInterval, setAutoFetchInterval] = useSetting(
-    "autoFetchIntervalMinutes",
-  );
+  const [autoFetchInterval, setAutoFetchInterval] = useSetting("autoFetchIntervalMinutes");
 
   return (
     <div>
@@ -449,33 +408,18 @@ function GitPanel() {
       >
         <TextField value={baseBranchPrecedence} onChange={setBase} wide />
       </Field>
-      <Field
-        label="Protected branches"
-        hint="Never reported or deleted by branch cleanup."
-      >
+      <Field label="Protected branches" hint="Never reported or deleted by branch cleanup.">
         <TextField value={protectedBranches} onChange={setProtected} wide />
       </Field>
       <Divider />
       <Field label="Folder discovery depth">
-        <NumberField
-          value={scanDepth}
-          onChange={setScanDepth}
-          min={1}
-          max={20}
-          suffix="levels"
-        />
+        <NumberField value={scanDepth} onChange={setScanDepth} min={1} max={20} suffix="levels" />
       </Field>
-      <Field
-        label="Discovery prune list"
-        hint="Directory names skipped while scanning for repos."
-      >
+      <Field label="Discovery prune list" hint="Directory names skipped while scanning for repos.">
         <TextField value={pruneDirs} onChange={setPruneDirs} wide />
       </Field>
       <Divider />
-      <Field
-        label="File watcher debounce"
-        hint="Applied at startup — restart to take effect."
-      >
+      <Field label="File watcher debounce" hint="Applied at startup — restart to take effect.">
         <NumberField
           value={watchDebounceMs}
           onChange={setWatchDebounce}
@@ -528,26 +472,12 @@ function TerminalPanel() {
   return (
     <div>
       <PanelTitle>Terminal</PanelTitle>
-      <Field
-        label="Shell override"
-        hint="Blank uses your login shell. Applies to new terminals."
-      >
-        <TextField
-          value={terminalShell}
-          onChange={setShell}
-          placeholder="/bin/zsh"
-          wide
-        />
+      <Field label="Shell override" hint="Blank uses your login shell. Applies to new terminals.">
+        <TextField value={terminalShell} onChange={setShell} placeholder="/bin/zsh" wide />
       </Field>
       <Divider />
       <Field label="Font size">
-        <NumberField
-          value={terminalFontSize}
-          onChange={setFontSize}
-          min={8}
-          max={32}
-          suffix="px"
-        />
+        <NumberField value={terminalFontSize} onChange={setFontSize} min={8} max={32} suffix="px" />
       </Field>
       <Field label="Font family" hint="Blank uses the built-in monospace stack.">
         <TextField
@@ -601,9 +531,9 @@ function GitHubPanel() {
     <div>
       <PanelTitle>GitHub</PanelTitle>
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
-        Point Gamut at a GitHub Enterprise Server by overriding the API and
-        GraphQL endpoints. Leave blank to use github.com. Sign in from the GitHub
-        button in the sidebar; on Enterprise, use a personal-access token.
+        Point Gamut at a GitHub Enterprise Server by overriding the API and GraphQL endpoints. Leave
+        blank to use github.com. Sign in from the GitHub button in the sidebar; on Enterprise, use a
+        personal-access token.
       </p>
 
       <Field label="Account">
@@ -612,27 +542,17 @@ function GitHubPanel() {
             <span className="text-sm">
               Signed in as <span className="font-medium">{auth.data?.login}</span>
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={() => logout.mutate()}
-            >
+            <Button variant="outline" size="sm" className="h-8" onClick={() => logout.mutate()}>
               <LogOut className="size-3.5" />
               Sign out
             </Button>
           </div>
         ) : (
-          <span className="text-sm text-[var(--color-muted-foreground)]">
-            Not connected
-          </span>
+          <span className="text-sm text-[var(--color-muted-foreground)]">Not connected</span>
         )}
       </Field>
       <Divider />
-      <Field
-        label="API base URL"
-        hint="REST endpoint. e.g. https://ghe.example.com/api/v3"
-      >
+      <Field label="API base URL" hint="REST endpoint. e.g. https://ghe.example.com/api/v3">
         <TextField
           value={apiBase}
           onChange={setApiBase}
@@ -640,10 +560,7 @@ function GitHubPanel() {
           wide
         />
       </Field>
-      <Field
-        label="GraphQL endpoint"
-        hint="e.g. https://ghe.example.com/api/graphql"
-      >
+      <Field label="GraphQL endpoint" hint="e.g. https://ghe.example.com/api/graphql">
         <TextField
           value={graphqlBase}
           onChange={setGraphqlBase}
@@ -651,10 +568,7 @@ function GitHubPanel() {
           wide
         />
       </Field>
-      <Field
-        label="Verify"
-        hint="Check the stored token reaches the configured host."
-      >
+      <Field label="Verify" hint="Check the stored token reaches the configured host.">
         <Button
           variant="outline"
           size="sm"
@@ -667,17 +581,8 @@ function GitHubPanel() {
         </Button>
       </Field>
       <Divider />
-      <Field
-        label="PR list page size"
-        hint="Open pull requests fetched per repository (1–100)."
-      >
-        <NumberField
-          value={prPageSize}
-          onChange={setPrPageSize}
-          min={1}
-          max={100}
-          suffix="PRs"
-        />
+      <Field label="PR list page size" hint="Open pull requests fetched per repository (1–100).">
+        <NumberField value={prPageSize} onChange={setPrPageSize} min={1} max={100} suffix="PRs" />
       </Field>
     </div>
   );
@@ -723,7 +628,9 @@ function BindingButton({
         capturing
           ? "border-[var(--color-primary)] text-[var(--color-primary)]"
           : "hover:bg-[var(--color-accent)]",
-        conflict && !capturing && "border-[var(--color-destructive)] text-[var(--color-destructive)]",
+        conflict &&
+          !capturing &&
+          "border-[var(--color-destructive)] text-[var(--color-destructive)]",
       )}
       title={capturing ? "Press a key combination, or Esc to cancel" : "Click to rebind"}
     >
@@ -759,8 +666,8 @@ function KeyboardPanel() {
     <div>
       <PanelTitle>Keyboard</PanelTitle>
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
-        Click a shortcut to rebind it; press the new combination, or Esc to
-        cancel. Conflicting bindings are flagged in red.
+        Click a shortcut to rebind it; press the new combination, or Esc to cancel. Conflicting
+        bindings are flagged in red.
         {mac ? " ⌘ is the primary modifier." : " Ctrl is the primary modifier."}
       </p>
       <div className="mb-2 flex justify-end">
@@ -860,11 +767,10 @@ function NotificationsPanel() {
     <div>
       <PanelTitle>Notifications</PanelTitle>
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
-        Alerts for terminal events — a process exiting or a bell (e.g. Claude
-        Code finishing a task or asking for input). These fire for background
-        panes and whenever the Gamut window is unfocused; the focused pane stays
-        silent while you're looking at it unless you enable "Notify even when
-        focused" below.
+        Alerts for terminal events — a process exiting or a bell (e.g. Claude Code finishing a task
+        or asking for input). These fire for background panes and whenever the Gamut window is
+        unfocused; the focused pane stays silent while you're looking at it unless you enable
+        "Notify even when focused" below.
       </p>
       <Field
         label="Play sound on terminal events"
@@ -896,12 +802,7 @@ function NotificationsPanel() {
               { value: "custom" as TerminalSound, label: "Custom…" },
             ]}
           />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={() => playSound(soundName)}
-          >
+          <Button variant="outline" size="sm" className="h-8" onClick={() => playSound(soundName)}>
             <Play className="size-3.5" />
             Test
           </Button>
@@ -910,11 +811,7 @@ function NotificationsPanel() {
       {soundName === "custom" && (
         <Field
           label="Custom sound file"
-          hint={
-            customPath
-              ? customName
-              : "Pick a .wav, .mp3, .ogg, .m4a, .aac or .flac file."
-          }
+          hint={customPath ? customName : "Pick a .wav, .mp3, .ogg, .m4a, .aac or .flac file."}
         >
           <Button variant="outline" size="sm" className="h-8" onClick={chooseCustom}>
             <FolderOpen className="size-3.5" />
@@ -975,9 +872,8 @@ function DiagnosticsPanel() {
     <div>
       <PanelTitle>Diagnostics</PanelTitle>
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
-        Timing for the heavy git operations, plus a snapshot of the current
-        setup. If the app freezes or feels slow, copy or save this and share it
-        so we can pinpoint what's blocking.
+        Timing for the heavy git operations, plus a snapshot of the current setup. If the app
+        freezes or feels slow, copy or save this and share it so we can pinpoint what's blocking.
       </p>
 
       <div className="mb-3 flex gap-2">
@@ -1004,10 +900,7 @@ function DiagnosticsPanel() {
             <DiagRow label="Groups" value={String(data.group_count)} />
             <DiagRow label="Watched paths" value={String(data.watched_path_count)} />
             {stalls && (
-              <DiagRow
-                label="UI stalls"
-                value={`${stalls.count} (max ${stalls.max_ms} ms)`}
-              />
+              <DiagRow label="UI stalls" value={`${stalls.count} (max ${stalls.max_ms} ms)`} />
             )}
           </div>
 
@@ -1102,18 +995,14 @@ function AboutPanel() {
     // `pref.updateChannel` from the DB, so the value must be committed before
     // we re-check, not just queued via the store's fire-and-forget write.
     useSettings.getState().set("updateChannel", value);
-    void ipc
-      .setSetting("pref.updateChannel", value)
-      .then(() => useUpdater.getState().check());
+    void ipc.setSetting("pref.updateChannel", value).then(() => useUpdater.getState().check());
   };
 
   return (
     <div>
       <PanelTitle>About</PanelTitle>
       <Field label="Version">
-        <span className="text-sm text-[var(--color-muted-foreground)]">
-          {version ?? "—"}
-        </span>
+        <span className="text-sm text-[var(--color-muted-foreground)]">{version ?? "—"}</span>
       </Field>
       <Divider />
       <Field
@@ -1131,9 +1020,9 @@ function AboutPanel() {
       </Field>
       {updateChannel === "nightly" && (
         <div className="mt-1 text-xs text-[var(--color-destructive)]">
-          Nightly builds are unstable and ship the latest unreviewed code. On
-          macOS they're unsigned, so Gatekeeper will warn before you can open
-          them. Opt in only if you want the bleeding edge.
+          Nightly builds are unstable and ship the latest unreviewed code. On macOS they're
+          unsigned, so Gatekeeper will warn before you can open them. Opt in only if you want the
+          bleeding edge.
         </div>
       )}
       <Divider />
@@ -1163,8 +1052,7 @@ function AboutPanel() {
       </Field>
       {(downloading || status === "uptodate" || status === "error") && (
         <div className="mt-1 text-xs text-[var(--color-muted-foreground)]">
-          {downloading &&
-            (pct == null ? "Downloading update…" : `Downloading update… ${pct}%`)}
+          {downloading && (pct == null ? "Downloading update…" : `Downloading update… ${pct}%`)}
           {status === "uptodate" && "You're on the latest version."}
           {status === "error" && (
             <span className="text-[var(--color-destructive)]">

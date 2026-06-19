@@ -12,11 +12,7 @@ import { clearDrag, getDrag, moveAdjacent, setDrag } from "@/lib/dnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind } from "@/store/ui";
-import {
-  ActivityDot,
-  groupActivityKind,
-  tabActivityKind,
-} from "@/features/terminal/activity";
+import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
 import { useGroups, useReorderGroups, useSetRepoGroups } from "./api";
 import { GroupDialog } from "./GroupDialog";
@@ -144,9 +140,12 @@ function TerminalMenu({ groups }: { groups: Group[] }) {
   const openSource = useRef<"hover" | "keyboard">("hover");
   const closeTimer = useRef<number | null>(null);
 
-  useEffect(() => () => {
-    if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
+    },
+    [],
+  );
 
   function cancelClose() {
     if (closeTimer.current != null) {
@@ -174,9 +173,7 @@ function TerminalMenu({ groups }: { groups: Group[] }) {
   // The active group's activity surfaces on the toggle when the panel is hidden
   // (its tabs have no other way to show it while collapsed).
   const toggleActivity =
-    activeGroupId != null
-      ? groupActivityKind(terminals[activeGroupId], termActivity)
-      : undefined;
+    activeGroupId != null ? groupActivityKind(terminals[activeGroupId], termActivity) : undefined;
 
   function jump(groupId: number, tabId: string) {
     setActiveGroup(groupId);
@@ -242,8 +239,7 @@ function TerminalMenu({ groups }: { groups: Group[] }) {
               </div>
               {gt.tabs.map((tab) => {
                 const activity = tabActivityKind(tab, termActivity);
-                const current =
-                  group.id === activeGroupId && gt.activeTabId === tab.id;
+                const current = group.id === activeGroupId && gt.activeTabId === tab.id;
                 return (
                   <button
                     key={tab.id}
@@ -284,9 +280,7 @@ export function GroupRail() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
-  const [menu, setMenu] = useState<{ at: ContextMenuPosition; group: Group } | null>(
-    null,
-  );
+  const [menu, setMenu] = useState<{ at: ContextMenuPosition; group: Group } | null>(null);
 
   const list = groups.data ?? [];
   const defaultGroup = list.find((g) => g.is_default) ?? list[0];
@@ -305,11 +299,7 @@ export function GroupRail() {
     });
   }
 
-  function handleGroupReorder(
-    srcId: number,
-    targetId: number,
-    position: "before" | "after",
-  ) {
+  function handleGroupReorder(srcId: number, targetId: number, position: "before" | "after") {
     const order = moveAdjacent(
       list.map((g) => g.id),
       srcId,
@@ -333,9 +323,7 @@ export function GroupRail() {
           // The active group surfaces its activity in-panel (tabs/splits) and on
           // the terminal toggle when collapsed, so only badge other groups here.
           activity={
-            g.id === activeGroupId
-              ? undefined
-              : groupActivityKind(terminals[g.id], termActivity)
+            g.id === activeGroupId ? undefined : groupActivityKind(terminals[g.id], termActivity)
           }
           onSelect={() => setActiveGroup(g.id)}
           onRepoDrop={(repoId) => handleRepoDrop(g, repoId)}
@@ -387,11 +375,7 @@ export function GroupRail() {
               <ContextMenuItem
                 onClick={() => {
                   setActiveGroup(menu.group.id);
-                  addTerminalTab(
-                    menu.group.id,
-                    menu.group.folder_path ?? "",
-                    menu.group.name,
-                  );
+                  addTerminalTab(menu.group.id, menu.group.folder_path ?? "", menu.group.name);
                   setMenu(null);
                 }}
               >

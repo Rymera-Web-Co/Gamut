@@ -1,17 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Folder,
-  FolderGit2,
-  SquareTerminal,
-  type LucideIcon,
-} from "lucide-react";
+import { Folder, FolderGit2, SquareTerminal, type LucideIcon } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGroups, useRepos } from "@/features/repos/api";
 import { repoInGroup } from "@/lib/groupRepos";
@@ -259,9 +249,7 @@ export function CommandPalette() {
                     onMouseMove={() => setSelected(i)}
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
-                      isActive
-                        ? "bg-[var(--color-accent)]"
-                        : "hover:bg-[var(--color-accent)]",
+                      isActive ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
                     )}
                   >
                     <Icon className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />

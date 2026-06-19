@@ -138,12 +138,11 @@ export function MarkdownEditor({
   function runEdit(edit: Edit) {
     const el = ref.current;
     if (!el) return;
-    const { value: next, selStart, selEnd } = applyEdit(
-      value,
-      el.selectionStart,
-      el.selectionEnd,
-      edit,
-    );
+    const {
+      value: next,
+      selStart,
+      selEnd,
+    } = applyEdit(value, el.selectionStart, el.selectionEnd, edit);
     pendingSel.current = [selStart, selEnd];
     onChange(next);
   }
@@ -158,10 +157,7 @@ export function MarkdownEditor({
     if (!mention) return;
     const insert = `@${login} `;
     const next = value.slice(0, mention.start) + insert + value.slice(mention.end);
-    pendingSel.current = [
-      mention.start + insert.length,
-      mention.start + insert.length,
-    ];
+    pendingSel.current = [mention.start + insert.length, mention.start + insert.length];
     onChange(next);
     setMention(null);
   }
@@ -233,12 +229,7 @@ export function MarkdownEditor({
             onKeyDown={handleKeyDown}
             onBlur={() => setMention(null)}
             onSelect={(e) =>
-              setMention(
-                activeMention(
-                  e.currentTarget.value,
-                  e.currentTarget.selectionStart,
-                ),
-              )
+              setMention(activeMention(e.currentTarget.value, e.currentTarget.selectionStart))
             }
             placeholder={placeholder}
             className={cn(
@@ -260,9 +251,7 @@ export function MarkdownEditor({
                     onMouseEnter={() => setHi(i)}
                     className={cn(
                       "flex w-full items-center gap-1 px-2 py-1 text-left text-sm",
-                      i === hi
-                        ? "bg-[var(--color-accent)]"
-                        : "hover:bg-[var(--color-accent)]",
+                      i === hi ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
                     )}
                   >
                     <span className="text-[var(--color-muted-foreground)]">@</span>
@@ -278,9 +267,7 @@ export function MarkdownEditor({
           {value.trim() ? (
             <Markdown>{value}</Markdown>
           ) : (
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              Nothing to preview.
-            </p>
+            <p className="text-sm text-[var(--color-muted-foreground)]">Nothing to preview.</p>
           )}
         </div>
       )}
