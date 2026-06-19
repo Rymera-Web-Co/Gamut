@@ -3,9 +3,20 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
+use tokio::sync::Semaphore;
 
 use crate::commands::terminal::Session;
 use crate::watch::RepoWatcher;
+
+/// Maximum number of git working-tree status/diff scans allowed to run at once.
+///
+/// These scans walk the working tree and, on macOS, repeatedly open and close
+/// libiconv converters for Unicode path normalization — all contending a single
+/// process-global lock. Letting dozens run concurrently (one per repo when a
+/// `repos-changed` burst refreshes every repo's status at once) produced a
+/// libiconv lock convoy that hung the app for minutes (issue #89). A small
+/// ceiling keeps status refreshes from stampeding while still overlapping a few.
+pub const GIT_STATUS_CONCURRENCY: usize = 4;
 
 /// Shared application state, managed by Tauri and injected into commands via `State`.
 pub struct AppState {
@@ -25,4 +36,6 @@ pub struct AppState {
     /// (`repo:<id>` / `group:<id>`). Persist across tab switches so background
     /// processes keep running; see `commands::terminal`.
     pub terminals: Mutex<HashMap<String, Session>>,
+    /// Limits concurrent git status/diff scans; see [`GIT_STATUS_CONCURRENCY`].
+    pub git_gate: Semaphore,
 }

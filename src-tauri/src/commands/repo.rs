@@ -333,6 +333,15 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
         r
     };
 
+    // Bound concurrency and get the blocking git2 work off the async runtime's
+    // worker threads. This whole scan holds a single git-status permit, so it
+    // can't stampede alongside per-repo worktree-status calls and trigger the
+    // libiconv lock convoy (issue #89).
+    crate::commands::run_git_gated(&state, move || compute_repo_statuses(rows)).await
+}
+
+/// Blocking core of [`repo_statuses`]: compute each repo's status from its path.
+fn compute_repo_statuses(rows: Vec<(i64, String)>) -> AppResult<Vec<RepoStatus>> {
     let mut out = Vec::with_capacity(rows.len());
     for (id, path) in rows {
         let mut status = RepoStatus {
