@@ -157,7 +157,7 @@ fn op_stats(log: &VecDeque<OpTiming>) -> Vec<OpStat> {
         })
         .collect();
     // Slowest (by max) first — that's what a hang investigation wants.
-    stats.sort_by(|a, b| b.max_ms.cmp(&a.max_ms));
+    stats.sort_by_key(|s| std::cmp::Reverse(s.max_ms));
     stats
 }
 
