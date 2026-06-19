@@ -127,6 +127,7 @@ pub fn run() {
             commands::github::github_set_token,
             commands::github::github_auth_status,
             commands::github::github_logout,
+            commands::github::github_check,
             commands::github::github_oauth_available,
             commands::github::github_device_start,
             commands::github::github_device_poll,

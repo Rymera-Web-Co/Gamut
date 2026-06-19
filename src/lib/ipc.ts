@@ -643,6 +643,8 @@ export const ipc = {
     invoke<AuthStatus>("github_set_token", { token }),
   githubAuthStatus: () => invoke<AuthStatus>("github_auth_status"),
   githubLogout: () => invoke<void>("github_logout"),
+  /** Verify the stored token against the configured API host (GHES) (issue #34). */
+  githubCheck: () => invoke<AuthStatus>("github_check"),
   githubOauthAvailable: () => invoke<boolean>("github_oauth_available"),
   githubDeviceStart: () => invoke<DeviceCode>("github_device_start"),
   githubDevicePoll: (deviceCode: string, interval: number, expiresIn: number) =>

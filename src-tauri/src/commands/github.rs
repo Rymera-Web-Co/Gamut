@@ -8,11 +8,54 @@ use crate::commands::history::open_repo;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-const API: &str = "https://api.github.com";
+const DEFAULT_API: &str = "https://api.github.com";
+const DEFAULT_GRAPHQL: &str = "https://api.github.com/graphql";
 const SETTING_LOGIN: &str = "github_login";
 const SETTING_TOKEN: &str = "github_token";
 const KEYRING_SERVICE: &str = "com.rymera.gamut";
 const KEYRING_USER: &str = "github-token";
+
+// User-configurable endpoints for GitHub Enterprise Server (issue #34). Empty /
+// unset falls back to github.com. The OAuth device-flow endpoints stay on
+// github.com (they target the Rymera OAuth app); GHES users sign in with a PAT.
+const PREF_API_BASE: &str = "pref.githubApiBase";
+const PREF_GRAPHQL_BASE: &str = "pref.githubGraphqlBase";
+const PREF_PR_PAGE_SIZE: &str = "pref.githubPrPageSize";
+
+/// Trim a configured base URL (drop surrounding space and any trailing `/`),
+/// falling back to `default` when unset or blank.
+fn normalize_base(value: Option<String>, default: &str) -> String {
+    value
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Configured REST API base (no trailing slash) — `api.github.com` by default.
+fn api_base(state: &AppState) -> String {
+    normalize_base(
+        get_setting(state, PREF_API_BASE).ok().flatten(),
+        DEFAULT_API,
+    )
+}
+
+/// Configured GraphQL endpoint — `api.github.com/graphql` by default.
+fn graphql_url(state: &AppState) -> String {
+    normalize_base(
+        get_setting(state, PREF_GRAPHQL_BASE).ok().flatten(),
+        DEFAULT_GRAPHQL,
+    )
+}
+
+/// Open PRs to fetch per repo (clamped to GitHub's 1–100 page bound).
+fn pr_page_size(state: &AppState) -> u32 {
+    get_setting(state, PREF_PR_PAGE_SIZE)
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|n| (1..=100).contains(n))
+        .unwrap_or(50)
+}
 
 // ---- Token storage ----
 //
@@ -176,9 +219,9 @@ async fn api_error(context: &str, resp: reqwest::Response) -> AppError {
 }
 
 /// Validate a token against /user, returning the login.
-async fn validate_token(client: &reqwest::Client, token: &str) -> AppResult<String> {
+async fn validate_token(client: &reqwest::Client, api: &str, token: &str) -> AppResult<String> {
     let resp = client
-        .get(format!("{API}/user"))
+        .get(format!("{api}/user"))
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -474,6 +517,7 @@ pub async fn github_device_poll(
     let cid =
         client_id().ok_or_else(|| AppError::Other("GitHub OAuth is not configured".into()))?;
     let client = http()?;
+    let api = api_base(&state);
     let mut wait = interval.max(5);
     let mut elapsed = 0u64;
 
@@ -499,7 +543,7 @@ pub async fn github_device_poll(
         let body: TokenResp = resp.json().await?;
 
         if let Some(token) = body.access_token {
-            let login = validate_token(&client, &token).await?;
+            let login = validate_token(&client, &api, &token).await?;
             store_credentials(&state, &token, &login)?;
             return Ok(AuthStatus {
                 logged_in: true,
@@ -637,7 +681,8 @@ struct GhReview {
 #[tauri::command]
 pub async fn github_set_token(state: State<'_, AppState>, token: String) -> AppResult<AuthStatus> {
     let client = http()?;
-    let login = validate_token(&client, &token).await?;
+    let api = api_base(&state);
+    let login = validate_token(&client, &api, &token).await?;
     store_credentials(&state, &token, &login)?;
     Ok(AuthStatus {
         logged_in: true,
@@ -663,6 +708,23 @@ pub fn github_logout(state: State<AppState>) -> AppResult<()> {
     cache_token(&state, None)
 }
 
+/// Verify the stored token reaches the **configured** API host and refresh the
+/// cached login. Used by Settings after changing the API base URL (GHES) so the
+/// user gets an immediate pass/fail against the new endpoint. Errors when not
+/// signed in or the host/token is wrong.
+#[tauri::command]
+pub async fn github_check(state: State<'_, AppState>) -> AppResult<AuthStatus> {
+    let token = require_token(&state)?;
+    let api = api_base(&state);
+    let client = http()?;
+    let login = validate_token(&client, &api, &token).await?;
+    set_setting(&state, SETTING_LOGIN, &login)?;
+    Ok(AuthStatus {
+        logged_in: true,
+        login: Some(login),
+    })
+}
+
 /// List open pull requests for the repo's GitHub origin.
 #[tauri::command]
 pub async fn github_list_prs(
@@ -671,10 +733,12 @@ pub async fn github_list_prs(
 ) -> AppResult<Vec<PrSummary>> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
+    let per_page = pr_page_size(&state).to_string();
     let client = http()?;
     let resp = client
-        .get(format!("{API}/repos/{owner}/{repo}/pulls"))
-        .query(&[("state", "open"), ("per_page", "50")])
+        .get(format!("{api}/repos/{owner}/{repo}/pulls"))
+        .query(&[("state", "open"), ("per_page", per_page.as_str())])
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -712,9 +776,10 @@ pub async fn github_pr_diff(
 ) -> AppResult<String> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
     let resp = client
-        .get(format!("{API}/repos/{owner}/{repo}/pulls/{number}"))
+        .get(format!("{api}/repos/{owner}/{repo}/pulls/{number}"))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github.diff")
         .send()
@@ -794,8 +859,9 @@ pub async fn github_pr_thread(
 ) -> AppResult<PrThread> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
-    let base = format!("{API}/repos/{owner}/{repo}");
+    let base = format!("{api}/repos/{owner}/{repo}");
 
     let pr_resp = client
         .get(format!("{base}/pulls/{number}"))
@@ -967,8 +1033,9 @@ pub async fn github_pr_timeline(
 ) -> AppResult<Vec<TimelineEvent>> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
-    let url = format!("{API}/repos/{owner}/{repo}/issues/{number}/timeline");
+    let url = format!("{api}/repos/{owner}/{repo}/issues/{number}/timeline");
 
     // Walk pages until a short page (cap at 5 pages / 500 events — plenty).
     let mut raw: Vec<serde_json::Value> = Vec::new();
@@ -1130,6 +1197,7 @@ pub async fn github_submit_review(
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
 
     let mut payload = serde_json::Map::new();
@@ -1146,7 +1214,7 @@ pub async fn github_submit_review(
     }
 
     let resp = client
-        .post(format!("{API}/repos/{owner}/{repo}/pulls/{number}/reviews"))
+        .post(format!("{api}/repos/{owner}/{repo}/pulls/{number}/reviews"))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
         .json(&serde_json::Value::Object(payload))
@@ -1170,6 +1238,7 @@ pub async fn github_pr_comment(
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
 
     let mut payload = comment_json(&comment);
@@ -1179,7 +1248,7 @@ pub async fn github_pr_comment(
 
     let resp = client
         .post(format!(
-            "{API}/repos/{owner}/{repo}/pulls/{number}/comments"
+            "{api}/repos/{owner}/{repo}/pulls/{number}/comments"
         ))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
@@ -1206,8 +1275,9 @@ pub async fn github_update_body(
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
-    let base = format!("{API}/repos/{owner}/{repo}");
+    let base = format!("{api}/repos/{owner}/{repo}");
 
     let req = match target.as_str() {
         "pr" => client.patch(format!("{base}/pulls/{number}")),
@@ -1247,9 +1317,10 @@ pub async fn github_mentionables(
 ) -> AppResult<Vec<String>> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
     let resp = client
-        .get(format!("{API}/repos/{owner}/{repo}/assignees"))
+        .get(format!("{api}/repos/{owner}/{repo}/assignees"))
         .query(&[("per_page", "100")])
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
@@ -1286,8 +1357,6 @@ pub struct ReviewThread {
     pub review_id: Option<u64>,
     pub comments: Vec<ThreadComment>,
 }
-
-const GRAPHQL: &str = "https://api.github.com/graphql";
 
 const THREADS_QUERY: &str = r#"
 query($owner:String!,$repo:String!,$number:Int!){
@@ -1370,13 +1439,14 @@ struct GqlAuthor {
 
 async fn graphql<T: serde::de::DeserializeOwned>(
     client: &reqwest::Client,
+    url: &str,
     token: &str,
     query: &str,
     variables: serde_json::Value,
     context: &str,
 ) -> AppResult<T> {
     let resp = client
-        .post(GRAPHQL)
+        .post(url)
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .json(&serde_json::json!({ "query": query, "variables": variables }))
@@ -1408,6 +1478,7 @@ pub async fn github_review_threads(
     let client = http()?;
     let data: GqlThreadsData = graphql(
         &client,
+        &graphql_url(&state),
         &token,
         THREADS_QUERY,
         serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
@@ -1470,10 +1541,11 @@ pub async fn github_reply_review_comment(
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
     let resp = client
         .post(format!(
-            "{API}/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies"
+            "{api}/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies"
         ))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
@@ -1510,6 +1582,7 @@ pub async fn github_resolve_thread(
     };
     let _: GqlIgnore = graphql(
         &client,
+        &graphql_url(&state),
         &token,
         query,
         serde_json::json!({ "id": thread_id }),
@@ -1636,6 +1709,7 @@ pub async fn github_pr_details(
     let client = http()?;
     let data: GqlDetailsData = graphql(
         &client,
+        &graphql_url(&state),
         &token,
         DETAILS_QUERY,
         serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
@@ -1753,9 +1827,10 @@ pub async fn github_merge_pr(
 ) -> AppResult<()> {
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
+    let api = api_base(&state);
     let client = http()?;
     let resp = client
-        .put(format!("{API}/repos/{owner}/{repo}/pulls/{number}/merge"))
+        .put(format!("{api}/repos/{owner}/{repo}/pulls/{number}/merge"))
         .bearer_auth(&token)
         .header("Accept", "application/vnd.github+json")
         .json(&serde_json::json!({ "merge_method": method }))
@@ -1769,7 +1844,27 @@ pub async fn github_merge_pr(
 
 #[cfg(test)]
 mod tests {
-    use super::{https_host, is_github_asset_host, parse_owner_repo, parse_pr_url, split_remote};
+    use super::{
+        https_host, is_github_asset_host, normalize_base, parse_owner_repo, parse_pr_url,
+        split_remote, DEFAULT_API,
+    };
+
+    #[test]
+    fn normalizes_configured_base() {
+        // Unset / blank / whitespace-only fall back to the default.
+        assert_eq!(normalize_base(None, DEFAULT_API), DEFAULT_API);
+        assert_eq!(normalize_base(Some("".into()), DEFAULT_API), DEFAULT_API);
+        assert_eq!(normalize_base(Some("   ".into()), DEFAULT_API), DEFAULT_API);
+        // A configured value is trimmed and stripped of any trailing slash.
+        assert_eq!(
+            normalize_base(Some("https://ghe.example.com/api/v3/".into()), DEFAULT_API),
+            "https://ghe.example.com/api/v3"
+        );
+        assert_eq!(
+            normalize_base(Some("  https://ghe.example.com/api/v3  ".into()), DEFAULT_API),
+            "https://ghe.example.com/api/v3"
+        );
+    }
 
     #[test]
     fn extracts_https_host() {

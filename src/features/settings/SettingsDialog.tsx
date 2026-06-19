@@ -7,8 +7,11 @@ import {
   FolderOpen,
   GitCompare,
   GitFork,
+  Github,
   Info,
+  Keyboard,
   Loader2,
+  LogOut,
   Monitor,
   Moon,
   Palette,
@@ -33,6 +36,19 @@ import { copy } from "@/lib/clipboard";
 import { ipc, pickAudioFile, pickSavePath, type Diagnostics } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 import { useSettings, type Settings, type TerminalSound } from "@/lib/settings";
+import {
+  bindingFromEvent,
+  findConflicts,
+  formatBinding,
+  isMac,
+  isModifierCode,
+  parseOverrides,
+  resolveBindings,
+  SHORTCUTS,
+  type Binding,
+  type ShortcutId,
+} from "@/lib/shortcuts";
+import { useGithubAuth, useLogout } from "@/features/review/api";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useUpdater } from "@/lib/updater";
 import { useUiStore } from "@/store/ui";
@@ -46,7 +62,9 @@ const CATEGORIES = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "diff", label: "Diff & Review", icon: GitCompare },
   { id: "git", label: "Git & Repos", icon: GitFork },
+  { id: "github", label: "GitHub", icon: Github },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
+  { id: "keyboard", label: "Keyboard", icon: Keyboard },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "diagnostics", label: "Diagnostics", icon: Activity },
   { id: "about", label: "About", icon: Info },
@@ -97,7 +115,9 @@ export function SettingsDialog() {
           {category === "appearance" && <AppearancePanel />}
           {category === "diff" && <DiffPanel />}
           {category === "git" && <GitPanel />}
+          {category === "github" && <GitHubPanel />}
           {category === "terminal" && <TerminalPanel />}
+          {category === "keyboard" && <KeyboardPanel />}
           {category === "notifications" && <NotificationsPanel />}
           {category === "diagnostics" && <DiagnosticsPanel />}
           {category === "about" && <AboutPanel />}
@@ -550,6 +570,255 @@ function TerminalPanel() {
           suffix="lines"
         />
       </Field>
+    </div>
+  );
+}
+
+function GitHubPanel() {
+  const [apiBase, setApiBase] = useSetting("githubApiBase");
+  const [graphqlBase, setGraphqlBase] = useSetting("githubGraphqlBase");
+  const [prPageSize, setPrPageSize] = useSetting("githubPrPageSize");
+  const auth = useGithubAuth();
+  const logout = useLogout();
+  const [checking, setChecking] = useState(false);
+
+  const connected = auth.data?.logged_in ?? false;
+
+  const testConnection = async () => {
+    setChecking(true);
+    try {
+      const status = await ipc.githubCheck();
+      auth.refetch();
+      toast.success(`Connected as ${status.login} ✓`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div>
+      <PanelTitle>GitHub</PanelTitle>
+      <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+        Point Gamut at a GitHub Enterprise Server by overriding the API and
+        GraphQL endpoints. Leave blank to use github.com. Sign in from the GitHub
+        button in the sidebar; on Enterprise, use a personal-access token.
+      </p>
+
+      <Field label="Account">
+        {connected ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm">
+              Signed in as <span className="font-medium">{auth.data?.login}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => logout.mutate()}
+            >
+              <LogOut className="size-3.5" />
+              Sign out
+            </Button>
+          </div>
+        ) : (
+          <span className="text-sm text-[var(--color-muted-foreground)]">
+            Not connected
+          </span>
+        )}
+      </Field>
+      <Divider />
+      <Field
+        label="API base URL"
+        hint="REST endpoint. e.g. https://ghe.example.com/api/v3"
+      >
+        <TextField
+          value={apiBase}
+          onChange={setApiBase}
+          placeholder="https://api.github.com"
+          wide
+        />
+      </Field>
+      <Field
+        label="GraphQL endpoint"
+        hint="e.g. https://ghe.example.com/api/graphql"
+      >
+        <TextField
+          value={graphqlBase}
+          onChange={setGraphqlBase}
+          placeholder="https://api.github.com/graphql"
+          wide
+        />
+      </Field>
+      <Field
+        label="Verify"
+        hint="Check the stored token reaches the configured host."
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          disabled={!connected || checking}
+          onClick={() => void testConnection()}
+        >
+          {checking ? <Loader2 className="animate-spin" /> : null}
+          Test connection
+        </Button>
+      </Field>
+      <Divider />
+      <Field
+        label="PR list page size"
+        hint="Open pull requests fetched per repository (1–100)."
+      >
+        <NumberField
+          value={prPageSize}
+          onChange={setPrPageSize}
+          min={1}
+          max={100}
+          suffix="PRs"
+        />
+      </Field>
+    </div>
+  );
+}
+
+/** A button that captures the next key combo to rebind a shortcut. */
+function BindingButton({
+  binding,
+  conflict,
+  onCapture,
+}: {
+  binding: Binding;
+  conflict: boolean;
+  onCapture: (binding: Binding) => void;
+}) {
+  const [capturing, setCapturing] = useState(false);
+
+  useEffect(() => {
+    if (!capturing) return;
+    const handler = (e: KeyboardEvent) => {
+      // Swallow the keystroke (capture phase) so the global shortcut listener
+      // and any focused control don't act on it while we're recording.
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setCapturing(false);
+        return;
+      }
+      // Wait for a non-modifier key to complete the combo.
+      if (isModifierCode(e.code)) return;
+      onCapture(bindingFromEvent(e));
+      setCapturing(false);
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [capturing, onCapture]);
+
+  return (
+    <button
+      onClick={() => setCapturing((c) => !c)}
+      className={cn(
+        "min-w-24 rounded-md border px-2.5 py-1 font-mono text-xs transition-colors",
+        capturing
+          ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+          : "hover:bg-[var(--color-accent)]",
+        conflict && !capturing && "border-[var(--color-destructive)] text-[var(--color-destructive)]",
+      )}
+      title={capturing ? "Press a key combination, or Esc to cancel" : "Click to rebind"}
+    >
+      {capturing ? "Press keys…" : formatBinding(binding)}
+    </button>
+  );
+}
+
+function KeyboardPanel() {
+  const [keybindings, setKeybindings] = useSetting("keybindings");
+  const mac = isMac();
+
+  const overrides = parseOverrides(keybindings);
+  const resolved = resolveBindings(overrides);
+  const conflicts = findConflicts(resolved);
+
+  const setBinding = (id: ShortcutId, binding: Binding) => {
+    setKeybindings(JSON.stringify({ ...overrides, [id]: binding }));
+  };
+  const resetBinding = (id: ShortcutId) => {
+    const next = { ...overrides };
+    delete next[id];
+    setKeybindings(Object.keys(next).length ? JSON.stringify(next) : "");
+  };
+
+  // Group commands by their category for display, preserving definition order.
+  const categories = SHORTCUTS.reduce<Record<string, typeof SHORTCUTS>>((acc, def) => {
+    (acc[def.category] ??= []).push(def);
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      <PanelTitle>Keyboard</PanelTitle>
+      <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+        Click a shortcut to rebind it; press the new combination, or Esc to
+        cancel. Conflicting bindings are flagged in red.
+        {mac ? " ⌘ is the primary modifier." : " Ctrl is the primary modifier."}
+      </p>
+      <div className="mb-2 flex justify-end">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 text-[var(--color-muted-foreground)]"
+          disabled={!keybindings}
+          onClick={() => setKeybindings("")}
+        >
+          <RotateCcw className="size-3.5" />
+          Reset all shortcuts
+        </Button>
+      </div>
+
+      {Object.entries(categories).map(([cat, defs]) => (
+        <div key={cat}>
+          <div className="mb-1 mt-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            {cat}
+          </div>
+          {defs.map((def) => {
+            const overridden = overrides[def.id] != null;
+            const conflict = conflicts[def.id];
+            return (
+              <div
+                key={def.id}
+                className="flex items-center justify-between gap-4 border-b py-2 last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm">{def.label}</div>
+                  {conflict && (
+                    <div className="mt-0.5 text-xs text-[var(--color-destructive)]">
+                      Conflicts with{" "}
+                      {conflict.map((id) => SHORTCUTS.find((s) => s.id === id)?.label).join(", ")}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <BindingButton
+                    binding={resolved[def.id]}
+                    conflict={!!conflict}
+                    onCapture={(b) => setBinding(def.id, b)}
+                  />
+                  {overridden && (
+                    <button
+                      onClick={() => resetBinding(def.id)}
+                      title="Reset to default"
+                      className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
