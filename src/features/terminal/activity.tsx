@@ -19,13 +19,7 @@ export function activityColor(kind: TermActivityKind): string {
 }
 
 /** Small "unseen activity" dot used on inactive tabs, splits and group rail. */
-export function ActivityDot({
-  kind,
-  className,
-}: {
-  kind: TermActivityKind;
-  className?: string;
-}) {
+export function ActivityDot({ kind, className }: { kind: TermActivityKind; className?: string }) {
   return (
     <span
       aria-hidden

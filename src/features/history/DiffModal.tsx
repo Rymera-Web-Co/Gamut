@@ -3,12 +3,7 @@ import { DiffEditor } from "@monaco-editor/react";
 import { Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerTitle,
-} from "@/components/ui/drawer";
+import { Drawer, DrawerClose, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
@@ -26,13 +21,7 @@ function blameByLine(hunks: BlameHunk[]): Map<number, { hunk: BlameHunk; first: 
   return map;
 }
 
-function BlameView({
-  text,
-  hunks,
-}: {
-  text: string;
-  hunks: BlameHunk[];
-}) {
+function BlameView({ text, hunks }: { text: string; hunks: BlameHunk[] }) {
   const byLine = useMemo(() => blameByLine(hunks), [hunks]);
   const lines = useMemo(() => text.split("\n"), [text]);
 
@@ -89,9 +78,7 @@ export function DiffModal({
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerContent className="h-[70vh] gap-2 px-3 pb-3">
         <div className="flex items-center justify-between gap-4 px-1 pt-1">
-          <DrawerTitle className="min-w-0 flex-1 truncate font-mono text-sm">
-            {path}
-          </DrawerTitle>
+          <DrawerTitle className="min-w-0 flex-1 truncate font-mono text-sm">{path}</DrawerTitle>
           <div className="flex items-center gap-1">
             {(["diff", "blame"] as const).map((m) => (
               <Button

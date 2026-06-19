@@ -28,9 +28,7 @@ export function InlineCommentBox({
 
   return (
     <div className="rounded-md border bg-[var(--color-popover)] p-2 shadow-lg">
-      <div className="mb-1.5 text-sm font-semibold">
-        Add a comment on line {lineLabel}
-      </div>
+      <div className="mb-1.5 text-sm font-semibold">Add a comment on line {lineLabel}</div>
       <MarkdownEditor
         value={body}
         onChange={setBody}

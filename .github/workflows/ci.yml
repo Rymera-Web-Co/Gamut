@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend (typecheck + build)
+    name: Frontend (lint + format + typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +27,23 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Build frontend
         run: pnpm build
 
   backend:
-    name: Backend (fmt + clippy + check)
+    name: Backend (fmt + clippy + check + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,3 +78,7 @@ jobs:
       - name: Check
         working-directory: src-tauri
         run: cargo check --all-targets
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test

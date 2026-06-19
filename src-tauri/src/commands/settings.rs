@@ -154,3 +154,26 @@ pub fn reset_settings(state: State<AppState>) -> AppResult<()> {
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_csv_trims_and_drops_empties() {
+        assert_eq!(parse_csv("a, b ,c"), vec!["a", "b", "c"]);
+        assert_eq!(parse_csv(" , a ,, b , "), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn parse_csv_empty_input_yields_no_entries() {
+        assert!(parse_csv("").is_empty());
+        assert!(parse_csv("   ").is_empty());
+        assert!(parse_csv(",,,").is_empty());
+    }
+
+    #[test]
+    fn parse_csv_single_entry_has_no_separators() {
+        assert_eq!(parse_csv("solo"), vec!["solo"]);
+    }
+}

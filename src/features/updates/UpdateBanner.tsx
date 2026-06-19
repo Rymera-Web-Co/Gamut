@@ -18,8 +18,7 @@ export function UpdateBanner() {
   const dismiss = useUpdater((s) => s.dismiss);
 
   const visible =
-    !dismissed &&
-    (status === "available" || status === "downloading" || status === "ready");
+    !dismissed && (status === "available" || status === "downloading" || status === "ready");
   if (!visible) return null;
 
   const pct = progress == null ? null : Math.round(progress * 100);

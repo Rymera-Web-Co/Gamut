@@ -14,10 +14,8 @@ const buttonVariants = cva(
           "bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)] hover:opacity-80",
         outline:
           "border border-[var(--color-border)] bg-[var(--color-background)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]",
-        ghost:
-          "hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]",
-        destructive:
-          "bg-[var(--color-destructive)] text-white hover:opacity-90",
+        ghost: "hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]",
+        destructive: "bg-[var(--color-destructive)] text-white hover:opacity-90",
       },
       size: {
         default: "h-9 px-4 py-2",
@@ -34,17 +32,12 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {}
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {}
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, ...props }, ref) => {
     return (
-      <button
-        ref={ref}
-        className={cn(buttonVariants({ variant, size }), className)}
-        {...props}
-      />
+      <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />
     );
   },
 );

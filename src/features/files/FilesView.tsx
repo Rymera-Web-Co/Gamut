@@ -1,20 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Editor, type OnMount } from "@monaco-editor/react";
-import {
-  FolderOpen,
-  FolderTree,
-  GitCompare,
-  Loader2,
-  Save,
-  Search,
-} from "lucide-react";
+import { FolderOpen, FolderTree, GitCompare, Loader2, Save, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
@@ -131,10 +117,7 @@ export function FilesView() {
   const changes = useMemo<TreeChanges>(() => {
     const files = new Map<string, string>();
     const dirs = new Set<string>();
-    const all = [
-      ...(status.data?.staged ?? []),
-      ...(status.data?.unstaged ?? []),
-    ];
+    const all = [...(status.data?.staged ?? []), ...(status.data?.unstaged ?? [])];
     for (const f of all) {
       files.set(f.path, f.status);
       const parts = f.path.split("/");
@@ -225,9 +208,7 @@ export function FilesView() {
       if (document.activeElement?.tagName === "INPUT") return;
       e.preventDefault();
       ed.focus();
-      ed.getAction(
-        key === "f" ? "actions.find" : "editor.action.startFindReplaceAction",
-      )?.run();
+      ed.getAction(key === "f" ? "actions.find" : "editor.action.startFindReplaceAction")?.run();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -3,11 +3,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ipc, type SearchQuery } from "@/lib/ipc";
 
 /** Children of one working-tree directory (lazy — fetched when a dir expands). */
-export function useDirChildren(
-  repoId: number | null,
-  path: string,
-  enabled: boolean,
-) {
+export function useDirChildren(repoId: number | null, path: string, enabled: boolean) {
   return useQuery({
     queryKey: ["dir", repoId, path],
     queryFn: () => ipc.listDir(repoId!, path),

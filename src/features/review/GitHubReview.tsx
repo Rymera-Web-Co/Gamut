@@ -35,11 +35,7 @@ import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
 import { copy } from "@/lib/clipboard";
 import { toast } from "@/store/toast";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type {
   MergeMethod,
@@ -91,9 +87,7 @@ function TokenGate() {
   );
 }
 
-function reviewBadge(
-  state: string | null,
-): { label: string; color: string; Icon: LucideIcon } {
+function reviewBadge(state: string | null): { label: string; color: string; Icon: LucideIcon } {
   switch (state) {
     case "APPROVED":
       return { label: "approved", color: "#16a34a", Icon: CheckCircle2 };
@@ -111,15 +105,7 @@ function reviewBadge(
 }
 
 /** Small round user avatar with an initial fallback. */
-function Avatar({
-  src,
-  name,
-  size = 18,
-}: {
-  src?: string | null;
-  name: string;
-  size?: number;
-}) {
+function Avatar({ src, name, size = 18 }: { src?: string | null; name: string; size?: number }) {
   if (src) {
     return (
       <img
@@ -171,9 +157,7 @@ function commentUrl(prUrl: string, comment: PrComment) {
   // Inline review comments carry their own permalink (#discussion_r…).
   if (comment.html_url) return comment.html_url;
   const frag =
-    comment.kind === "review"
-      ? `pullrequestreview-${comment.id}`
-      : `issuecomment-${comment.id}`;
+    comment.kind === "review" ? `pullrequestreview-${comment.id}` : `issuecomment-${comment.id}`;
   return `${prUrl}#${frag}`;
 }
 
@@ -201,18 +185,12 @@ function CommentCard({
         <Avatar src={comment.author_avatar} name={comment.author} />
         <span className="font-medium">{comment.author}</span>
         {badge && (
-          <span
-            title={badge.label}
-            style={{ color: badge.color }}
-            className="flex items-center"
-          >
+          <span title={badge.label} style={{ color: badge.color }} className="flex items-center">
             <badge.Icon className="size-4" />
           </span>
         )}
         <span className="text-[var(--color-muted-foreground)]">
-          {comment.created_at
-            ? relativeTime(Date.parse(comment.created_at) / 1000)
-            : ""}
+          {comment.created_at ? relativeTime(Date.parse(comment.created_at) / 1000) : ""}
         </span>
         {prUrl && (
           <CopyLinkButton
@@ -247,16 +225,10 @@ function ThreadCommentRow({
         <Avatar src={comment.author_avatar} name={comment.author} size={16} />
         <span className="font-medium">{comment.author}</span>
         <span className="text-[var(--color-muted-foreground)]">
-          {comment.created_at
-            ? relativeTime(Date.parse(comment.created_at) / 1000)
-            : ""}
+          {comment.created_at ? relativeTime(Date.parse(comment.created_at) / 1000) : ""}
         </span>
         {comment.url && (
-          <CopyLinkButton
-            url={comment.url}
-            label="Copy link to this comment"
-            className="ml-auto"
-          />
+          <CopyLinkButton url={comment.url} label="Copy link to this comment" className="ml-auto" />
         )}
       </div>
       <Markdown issueBaseUrl={issueBaseUrl}>{comment.body}</Markdown>
@@ -312,9 +284,7 @@ function ReviewThreadCard({
           {thread.line != null ? `:${thread.line}` : ""}
         </span>
         {thread.is_outdated && (
-          <span className="shrink-0 rounded border px-1 text-[10px] text-[#a16207]">
-            Outdated
-          </span>
+          <span className="shrink-0 rounded border px-1 text-[10px] text-[#a16207]">Outdated</span>
         )}
         {thread.is_resolved && (
           <span className="flex shrink-0 items-center gap-1 rounded border px-1 text-[10px] text-[#16a34a]">
@@ -336,11 +306,7 @@ function ReviewThreadCard({
 
           <div className="divide-y">
             {thread.comments.map((c, i) => (
-              <ThreadCommentRow
-                key={c.id ?? i}
-                comment={c}
-                issueBaseUrl={issueBaseUrl}
-              />
+              <ThreadCommentRow key={c.id ?? i} comment={c} issueBaseUrl={issueBaseUrl} />
             ))}
           </div>
 
@@ -432,13 +398,7 @@ function labelTextColor(hex: string) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#000" : "#fff";
 }
 
-function DetailsSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactElement | string;
-}) {
+function DetailsSection({ title, children }: { title: string; children: ReactElement | string }) {
   return (
     <div className="px-3 py-2">
       <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
@@ -463,11 +423,7 @@ function PrDetailsCard({ repoId, number }: { repoId: number; number: number }) {
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1.5 text-xs font-semibold"
       >
-        {open ? (
-          <ChevronDown className="size-3.5" />
-        ) : (
-          <ChevronRight className="size-3.5" />
-        )}
+        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         Details
         {details.isFetching && (
           <Loader2 className="size-3 animate-spin text-[var(--color-muted-foreground)]" />
@@ -475,9 +431,7 @@ function PrDetailsCard({ repoId, number }: { repoId: number; number: number }) {
       </button>
 
       {open && details.isError && (
-        <p className="px-3 py-2 text-xs text-[var(--color-destructive)]">
-          {String(details.error)}
-        </p>
+        <p className="px-3 py-2 text-xs text-[var(--color-destructive)]">{String(details.error)}</p>
       )}
 
       {open && !d && !details.isError && (
@@ -608,9 +562,7 @@ function Commits({
   const setHistorySha = useUiStore((s) => s.setHistorySha);
   const [confirmSha, setConfirmSha] = useState<string | null>(null);
 
-  const isCheckedOut = !!(
-    headRef && branches.data?.some((b) => b.name === headRef && b.is_head)
-  );
+  const isCheckedOut = !!(headRef && branches.data?.some((b) => b.name === headRef && b.is_head));
   // We can only offer checkout when we know the branch and it isn't current.
   const needsCheckout = !isCheckedOut && !!headRef;
 
@@ -681,28 +633,15 @@ function Commits({
             {needsCheckout && (
               <PopoverContent align="end" className="w-72 space-y-3 p-3">
                 <p className="text-sm">
-                  The branch{" "}
-                  <span className="font-mono font-medium">{headRef}</span> isn't
-                  checked out. Check it out to view this commit in History?
+                  The branch <span className="font-mono font-medium">{headRef}</span> isn't checked
+                  out. Check it out to view this commit in History?
                 </p>
                 <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setConfirmSha(null)}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => setConfirmSha(null)}>
                     Cancel
                   </Button>
-                  <Button
-                    size="sm"
-                    disabled={checkout.isPending}
-                    onClick={confirmCheckout}
-                  >
-                    {checkout.isPending ? (
-                      <Loader2 className="animate-spin" />
-                    ) : (
-                      <GitBranch />
-                    )}
+                  <Button size="sm" disabled={checkout.isPending} onClick={confirmCheckout}>
+                    {checkout.isPending ? <Loader2 className="animate-spin" /> : <GitBranch />}
                     Checkout
                   </Button>
                 </div>
@@ -732,18 +671,22 @@ function TimelineEventRow({ event }: { event: TimelineEvent }) {
       break;
     case "review_requested":
       Icon = event.added === false ? UserMinus : UserPlus;
-      body = event.added === false ? (
-        <>removed the review request for <b>{event.subject}</b></>
-      ) : (
-        <>requested a review from <b>{event.subject}</b></>
-      );
+      body =
+        event.added === false ? (
+          <>
+            removed the review request for <b>{event.subject}</b>
+          </>
+        ) : (
+          <>
+            requested a review from <b>{event.subject}</b>
+          </>
+        );
       break;
     case "assigned":
       Icon = event.added === false ? UserMinus : UserPlus;
       body = (
         <>
-          {event.added === false ? "unassigned" : "assigned"}{" "}
-          <b>{event.subject}</b>
+          {event.added === false ? "unassigned" : "assigned"} <b>{event.subject}</b>
         </>
       );
       break;
@@ -799,8 +742,7 @@ function TimelineEventRow({ event }: { event: TimelineEvent }) {
       Icon = GitMerge;
       body = (
         <>
-          merged commit{" "}
-          <code className="font-mono">{event.short_sha}</code>
+          merged commit <code className="font-mono">{event.short_sha}</code>
         </>
       );
       break;
@@ -823,15 +765,10 @@ function TimelineEventRow({ event }: { event: TimelineEvent }) {
         <Avatar src={event.actor_avatar} name={actor} size={16} />
       )}
       <span className="min-w-0">
-        <span className="font-medium text-[var(--color-foreground)]">
-          {actor}
-        </span>{" "}
-        {body}
+        <span className="font-medium text-[var(--color-foreground)]">{actor}</span> {body}
       </span>
       {event.created_at && (
-        <span className="shrink-0">
-          · {relativeTime(Date.parse(event.created_at) / 1000)}
-        </span>
+        <span className="shrink-0">· {relativeTime(Date.parse(event.created_at) / 1000)}</span>
       )}
     </div>
   );
@@ -863,14 +800,7 @@ function groupTimeline(
       items.push({
         at: at(run[run.length - 1].created_at),
         key: `commits-${run[0].sha}`,
-        node: (
-          <Commits
-            repoId={repoId}
-            number={number}
-            headRef={headRef}
-            commits={run}
-          />
-        ),
+        node: <Commits repoId={repoId} number={number} headRef={headRef} commits={run} />,
       });
       continue;
     }
@@ -890,11 +820,7 @@ function groupTimeline(
       items.push({
         at: at(e.created_at),
         key: `review-req-${e.created_at}`,
-        node: (
-          <TimelineEventRow
-            event={{ ...e, subject: joinNames(names) }}
-          />
-        ),
+        node: <TimelineEventRow event={{ ...e, subject: joinNames(names) }} />,
       });
       continue;
     }
@@ -926,15 +852,11 @@ function Conversation({
   const threads = useReviewThreads(repoId, number).data ?? [];
   const timeline = usePrTimeline(repoId, number).data ?? [];
   // e.g. ".../owner/repo/pull/22" -> ".../owner/repo/issues" for #N refs.
-  const issueBaseUrl = prUrl
-    ? prUrl.replace(/\/pull\/\d+.*$/, "/issues")
-    : undefined;
+  const issueBaseUrl = prUrl ? prUrl.replace(/\/pull\/\d+.*$/, "/issues") : undefined;
 
   // Group inline threads under the review they were submitted with; threads
   // with no matching review stand alone in the timeline.
-  const reviewIds = new Set(
-    thread.comments.filter((c) => c.kind === "review").map((c) => c.id),
-  );
+  const reviewIds = new Set(thread.comments.filter((c) => c.kind === "review").map((c) => c.id));
   const threadsByReview = new Map<number, ReviewThread[]>();
   const orphanThreads: ReviewThread[] = [];
   for (const t of threads) {
@@ -951,8 +873,7 @@ function Conversation({
   const items: { at: number; key: string; node: ReactElement }[] = [];
 
   for (const c of thread.comments) {
-    const childThreads =
-      c.kind === "review" ? threadsByReview.get(c.id) ?? [] : [];
+    const childThreads = c.kind === "review" ? (threadsByReview.get(c.id) ?? []) : [];
     items.push({
       at: at(c.created_at),
       key: `c${c.id}`,
@@ -993,12 +914,7 @@ function Conversation({
       at: at(t.comments[0]?.created_at ?? ""),
       key: `t${t.id}`,
       node: (
-        <ReviewThreadCard
-          thread={t}
-          repoId={repoId}
-          number={number}
-          issueBaseUrl={issueBaseUrl}
-        />
+        <ReviewThreadCard thread={t} repoId={repoId} number={number} issueBaseUrl={issueBaseUrl} />
       ),
     });
   }
@@ -1016,9 +932,7 @@ function Conversation({
           <span className="font-medium">{thread.author}</span>
           <span className="text-[var(--color-muted-foreground)]">
             opened this pull request
-            {thread.created_at
-              ? ` · ${relativeTime(Date.parse(thread.created_at) / 1000)}`
-              : ""}
+            {thread.created_at ? ` · ${relativeTime(Date.parse(thread.created_at) / 1000)}` : ""}
           </span>
           {prUrl && (
             <CopyLinkButton
@@ -1100,8 +1014,7 @@ export function ReviewPopover({
   // Approve needs no comment; otherwise require a body or pending inline drafts.
   const needsBody = event !== "APPROVE";
   const canSubmit =
-    !submit.isPending &&
-    (!needsBody || body.trim().length > 0 || drafts.length > 0);
+    !submit.isPending && (!needsBody || body.trim().length > 0 || drafts.length > 0);
 
   function onOpenChange(next: boolean) {
     setOpen(next);
@@ -1133,9 +1046,7 @@ export function ReviewPopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <Button size="sm">
-          Submit review{drafts.length > 0 ? ` (${drafts.length})` : ""}
-        </Button>
+        <Button size="sm">Submit review{drafts.length > 0 ? ` (${drafts.length})` : ""}</Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -1161,10 +1072,7 @@ export function ReviewPopover({
 
         <div className="space-y-2">
           {REVIEW_OPTIONS.map((opt) => (
-            <label
-              key={opt.event}
-              className="flex cursor-pointer items-start gap-2.5"
-            >
+            <label key={opt.event} className="flex cursor-pointer items-start gap-2.5">
               <input
                 type="radio"
                 name="review-event"
@@ -1173,9 +1081,7 @@ export function ReviewPopover({
                 onChange={() => setEvent(opt.event)}
               />
               <div className="flex flex-col">
-                <span className="text-sm font-medium leading-tight">
-                  {opt.label}
-                </span>
+                <span className="text-sm font-medium leading-tight">{opt.label}</span>
                 <span className="text-xs text-[var(--color-muted-foreground)]">
                   {opt.description}
                 </span>
@@ -1185,9 +1091,7 @@ export function ReviewPopover({
         </div>
 
         {submit.isError && (
-          <p className="text-xs text-[var(--color-destructive)]">
-            {String(submit.error)}
-          </p>
+          <p className="text-xs text-[var(--color-destructive)]">{String(submit.error)}</p>
         )}
 
         <div className="flex justify-end gap-2">
@@ -1210,20 +1114,10 @@ const MERGE_METHODS: { method: MergeMethod; label: string }[] = [
   { method: "rebase", label: "Rebase and merge" },
 ];
 
-function MergeBar({
-  repoId,
-  number,
-  state,
-}: {
-  repoId: number;
-  number: number;
-  state: string;
-}) {
+function MergeBar({ repoId, number, state }: { repoId: number; number: number; state: string }) {
   const merge = useMergePr(repoId);
   const [open, setOpen] = useState(false);
-  const [method, setMethod] = useState<MergeMethod>(
-    useSettings.getState().values.mergeStrategy,
-  );
+  const [method, setMethod] = useState<MergeMethod>(useSettings.getState().values.mergeStrategy);
 
   if (state === "merged") {
     return (
@@ -1252,10 +1146,7 @@ function MergeBar({
           <div className="text-sm font-semibold">Merge pull request</div>
           <div className="space-y-1.5">
             {MERGE_METHODS.map((m) => (
-              <label
-                key={m.method}
-                className="flex cursor-pointer items-center gap-2 text-sm"
-              >
+              <label key={m.method} className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="merge-method"
@@ -1330,7 +1221,8 @@ function PrFilterBar({
               active
                 ? "bg-[var(--color-accent)] text-[var(--color-foreground)]"
                 : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
-              isDisabled && "cursor-not-allowed opacity-50 hover:text-[var(--color-muted-foreground)]",
+              isDisabled &&
+                "cursor-not-allowed opacity-50 hover:text-[var(--color-muted-foreground)]",
             )}
           >
             {opt.label}
@@ -1372,9 +1264,7 @@ function PrList({
           onClick={() => onSelect(pr.number)}
           className={cn(
             "flex w-full flex-col gap-0.5 px-3 py-2 text-left",
-            selected === pr.number
-              ? "bg-[var(--color-accent)]"
-              : "hover:bg-[var(--color-accent)]",
+            selected === pr.number ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
           )}
         >
           <div className="flex items-center gap-2 text-sm">
@@ -1388,9 +1278,8 @@ function PrList({
           </div>
           <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]">
             <Avatar src={pr.author_avatar} name={pr.author} size={16} />
-            {pr.author} · {pr.base_ref} ← {pr.head_ref} · {relativeTime(
-              Date.parse(pr.updated_at) / 1000,
-            )}
+            {pr.author} · {pr.base_ref} ← {pr.head_ref} ·{" "}
+            {relativeTime(Date.parse(pr.updated_at) / 1000)}
           </div>
         </button>
       ))}
@@ -1425,10 +1314,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
     () =>
       login == null
         ? []
-        : allPrs.filter(
-            (p) =>
-              p.author !== login && p.requested_reviewers.includes(login),
-          ),
+        : allPrs.filter((p) => p.author !== login && p.requested_reviewers.includes(login)),
     [allPrs, login],
   );
   // Guard against a stale "needs-review" selection when signing out.
@@ -1475,9 +1361,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
             </div>
           ) : prs.isError ? (
-            <p className="p-3 text-sm text-[var(--color-destructive)]">
-              {String(prs.error)}
-            </p>
+            <p className="p-3 text-sm text-[var(--color-destructive)]">{String(prs.error)}</p>
           ) : (
             <>
               <PrFilterBar
@@ -1513,9 +1397,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">
                     {selectedPr?.title}{" "}
-                    <span className="text-[var(--color-muted-foreground)]">
-                      #{selected}
-                    </span>
+                    <span className="text-[var(--color-muted-foreground)]">#{selected}</span>
                   </div>
                   {selectedPr && (
                     <div className="truncate text-xs text-[var(--color-muted-foreground)]">
@@ -1577,19 +1459,11 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                       )
                     }
                   >
-                    {checkout.isPending ? (
-                      <Loader2 className="animate-spin" />
-                    ) : (
-                      <GitBranch />
-                    )}
+                    {checkout.isPending ? <Loader2 className="animate-spin" /> : <GitBranch />}
                     Checkout
                   </Button>
                 )}
-                <ReviewPopover
-                  repoId={repoId}
-                  number={selected}
-                  headSha={selectedPr?.head_sha}
-                />
+                <ReviewPopover repoId={repoId} number={selected} headSha={selectedPr?.head_sha} />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {thread.isLoading || thread.data == null ? (
@@ -1609,11 +1483,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                 )}
               </div>
               {thread.data && (
-                <MergeBar
-                  repoId={repoId}
-                  number={selected}
-                  state={thread.data.state}
-                />
+                <MergeBar repoId={repoId} number={selected} state={thread.data.state} />
               )}
             </>
           )}

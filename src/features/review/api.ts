@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   ipc,
@@ -32,8 +28,7 @@ export function useReviewFileDiff(
 ) {
   return useQuery({
     queryKey: ["review-file-diff", repoId, source, path],
-    queryFn: () =>
-      ipc.reviewFileDiff(repoId!, source, path!, undefined, oldPath ?? undefined),
+    queryFn: () => ipc.reviewFileDiff(repoId!, source, path!, undefined, oldPath ?? undefined),
     enabled: repoId != null && path != null,
   });
 }
@@ -56,8 +51,7 @@ export function useWorktreeFileDiff(
 ) {
   return useQuery({
     queryKey: ["worktree-file-diff", repoId, path, staged],
-    queryFn: () =>
-      ipc.worktreeFileDiff(repoId!, path!, staged, oldPath ?? undefined),
+    queryFn: () => ipc.worktreeFileDiff(repoId!, path!, staged, oldPath ?? undefined),
     enabled: repoId != null && path != null,
   });
 }
@@ -139,10 +133,7 @@ export function useStashPush(repoId: number) {
   });
 }
 
-export function useStashAction(
-  repoId: number,
-  action: "pop" | "apply" | "drop",
-) {
+export function useStashAction(repoId: number, action: "pop" | "apply" | "drop") {
   const invalidate = useInvalidateWorktree(repoId);
   const fn = {
     pop: ipc.gitStashPop,
@@ -383,9 +374,7 @@ export function useUpdateBody(repoId: number) {
           comments:
             target === "pr"
               ? prev.comments
-              : prev.comments.map((c) =>
-                  c.id === id ? { ...c, body } : c,
-                ),
+              : prev.comments.map((c) => (c.id === id ? { ...c, body } : c)),
         });
       }
       return { key, prev };

@@ -1,0 +1,17 @@
+# Build output
+dist
+coverage
+
+# Dependencies & lockfile
+node_modules
+pnpm-lock.yaml
+
+# Rust / Tauri backend — not Prettier's domain
+src-tauri
+
+# Prose and docs are maintained by hand
+docs
+**/*.md
+
+# Workflow / CI YAML is maintained by hand
+.github

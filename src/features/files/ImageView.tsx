@@ -19,13 +19,7 @@ function formatBytes(n: number): string {
 /** Inline preview for an image file: the image scaled to fit the pane, with a
  * caption showing its name, on-disk size, and pixel dimensions. Replaces the
  * "Binary file — not shown." placeholder for supported image types. */
-export function ImageView({
-  repoId,
-  path,
-}: {
-  repoId: number;
-  path: string;
-}) {
+export function ImageView({ repoId, path }: { repoId: number; path: string }) {
   const image = useImageFile(repoId, path);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const name = path.split("/").pop() ?? path;

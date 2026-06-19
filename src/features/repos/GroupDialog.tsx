@@ -1,13 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  FolderInput,
-  FolderSync,
-  Loader2,
-  Lock,
-  RefreshCw,
-  Trash2,
-  Unlink,
-} from "lucide-react";
+import { FolderInput, FolderSync, Loader2, Lock, RefreshCw, Trash2, Unlink } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -78,8 +70,7 @@ export function GroupDialog({
   const canOfferBind = !editing || !bound;
   // The default group shows ungrouped repos; everything else counts members.
   const repoCount = group ? visibleRepos(repos.data ?? [], group).length : 0;
-  const busy =
-    create.isPending || update.isPending || bind.isPending || sync.isPending;
+  const busy = create.isPending || update.isPending || bind.isPending || sync.isPending;
 
   async function chooseFolder() {
     const dir = await pickDirectory("Choose a folder to keep in sync");
@@ -131,9 +122,7 @@ export function GroupDialog({
         />
 
         <div>
-          <p className="mb-2 text-xs font-medium text-[var(--color-muted-foreground)]">
-            Icon
-          </p>
+          <p className="mb-2 text-xs font-medium text-[var(--color-muted-foreground)]">Icon</p>
           <div className="flex flex-wrap gap-1.5">
             {/* Initials (no icon) */}
             <button
@@ -191,18 +180,11 @@ export function GroupDialog({
                   checked={bindEnabled}
                   onChange={(e) => setBindEnabled(e.target.checked)}
                 />
-                <span className="text-sm font-medium">
-                  Keep this group in sync with a folder
-                </span>
+                <span className="text-sm font-medium">Keep this group in sync with a folder</span>
               </label>
               {bindEnabled && (
                 <div className="mt-2 space-y-1.5 pl-6">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={chooseFolder}
-                  >
+                  <Button type="button" size="sm" variant="outline" onClick={chooseFolder}>
                     <FolderInput /> Choose folder…
                   </Button>
                   {folderPath && (
@@ -275,9 +257,7 @@ function BoundFolderSection({
   const lastScan = lastScanAt ? relativeTimeSqlite(lastScanAt) : null;
   return (
     <div className="rounded-md border p-3">
-      <p className="mb-2 text-xs font-medium text-[var(--color-muted-foreground)]">
-        Synced folder
-      </p>
+      <p className="mb-2 text-xs font-medium text-[var(--color-muted-foreground)]">Synced folder</p>
       <div
         className="flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-2 py-1.5"
         title="The bound folder cannot be changed"
@@ -298,13 +278,7 @@ function BoundFolderSection({
         {lastScan ? ` • last scan ${lastScan}` : ""}
       </p>
       <div className="mt-2 flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={onRescan}
-          disabled={rescanning}
-        >
+        <Button type="button" size="sm" variant="outline" onClick={onRescan} disabled={rescanning}>
           {rescanning ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           Rescan now
         </Button>

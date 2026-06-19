@@ -70,9 +70,7 @@ export function CleanupStaleDialog({
       qc.invalidateQueries({ queryKey: ["log", repoId] });
       qc.invalidateQueries({ queryKey: ["repo-statuses"] });
       if (deleted.length > 0) {
-        toast.success(
-          `Deleted ${deleted.length} stale branch${deleted.length === 1 ? "" : "es"}`,
-        );
+        toast.success(`Deleted ${deleted.length} stale branch${deleted.length === 1 ? "" : "es"}`);
       }
       for (const f of failed) {
         toast.error(`Couldn't delete ${f.name}: ${f.error ?? "unknown error"}`);
@@ -84,7 +82,8 @@ export function CleanupStaleDialog({
   function toggle(name: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   }
@@ -98,9 +97,8 @@ export function CleanupStaleDialog({
         <DialogHeader>
           <DialogTitle>Clean up stale branches</DialogTitle>
           <DialogDescription>
-            Local branches whose upstream was deleted on the remote (merged &amp;
-            gone). The current branch and <code>main</code>/<code>master</code>{" "}
-            are never listed.
+            Local branches whose upstream was deleted on the remote (merged &amp; gone). The current
+            branch and <code>main</code>/<code>master</code> are never listed.
           </DialogDescription>
         </DialogHeader>
 
@@ -131,9 +129,7 @@ export function CleanupStaleDialog({
                 <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-xs font-medium">
-                      {b.name}
-                    </span>
+                    <span className="truncate font-mono text-xs font-medium">{b.name}</span>
                     {b.upstream && (
                       <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
                         was {b.upstream}
@@ -143,8 +139,7 @@ export function CleanupStaleDialog({
                   {b.last_commit_subject && (
                     <div className="truncate text-xs text-[var(--color-muted-foreground)]">
                       {b.last_commit_sha} · {b.last_commit_subject}
-                      {b.last_commit_time != null &&
-                        ` · ${relativeTime(b.last_commit_time)}`}
+                      {b.last_commit_time != null && ` · ${relativeTime(b.last_commit_time)}`}
                     </div>
                   )}
                 </div>
@@ -161,9 +156,7 @@ export function CleanupStaleDialog({
                   type="checkbox"
                   checked={allSelected}
                   onChange={() =>
-                    setSelected(
-                      allSelected ? new Set() : new Set(branches.map((b) => b.name)),
-                    )
+                    setSelected(allSelected ? new Set() : new Set(branches.map((b) => b.name)))
                   }
                 />
                 Select all
@@ -182,11 +175,7 @@ export function CleanupStaleDialog({
                 del.mutate([...selected]);
               }}
             >
-              {del.isPending ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <Trash2 />
-              )}
+              {del.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
               Delete {selected.size > 0 ? selected.size : ""} branch
               {selected.size === 1 ? "" : "es"}
             </Button>

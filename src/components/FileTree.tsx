@@ -40,9 +40,7 @@ function buildTree(files: FileChange[]): TreeNode[] {
     for (let i = 0; i < parts.length - 1; i++) {
       const seg = parts[i];
       const path = dir.path ? `${dir.path}/${seg}` : seg;
-      let child = dir.children.find(
-        (c): c is DirNode => c.kind === "dir" && c.name === seg,
-      );
+      let child = dir.children.find((c): c is DirNode => c.kind === "dir" && c.name === seg);
       if (!child) {
         child = { kind: "dir", name: seg, path, children: [] };
         dir.children.push(child);
@@ -118,14 +116,10 @@ function FileRow({
         {file.status[0].toUpperCase()}
       </span>
       {file.additions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#16a34a]">
-          +{file.additions}
-        </span>
+        <span className="shrink-0 text-xs font-medium text-[#16a34a]">+{file.additions}</span>
       )}
       {file.deletions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#dc2626]">
-          −{file.deletions}
-        </span>
+        <span className="shrink-0 text-xs font-medium text-[#dc2626]">−{file.deletions}</span>
       )}
     </button>
   );
@@ -205,7 +199,8 @@ export function FileTree({
   function toggle(path: string) {
     setCollapsed((prev) => {
       const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }

@@ -69,8 +69,7 @@ export const useTheme = create<ThemeState>((set, get) => {
       applyTheme(theme);
       set({ preference, theme });
     },
-    toggle: () =>
-      get().setPreference(get().theme === "dark" ? "light" : "dark"),
+    toggle: () => get().setPreference(get().theme === "dark" ? "light" : "dark"),
     set: (theme) => get().setPreference(theme),
   };
 });

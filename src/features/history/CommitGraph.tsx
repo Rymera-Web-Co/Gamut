@@ -14,12 +14,7 @@ export function CommitGraph({ row, width }: { row: CommitRow; width: number }) {
   const h = ROW_HEIGHT;
 
   return (
-    <svg
-      width={svgWidth}
-      height={h}
-      className="shrink-0"
-      style={{ display: "block" }}
-    >
+    <svg width={svgWidth} height={h} className="shrink-0" style={{ display: "block" }}>
       {row.paths.map((p, i) => {
         const x1 = cx(p.from_col);
         const x2 = cx(p.to_col);
@@ -30,9 +25,7 @@ export function CommitGraph({ row, width }: { row: CommitRow; width: number }) {
           x1 === x2
             ? `M ${x1} ${y1} L ${x2} ${y2}`
             : `M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`;
-        return (
-          <path key={i} d={d} stroke={color} strokeWidth={1.5} fill="none" />
-        );
+        return <path key={i} d={d} stroke={color} strokeWidth={1.5} fill="none" />;
       })}
       <circle
         cx={cx(row.node_col)}

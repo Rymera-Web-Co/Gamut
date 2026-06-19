@@ -26,8 +26,7 @@ function RefBadge({ label }: { label: RefLabel }) {
     remote: "border-[var(--color-border)] text-[var(--color-muted-foreground)]",
     tag: "border-transparent text-white",
   };
-  const bg =
-    label.kind === "head" ? "#16a34a" : label.kind === "tag" ? "#d97706" : undefined;
+  const bg = label.kind === "head" ? "#16a34a" : label.kind === "tag" ? "#d97706" : undefined;
   return (
     <span
       className={cn(
@@ -91,20 +90,12 @@ function CommitListRow({
   );
 }
 
-function CommitDetailPanel({
-  repoId,
-  sha,
-}: {
-  repoId: number;
-  sha: string;
-}) {
+function CommitDetailPanel({ repoId, sha }: { repoId: number; sha: string }) {
   const detail = useCommitDetail(repoId, sha);
   const [openFile, setOpenFile] = useState<FileChange | null>(null);
 
   if (!detail.data) {
-    return (
-      <div className="p-4 text-sm text-[var(--color-muted-foreground)]">Loading…</div>
-    );
+    return <div className="p-4 text-sm text-[var(--color-muted-foreground)]">Loading…</div>;
   }
   const d = detail.data;
 
@@ -162,9 +153,7 @@ export function HistoryView() {
     if (!historySha) return;
     setSelectedSha(historySha);
     setQuery("");
-    const idx = (logQuery.data?.commits ?? []).findIndex(
-      (c) => c.sha === historySha,
-    );
+    const idx = (logQuery.data?.commits ?? []).findIndex((c) => c.sha === historySha);
     if (idx >= 0) listRef.current?.scrollToIndex(idx, { align: "center" });
     setHistorySha(null);
   }, [historySha, logQuery.data, setHistorySha]);
@@ -230,10 +219,7 @@ export function HistoryView() {
                   // "Load more" is the last row, so it appears only at the bottom.
                   if (i >= commits.length) {
                     return (
-                      <div
-                        key="load-more"
-                        className="flex justify-center border-t p-2"
-                      >
+                      <div key="load-more" className="flex justify-center border-t p-2">
                         <Button
                           variant="outline"
                           size="sm"

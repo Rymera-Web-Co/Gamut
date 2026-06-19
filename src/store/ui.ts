@@ -223,8 +223,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
-  toggleCommandPalette: () =>
-    set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+  toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
   setFilesPanel: (filesPanel) => {
     localStorage.setItem(FILES_PANEL_KEY, filesPanel);
     set({ filesPanel });
@@ -318,18 +317,14 @@ export const useUiStore = create<UiState>((set, get) => ({
       const g = s.terminals[groupId];
       if (!g) return {};
       const customTitle = title.trim() || undefined;
-      const tabs = g.tabs.map((t) =>
-        t.id === tabId ? { ...t, customTitle } : t,
-      );
+      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, customTitle } : t));
       return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   setActivePane: (groupId, tabId, paneId) =>
     set((s) => {
       const g = s.terminals[groupId];
       if (!g) return {};
-      const tabs = g.tabs.map((t) =>
-        t.id === tabId ? { ...t, activePaneId: paneId } : t,
-      );
+      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t));
       return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   closeTerminalTab: (groupId, tabId) =>
@@ -370,9 +365,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       }
       const activePaneId =
         tab.activePaneId === paneId ? panes[panes.length - 1].id : tab.activePaneId;
-      const tabs = g.tabs.map((t) =>
-        t.id === tabId ? { ...t, panes, activePaneId } : t,
-      );
+      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, panes, activePaneId } : t));
       return { ...patch, terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   markTermActivity: (paneId, kind) =>

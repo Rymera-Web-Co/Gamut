@@ -70,7 +70,10 @@ function locatePane(paneId: string): { target: NotifyTarget; title: string } | n
   for (const [gid, gt] of Object.entries(terminals)) {
     for (const tab of gt.tabs) {
       if (tab.panes.some((p) => p.id === paneId)) {
-        return { target: { groupId: Number(gid), tabId: tab.id, paneId }, title: termTabLabel(tab) };
+        return {
+          target: { groupId: Number(gid), tabId: tab.id, paneId },
+          title: termTabLabel(tab),
+        };
       }
     }
   }
@@ -496,11 +499,7 @@ export function TerminalPane() {
         s.handleSplit();
         return;
       }
-      if (
-        e.shiftKey &&
-        !e.altKey &&
-        (e.code === "BracketRight" || e.code === "BracketLeft")
-      ) {
+      if (e.shiftKey && !e.altKey && (e.code === "BracketRight" || e.code === "BracketLeft")) {
         if (tabs.length && s.gt?.activeTabId) {
           e.preventDefault();
           const i = tabs.findIndex((t) => t.id === s.gt!.activeTabId);
@@ -543,8 +542,7 @@ export function TerminalPane() {
   const tabs = gt?.tabs ?? [];
   const canNewTab = defaultTarget() != null;
   const n = activePanes.length;
-  const activeDead =
-    activeTab != null && deadKeys.has(activeTab.activePaneId);
+  const activeDead = activeTab != null && deadKeys.has(activeTab.activePaneId);
 
   return (
     <div
@@ -566,123 +564,123 @@ export function TerminalPane() {
           // active tab's focused pane is already "seen" (and cleared).
           const tabKind = tab.id === gt?.activeTabId ? undefined : tabActivity(tab);
           return (
-          <div
-            key={tab.id}
-            role="tab"
-            aria-selected={tab.id === gt?.activeTabId}
-            // Don't start a drag while the label is being renamed — the input
-            // needs normal text selection/caret behaviour.
-            draggable={editingTabId !== tab.id}
-            onClick={() => activeGroupId != null && selectTerminalTab(activeGroupId, tab.id)}
-            onDragStart={(e) => {
-              if (activeGroupId == null) return;
-              setDrag({ kind: "tab", groupId: activeGroupId, id: tab.id });
-              e.dataTransfer.setData("text/plain", termTabLabel(tab));
-              e.dataTransfer.effectAllowed = "move";
-            }}
-            onDragEnd={() => {
-              clearDrag();
-              setDragOverTab(null);
-            }}
-            onDragOver={(e) => {
-              const d = getDrag();
-              // Only same-group tab drags reorder; ignore repo/group/cross-group.
-              if (d?.kind !== "tab" || d.groupId !== activeGroupId || d.id === tab.id) {
-                return;
-              }
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              setDragOverTab({ id: tab.id, edge: tabEdgeFor(e) });
-            }}
-            onDragLeave={() => {
-              setDragOverTab((cur) => (cur?.id === tab.id ? null : cur));
-            }}
-            onDrop={(e) => {
-              const d = getDrag();
-              if (
-                d?.kind === "tab" &&
-                d.groupId === activeGroupId &&
-                d.id !== tab.id &&
-                activeGroupId != null
-              ) {
-                e.preventDefault();
-                reorderTerminalTab(
-                  activeGroupId,
-                  d.id,
-                  tab.id,
-                  tabEdgeFor(e) === "right" ? "after" : "before",
-                );
-              }
-              setDragOverTab(null);
-              clearDrag();
-            }}
-            className={cn(
-              "flex min-w-0 cursor-pointer items-center gap-1.5 border-r border-[var(--color-border)] px-3",
-              tab.id === gt?.activeTabId
-                ? "bg-[var(--color-background)] text-[var(--color-foreground)]"
-                : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
-              // Insertion line on the hovered edge — listed last so its colour
-              // wins over the default right border.
-              dragOverTab?.id === tab.id &&
-                dragOverTab.edge === "left" &&
-                "border-l-2 border-l-[var(--color-primary)]",
-              dragOverTab?.id === tab.id &&
-                dragOverTab.edge === "right" &&
-                "border-r-2 border-r-[var(--color-primary)]",
-            )}
-          >
-            {tabKind && <ActivityDot kind={tabKind} />}
-            {editingTabId === tab.id ? (
-              <input
-                autoFocus
-                value={draftTitle}
-                placeholder={tab.title}
-                aria-label={`Rename ${termTabLabel(tab)} terminal`}
-                // Terminal labels are arbitrary names, not prose — don't let
-                // the platform rewrite or flag them.
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitRename();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    setEditingTabId(null);
-                  }
-                }}
-                className="min-w-0 w-24 rounded border border-[var(--color-accent)] bg-[var(--color-background)] px-1 text-[var(--color-foreground)] outline-none"
-              />
-            ) : (
-              <span
-                className="min-w-0 truncate"
-                title="Double-click to rename"
-                onDoubleClick={() => beginRename(tab)}
-              >
-                {termTabLabel(tab)}
-              </span>
-            )}
-            {tab.panes.length > 1 && (
-              <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
-                ×{tab.panes.length}
-              </span>
-            )}
-            <button
-              aria-label={`Close ${termTabLabel(tab)} terminal`}
-              title="Close tab"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCloseTab(tab.id);
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.id === gt?.activeTabId}
+              // Don't start a drag while the label is being renamed — the input
+              // needs normal text selection/caret behaviour.
+              draggable={editingTabId !== tab.id}
+              onClick={() => activeGroupId != null && selectTerminalTab(activeGroupId, tab.id)}
+              onDragStart={(e) => {
+                if (activeGroupId == null) return;
+                setDrag({ kind: "tab", groupId: activeGroupId, id: tab.id });
+                e.dataTransfer.setData("text/plain", termTabLabel(tab));
+                e.dataTransfer.effectAllowed = "move";
               }}
-              className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+              onDragEnd={() => {
+                clearDrag();
+                setDragOverTab(null);
+              }}
+              onDragOver={(e) => {
+                const d = getDrag();
+                // Only same-group tab drags reorder; ignore repo/group/cross-group.
+                if (d?.kind !== "tab" || d.groupId !== activeGroupId || d.id === tab.id) {
+                  return;
+                }
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setDragOverTab({ id: tab.id, edge: tabEdgeFor(e) });
+              }}
+              onDragLeave={() => {
+                setDragOverTab((cur) => (cur?.id === tab.id ? null : cur));
+              }}
+              onDrop={(e) => {
+                const d = getDrag();
+                if (
+                  d?.kind === "tab" &&
+                  d.groupId === activeGroupId &&
+                  d.id !== tab.id &&
+                  activeGroupId != null
+                ) {
+                  e.preventDefault();
+                  reorderTerminalTab(
+                    activeGroupId,
+                    d.id,
+                    tab.id,
+                    tabEdgeFor(e) === "right" ? "after" : "before",
+                  );
+                }
+                setDragOverTab(null);
+                clearDrag();
+              }}
+              className={cn(
+                "flex min-w-0 cursor-pointer items-center gap-1.5 border-r border-[var(--color-border)] px-3",
+                tab.id === gt?.activeTabId
+                  ? "bg-[var(--color-background)] text-[var(--color-foreground)]"
+                  : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+                // Insertion line on the hovered edge — listed last so its colour
+                // wins over the default right border.
+                dragOverTab?.id === tab.id &&
+                  dragOverTab.edge === "left" &&
+                  "border-l-2 border-l-[var(--color-primary)]",
+                dragOverTab?.id === tab.id &&
+                  dragOverTab.edge === "right" &&
+                  "border-r-2 border-r-[var(--color-primary)]",
+              )}
             >
-              <X className="size-3" />
-            </button>
-          </div>
+              {tabKind && <ActivityDot kind={tabKind} />}
+              {editingTabId === tab.id ? (
+                <input
+                  autoFocus
+                  value={draftTitle}
+                  placeholder={tab.title}
+                  aria-label={`Rename ${termTabLabel(tab)} terminal`}
+                  // Terminal labels are arbitrary names, not prose — don't let
+                  // the platform rewrite or flag them.
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitRename();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditingTabId(null);
+                    }
+                  }}
+                  className="min-w-0 w-24 rounded border border-[var(--color-accent)] bg-[var(--color-background)] px-1 text-[var(--color-foreground)] outline-none"
+                />
+              ) : (
+                <span
+                  className="min-w-0 truncate"
+                  title="Double-click to rename"
+                  onDoubleClick={() => beginRename(tab)}
+                >
+                  {termTabLabel(tab)}
+                </span>
+              )}
+              {tab.panes.length > 1 && (
+                <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
+                  ×{tab.panes.length}
+                </span>
+              )}
+              <button
+                aria-label={`Close ${termTabLabel(tab)} terminal`}
+                title="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCloseTab(tab.id);
+                }}
+                className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
           );
         })}
 
@@ -787,9 +785,7 @@ export function TerminalPane() {
               <Plus className="size-3.5" />
               New terminal
             </button>
-            {!canNewTab && (
-              <span>Add a repository or bind a folder to this group first.</span>
-            )}
+            {!canNewTab && <span>Add a repository or bind a folder to this group first.</span>}
           </div>
         )}
       </div>

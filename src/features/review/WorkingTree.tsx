@@ -14,11 +14,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
@@ -95,14 +91,10 @@ function ChangeRow({
         {name}
       </span>
       {file.additions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#16a34a]">
-          +{file.additions}
-        </span>
+        <span className="shrink-0 text-xs font-medium text-[#16a34a]">+{file.additions}</span>
       )}
       {file.deletions > 0 && (
-        <span className="shrink-0 text-xs font-medium text-[#dc2626]">
-          −{file.deletions}
-        </span>
+        <span className="shrink-0 text-xs font-medium text-[#dc2626]">−{file.deletions}</span>
       )}
       <span
         className="w-3 shrink-0 text-center text-xs font-bold"
@@ -130,22 +122,13 @@ function ChangeRow({
               )}
             </button>
           </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="w-64 p-3"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <PopoverContent align="end" className="w-64 p-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm">
-              Discard changes to{" "}
-              <span className="font-mono font-medium">{name}</span>? This can't
+              Discard changes to <span className="font-mono font-medium">{name}</span>? This can't
               be undone.
             </p>
             <div className="mt-3 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setConfirmDiscard(false)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setConfirmDiscard(false)}>
                 Cancel
               </Button>
               <Button
@@ -206,9 +189,7 @@ function SectionHeader({
   return (
     <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-[var(--color-sidebar)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
       <span>{title}</span>
-      <span className="rounded-full bg-[var(--color-accent)] px-1.5 text-[10px]">
-        {count}
-      </span>
+      <span className="rounded-full bg-[var(--color-accent)] px-1.5 text-[10px]">{count}</span>
       {count > 0 && (action || confirm) && (
         <div className="ml-auto flex items-center gap-1">
           {action && (
@@ -235,11 +216,7 @@ function SectionHeader({
               <PopoverContent align="end" className="w-64 p-3">
                 <p className="text-sm">{confirm.message}</p>
                 <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setConfirmOpen(false)}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)}>
                     Cancel
                   </Button>
                   <Button
@@ -313,12 +290,7 @@ function StashBar({ repoId }: { repoId: number }) {
               />
               Include untracked files
             </label>
-            <Button
-              size="sm"
-              className="w-full"
-              disabled={push.isPending}
-              onClick={doPush}
-            >
+            <Button size="sm" className="w-full" disabled={push.isPending} onClick={doPush}>
               {push.isPending && <Loader2 className="animate-spin" />}
               Stash
             </Button>
@@ -392,13 +364,7 @@ function StashBar({ repoId }: { repoId: number }) {
   );
 }
 
-function CommitForm({
-  repoId,
-  stagedCount,
-}: {
-  repoId: number;
-  stagedCount: number;
-}) {
+function CommitForm({ repoId, stagedCount }: { repoId: number; stagedCount: number }) {
   const commit = useCommit(repoId);
   const [message, setMessage] = useState("");
   const canCommit = stagedCount > 0 && message.trim().length > 0 && !commit.isPending;
@@ -555,9 +521,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
               discardPending={discard.isPending}
               onDiscard={() => {
                 discard.mutate([f.path]);
-                setSelected((s) =>
-                  s?.staged === false && s.file.path === f.path ? null : s,
-                );
+                setSelected((s) => (s?.staged === false && s.file.path === f.path ? null : s));
               }}
             />
           ))}
@@ -565,9 +529,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
           {staged.length === 0 && unstaged.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
               <FileCheck2 className="size-7 text-[var(--color-muted-foreground)]" />
-              <p className="text-sm text-[var(--color-muted-foreground)]">
-                Working tree clean.
-              </p>
+              <p className="text-sm text-[var(--color-muted-foreground)]">Working tree clean.</p>
             </div>
           )}
         </div>

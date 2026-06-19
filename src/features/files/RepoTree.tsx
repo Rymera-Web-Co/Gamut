@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -91,20 +85,9 @@ interface NodeProps {
   onCancelCreate: () => void;
 }
 
-function Entry({
-  entry,
-  ...props
-}: NodeProps & { entry: DirEntry }) {
-  const {
-    parentPath,
-    depth,
-    selectedPath,
-    onSelect,
-    changes,
-    openPaths,
-    onToggle,
-    onContextMenu,
-  } = props;
+function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
+  const { parentPath, depth, selectedPath, onSelect, changes, openPaths, onToggle, onContextMenu } =
+    props;
   const path = join(parentPath, entry.name);
 
   const onCtx = (e: MouseEvent) => {
@@ -163,9 +146,7 @@ function Entry({
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
         "flex w-full items-center gap-2 py-1 pr-3 text-left text-sm",
-        selectedPath === path
-          ? "bg-[var(--color-accent)]"
-          : "hover:bg-[var(--color-accent)]",
+        selectedPath === path ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
         entry.is_ignored && "opacity-50",
       )}
     >
@@ -177,11 +158,7 @@ function Entry({
         {entry.name}
       </span>
       {status && (
-        <span
-          className="shrink-0 text-xs font-bold"
-          style={{ color }}
-          title={status}
-        >
+        <span className="shrink-0 text-xs font-bold" style={{ color }} title={status}>
           {status[0].toUpperCase()}
         </span>
       )}
@@ -207,10 +184,7 @@ function CreateRow({
   const Icon = mode === "file" ? FilePlus : FolderPlus;
   const trimmed = name.trim();
   return (
-    <div
-      className="flex items-center gap-2 py-0.5 pr-3"
-      style={{ paddingLeft: depth * 14 + 8 }}
-    >
+    <div className="flex items-center gap-2 py-0.5 pr-3" style={{ paddingLeft: depth * 14 + 8 }}>
       <Icon className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
       <input
         autoFocus
@@ -236,8 +210,7 @@ function CreateRow({
 }
 
 function Children(props: NodeProps) {
-  const { repoId, parentPath, depth, pending, creating, onCreate, onCancelCreate } =
-    props;
+  const { repoId, parentPath, depth, pending, creating, onCreate, onCancelCreate } = props;
   const { data, isLoading, isError } = useDirChildren(repoId, parentPath, true);
 
   const showCreate = pending != null && pending.dir === parentPath;
@@ -275,9 +248,7 @@ function Children(props: NodeProps) {
         </p>
       );
     } else {
-      body = entries.map((entry) => (
-        <Entry key={entry.name} entry={entry} {...props} />
-      ));
+      body = entries.map((entry) => <Entry key={entry.name} entry={entry} {...props} />);
     }
   }
 
@@ -330,11 +301,7 @@ export function RepoTree({
   }, []);
 
   // Where a create on the menu target should land.
-  const targetDir = menu
-    ? menu.kind === "dir"
-      ? menu.path
-      : parentDir(menu.path)
-    : "";
+  const targetDir = menu ? (menu.kind === "dir" ? menu.path : parentDir(menu.path)) : "";
 
   function startCreate(mode: "file" | "folder") {
     // Force the target dir open so its inline input row is visible.

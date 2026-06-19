@@ -12,7 +12,7 @@ export function summarizePull(out: string): string {
   if (!text) return "Pulled";
 
   // Nothing to pull — git's own message is already short, keep it verbatim.
-  if (/^already up[ \-]to[ \-]date\.?$/im.test(text)) return "Already up to date.";
+  if (/^already up[ -]to[ -]date\.?$/im.test(text)) return "Already up to date.";
 
   // The diffstat totals line, e.g. "3 files changed, 12 insertions(+), 2 deletions(-)".
   const stat = text.match(/^\s*\d+ files? changed.*$/im);
