@@ -630,6 +630,11 @@ export function TerminalPane() {
                 value={draftTitle}
                 placeholder={tab.title}
                 aria-label={`Rename ${termTabLabel(tab)} terminal`}
+                // Terminal labels are arbitrary names, not prose — don't let
+                // the platform rewrite or flag them.
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 onChange={(e) => setDraftTitle(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 onBlur={commitRename}
