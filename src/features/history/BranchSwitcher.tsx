@@ -34,6 +34,13 @@ export function BranchSwitcher({
 
   const checkout = useMutation({
     mutationFn: (name: string) => ipc.checkoutBranch(repoId, name),
+    // Close the dropdown as soon as a target is picked so the in-progress state
+    // shows on the branch field itself (the checkout can take a moment). Errors
+    // surface via the global mutation toast.
+    onMutate: () => {
+      setOpen(false);
+      setFilter("");
+    },
     onSuccess: () => {
       // Per-repo, cheaply-keyed queries — refresh just this repo immediately.
       qc.invalidateQueries({ queryKey: ["branches", repoId] });
@@ -44,8 +51,6 @@ export function BranchSwitcher({
       // single coalesced `repos-changed` round — a checkout moves HEAD, which the
       // watcher always sees. Invalidating it here too would stage a second,
       // redundant scan of every registered repo for a single-repo switch (#100).
-      setOpen(false);
-      setFilter("");
     },
   });
 
@@ -57,15 +62,27 @@ export function BranchSwitcher({
   const tagList = (tags.data ?? []).filter((t) => t.toLowerCase().includes(q));
   const empty = branchList.length === 0 && tagList.length === 0;
 
+  // While a checkout runs, dim the field and swap the branch glyph for a spinner
+  // (both size-3, so the row never reflows) so the switch reads as in-progress
+  // even after the popover closes (#100).
+  const switching = checkout.isPending;
+
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             title="Switch branch or tag"
-            className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)]"
+            aria-busy={switching}
+            className={`flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)] ${
+              switching ? "pointer-events-none opacity-60" : ""
+            }`}
           >
-            <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
+            {switching ? (
+              <Loader2 className="size-3 animate-spin text-[var(--color-muted-foreground)]" />
+            ) : (
+              <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
+            )}
             <span className="max-w-28 truncate">{current}</span>
             <ChevronDown className="size-2.5 opacity-60" />
           </button>
@@ -81,11 +98,6 @@ export function BranchSwitcher({
               className="h-8"
             />
           </div>
-          {checkout.isError && (
-            <p className="px-3 pb-2 text-xs text-[var(--color-destructive)]">
-              {String(checkout.error)}
-            </p>
-          )}
           <div className="max-h-72 overflow-auto border-t">
             {empty ? (
               <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
@@ -133,11 +145,6 @@ export function BranchSwitcher({
               </>
             )}
           </div>
-          {checkout.isPending && (
-            <div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-[var(--color-muted-foreground)]">
-              <Loader2 className="size-3.5 animate-spin" /> Checking out…
-            </div>
-          )}
           <button
             onClick={() => {
               setOpen(false);
