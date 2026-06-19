@@ -228,6 +228,12 @@ export function CommandPalette() {
             onKeyDown={onKeyDown}
             placeholder="Search repos, groups, terminals…"
             className="h-9 border-none shadow-none focus-visible:ring-0"
+            // Search queries are repo/group/terminal names (kebab-case, code
+            // identifiers) — never dictionary words. Pass input through verbatim.
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            autoComplete="off"
           />
         </div>
         <div className="max-h-80 overflow-auto py-1">
