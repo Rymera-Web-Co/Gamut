@@ -60,6 +60,7 @@ pub fn run() {
             commands::system::db_health,
             commands::repo::list_repos,
             commands::repo::repo_statuses,
+            commands::repo::repo_status,
             commands::repo::register_repo,
             commands::repo::remove_repo,
             commands::repo::touch_repo,

@@ -359,30 +359,34 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
 
 /// Blocking core of [`repo_statuses`]: compute each repo's status from its path.
 fn compute_repo_statuses(rows: Vec<(i64, String)>) -> AppResult<Vec<RepoStatus>> {
-    let mut out = Vec::with_capacity(rows.len());
-    for (id, path) in rows {
-        let mut status = RepoStatus {
-            id,
-            branch: None,
-            ahead: 0,
-            behind: 0,
-            has_uncommitted_changes: false,
-        };
-        if let Ok(repo) = git::open(std::path::Path::new(&path)) {
-            status.has_uncommitted_changes = has_uncommitted_changes(&repo);
-            if let Ok(head) = repo.head() {
-                status.branch = head.shorthand().map(|s| s.to_string());
-                if head.is_branch() {
-                    if let Some(b) = &status.branch {
-                        if let Ok(local) = repo.find_branch(b, BranchType::Local) {
-                            if let Ok(up) = local.upstream() {
-                                if let (Some(l), Some(u)) =
-                                    (local.get().target(), up.get().target())
-                                {
-                                    if let Ok((a, behind)) = repo.graph_ahead_behind(l, u) {
-                                        status.ahead = a;
-                                        status.behind = behind;
-                                    }
+    Ok(rows
+        .into_iter()
+        .map(|(id, path)| compute_repo_status(id, &path))
+        .collect())
+}
+
+/// Compute a single repo's branch and ahead/behind from its path. Never errors:
+/// an unreadable repo just yields a zeroed status (matching the batch scan).
+fn compute_repo_status(id: i64, path: &str) -> RepoStatus {
+    let mut status = RepoStatus {
+        id,
+        branch: None,
+        ahead: 0,
+        behind: 0,
+        has_uncommitted_changes: false,
+    };
+    if let Ok(repo) = git::open(std::path::Path::new(path)) {
+        status.has_uncommitted_changes = has_uncommitted_changes(&repo);
+        if let Ok(head) = repo.head() {
+            status.branch = head.shorthand().map(|s| s.to_string());
+            if head.is_branch() {
+                if let Some(b) = &status.branch {
+                    if let Ok(local) = repo.find_branch(b, BranchType::Local) {
+                        if let Ok(up) = local.upstream() {
+                            if let (Some(l), Some(u)) = (local.get().target(), up.get().target()) {
+                                if let Ok((a, behind)) = repo.graph_ahead_behind(l, u) {
+                                    status.ahead = a;
+                                    status.behind = behind;
                                 }
                             }
                         }
@@ -390,9 +394,20 @@ fn compute_repo_statuses(rows: Vec<(i64, String)>) -> AppResult<Vec<RepoStatus>>
                 }
             }
         }
-        out.push(status);
     }
-    Ok(out)
+    status
+}
+
+/// Single-repo variant of [`repo_statuses`] — recompute one repo's branch and
+/// ahead/behind without rescanning every registered repo. The frontend calls
+/// this right after a pull/push lands new refs so the ahead/behind count updates
+/// immediately, instead of waiting on a gated all-repos scan (#101). Still goes
+/// through the git-status gate so it can't stampede the libiconv lock (#89).
+#[tauri::command]
+pub async fn repo_status(state: State<'_, AppState>, repo_id: i64) -> AppResult<RepoStatus> {
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    let path = path.to_string_lossy().into_owned();
+    crate::commands::run_git_gated(&state, move || Ok(compute_repo_status(repo_id, &path))).await
 }
 
 #[derive(Serialize)]
