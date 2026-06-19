@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, GitBranch, Loader2, Sparkles, Tag as TagIcon } from "lucide-react";
 
@@ -18,6 +18,12 @@ export function BranchSwitcher({
   const [open, setOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  // A fast checkout can flip `isPending` back before the browser paints, so the
+  // in-progress state would never be seen. Hold it for a short minimum window so
+  // the spinner/dim always shows at least briefly (#100).
+  const [spinHold, setSpinHold] = useState(false);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(holdTimer.current ?? undefined), []);
 
   // Branch/tag lists are only needed when the dropdown is open, so they load
   // lazily — keeps the repo list cheap when many rows each have a switcher.
@@ -40,6 +46,9 @@ export function BranchSwitcher({
     onMutate: () => {
       setOpen(false);
       setFilter("");
+      setSpinHold(true);
+      clearTimeout(holdTimer.current ?? undefined);
+      holdTimer.current = setTimeout(() => setSpinHold(false), 500);
     },
     onSuccess: () => {
       // Per-repo, cheaply-keyed queries — refresh just this repo immediately.
@@ -65,7 +74,7 @@ export function BranchSwitcher({
   // While a checkout runs, dim the field and swap the branch glyph for a spinner
   // (both size-3, so the row never reflows) so the switch reads as in-progress
   // even after the popover closes (#100).
-  const switching = checkout.isPending;
+  const switching = checkout.isPending || spinHold;
 
   return (
     <>
