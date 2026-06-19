@@ -5,7 +5,7 @@ mod git;
 mod state;
 mod watch;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 use tauri::{Manager, WindowEvent};
@@ -35,6 +35,7 @@ pub fn run() {
                 bound_folders: Mutex::new(Vec::new()),
                 terminals: Mutex::new(HashMap::new()),
                 git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),
+                op_log: Mutex::new(VecDeque::new()),
             });
 
             // Watch registered repos' .git so external changes reflect live.
@@ -150,6 +151,9 @@ pub fn run() {
             commands::terminal::terminal_kill,
             commands::updater::check_for_update,
             commands::updater::download_and_install_update,
+            commands::diagnostics::diagnostics_snapshot,
+            commands::diagnostics::diagnostics_write,
+            commands::diagnostics::diagnostics_record_stall,
         ])
         .on_window_event(|window, event| {
             // Tear down all PTYs when the main window closes so no shell is left

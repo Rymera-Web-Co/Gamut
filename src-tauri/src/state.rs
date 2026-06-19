@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
 use tokio::sync::Semaphore;
 
+use crate::commands::diagnostics::OpTiming;
 use crate::commands::terminal::Session;
 use crate::watch::RepoWatcher;
 
@@ -38,4 +39,7 @@ pub struct AppState {
     pub terminals: Mutex<HashMap<String, Session>>,
     /// Limits concurrent git status/diff scans; see [`GIT_STATUS_CONCURRENCY`].
     pub git_gate: Semaphore,
+    /// Rolling in-memory log of git operation timings for diagnostics (#90);
+    /// capped at `commands::diagnostics::OP_LOG_CAP`.
+    pub op_log: Mutex<VecDeque<OpTiming>>,
 }
