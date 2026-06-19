@@ -72,28 +72,6 @@ pub fn record(state: &AppState, timing: OpTiming) {
     }
 }
 
-/// Time a synchronous fallible op, record it, and return its result.
-pub fn timed<T>(
-    state: &AppState,
-    op: &str,
-    repo_id: Option<i64>,
-    f: impl FnOnce() -> AppResult<T>,
-) -> AppResult<T> {
-    let start = Instant::now();
-    let result = f();
-    record(
-        state,
-        OpTiming::finished(
-            op,
-            repo_id,
-            start,
-            result.is_ok(),
-            result.as_ref().err().map(|e| e.to_string()),
-        ),
-    );
-    result
-}
-
 /// Aggregate timing for one operation name.
 #[derive(Serialize)]
 pub struct OpStat {
