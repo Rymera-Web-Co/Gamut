@@ -33,9 +33,25 @@ fn index_blob_text(repo: &Repository, index: &Index, path: &str) -> Option<(Stri
 /// Staged + unstaged changes for the working tree. Untracked files show up as
 /// unstaged additions. HEAD may be unborn (a fresh repo) — then everything in
 /// the index is a staged addition.
+///
+/// The unstaged diff is a full working-tree scan that recurses into untracked
+/// directories, which on a large repo can take seconds. This command used to be
+/// synchronous, so it ran on the main/UI thread and could freeze the whole app
+/// (issue #88). It now resolves the repo path up front and runs the git2 work on
+/// a blocking thread, keeping the UI responsive.
 #[tauri::command]
-pub fn git_worktree_status(state: State<AppState>, repo_id: i64) -> AppResult<WorktreeStatus> {
-    let repo = open_repo(&state, repo_id)?;
+pub async fn git_worktree_status(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<WorktreeStatus> {
+    let path = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, worktree_status_at).await
+}
+
+/// Blocking core of [`git_worktree_status`]; opens the repo from `path` so it
+/// holds no `State` borrow and can run on a blocking thread.
+fn worktree_status_at(path: &Path) -> AppResult<WorktreeStatus> {
+    let repo = crate::git::open(path)?;
     let head_tree = repo
         .head()
         .ok()
