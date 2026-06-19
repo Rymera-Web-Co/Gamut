@@ -75,10 +75,16 @@ jobs:
             name: linux-x64
             target: ''
             args: ''
+          # Windows nightly builds only the NSIS installer, not MSI. The MSI
+          # bundler rejects our date-stamped version (e.g. 0.5.1-nightly.20260618):
+          # it requires the semver prerelease AND build metadata to be numeric-only
+          # and <= 65535, which a YYYYMMDD date can't satisfy. NSIS has no such
+          # constraint, and createUpdaterArtifacts still emits the .nsis.zip +
+          # signature the updater needs. Stable releases (release.yml) keep MSI.
           - platform: windows-latest
             name: windows-x64
             target: ''
-            args: ''
+            args: --bundles nsis
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
