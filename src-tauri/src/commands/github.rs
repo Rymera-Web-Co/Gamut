@@ -1861,7 +1861,10 @@ mod tests {
             "https://ghe.example.com/api/v3"
         );
         assert_eq!(
-            normalize_base(Some("  https://ghe.example.com/api/v3  ".into()), DEFAULT_API),
+            normalize_base(
+                Some("  https://ghe.example.com/api/v3  ".into()),
+                DEFAULT_API
+            ),
             "https://ghe.example.com/api/v3"
         );
     }
