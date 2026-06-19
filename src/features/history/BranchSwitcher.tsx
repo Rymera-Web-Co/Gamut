@@ -35,12 +35,15 @@ export function BranchSwitcher({
   const checkout = useMutation({
     mutationFn: (name: string) => ipc.checkoutBranch(repoId, name),
     onSuccess: () => {
+      // Per-repo, cheaply-keyed queries — refresh just this repo immediately.
       qc.invalidateQueries({ queryKey: ["branches", repoId] });
       qc.invalidateQueries({ queryKey: ["git-tags", repoId] });
       qc.invalidateQueries({ queryKey: ["log", repoId] });
       qc.invalidateQueries({ queryKey: ["review-files", repoId] });
-      qc.invalidateQueries({ queryKey: ["repos"] });
-      qc.invalidateQueries({ queryKey: ["repo-statuses"] });
+      // The all-repos `repo-statuses` scan is left to the filesystem watcher's
+      // single coalesced `repos-changed` round — a checkout moves HEAD, which the
+      // watcher always sees. Invalidating it here too would stage a second,
+      // redundant scan of every registered repo for a single-repo switch (#100).
       setOpen(false);
       setFilter("");
     },
