@@ -34,6 +34,7 @@ pub fn run() {
                 watcher: Mutex::new(None),
                 bound_folders: Mutex::new(Vec::new()),
                 terminals: Mutex::new(HashMap::new()),
+                git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),
             });
 
             // Watch registered repos' .git so external changes reflect live.

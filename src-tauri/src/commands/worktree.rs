@@ -8,7 +8,7 @@ use crate::commands::history::{
     blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
 };
 use crate::commands::sync::run_git;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 /// The working tree split the way a staging UI needs it: what's staged for the
@@ -35,17 +35,23 @@ fn index_blob_text(repo: &Repository, index: &Index, path: &str) -> Option<(Stri
 /// the index is a staged addition.
 ///
 /// The unstaged diff is a full working-tree scan that recurses into untracked
-/// directories, which on a large repo can take seconds. This command used to be
-/// synchronous, so it ran on the main/UI thread and could freeze the whole app
-/// (issue #88). It now resolves the repo path up front and runs the git2 work on
-/// a blocking thread, keeping the UI responsive.
+/// directories. It runs under the git-status gate and on a blocking thread so a
+/// burst of per-repo refreshes can't stampede into a libiconv lock convoy
+/// (issue #89).
 #[tauri::command]
 pub async fn git_worktree_status(
     state: State<'_, AppState>,
     repo_id: i64,
 ) -> AppResult<WorktreeStatus> {
     let path = repo_path(&state, repo_id)?;
-    crate::commands::run_git_blocking(path, worktree_status_at).await
+    let _permit = state
+        .git_gate
+        .acquire()
+        .await
+        .map_err(|e| AppError::Other(format!("git status gate closed: {e}")))?;
+    tauri::async_runtime::spawn_blocking(move || worktree_status_at(&path))
+        .await
+        .map_err(|e| AppError::Other(format!("worktree status task panicked: {e}")))?
 }
 
 /// Blocking core of [`git_worktree_status`]; opens the repo from `path` so it
