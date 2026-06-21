@@ -33,6 +33,15 @@ export type ShortcutId =
   | "view.history"
   | "view.review"
   | "view.pulls"
+  | "selectGroup1"
+  | "selectGroup2"
+  | "selectGroup3"
+  | "selectGroup4"
+  | "selectGroup5"
+  | "selectGroup6"
+  | "selectGroup7"
+  | "selectGroup8"
+  | "selectGroup9"
   | "toggleSidebar"
   | "repoSearch"
   | "toggleTheme"
@@ -50,7 +59,7 @@ export interface ShortcutDef {
   id: ShortcutId;
   label: string;
   /** UI grouping in the Keyboard settings panel. */
-  category: "View" | "Layout" | "Git" | "Repos";
+  category: "View" | "Groups" | "Layout" | "Git" | "Repos";
   defaultBinding: Binding;
   /**
    * Whether the command still fires while the user is typing in an input, the
@@ -61,36 +70,103 @@ export interface ShortcutDef {
 }
 
 /**
- * The full command set, in display order. Bindings here mirror the previously
- * hardcoded `useKeyboardShortcuts` switch exactly, so defaults are unchanged.
+ * The full command set, in display order.
+ *
+ * The number row follows the cmux/iTerm convention (issue #95): the primary
+ * modifier + 1–9 (⌘1–⌘9 on macOS, Ctrl+1–9 elsewhere) selects the Nth group in
+ * the rail, and the view tabs move to literal Control + 1–4. All bindings are
+ * user-remappable from Settings → Keyboard.
  */
 export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "view.files",
     label: "Go to Files",
     category: "View",
-    defaultBinding: { mod: true, code: "Digit1" },
+    defaultBinding: { ctrl: true, code: "Digit1" },
     whenTyping: true,
   },
   {
     id: "view.history",
     label: "Go to History",
     category: "View",
-    defaultBinding: { mod: true, code: "Digit2" },
+    defaultBinding: { ctrl: true, code: "Digit2" },
     whenTyping: true,
   },
   {
     id: "view.review",
     label: "Go to Review",
     category: "View",
-    defaultBinding: { mod: true, code: "Digit3" },
+    defaultBinding: { ctrl: true, code: "Digit3" },
     whenTyping: true,
   },
   {
     id: "view.pulls",
     label: "Go to Pull Requests",
     category: "View",
+    defaultBinding: { ctrl: true, code: "Digit4" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup1",
+    label: "Select group 1",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit1" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup2",
+    label: "Select group 2",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit2" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup3",
+    label: "Select group 3",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit3" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup4",
+    label: "Select group 4",
+    category: "Groups",
     defaultBinding: { mod: true, code: "Digit4" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup5",
+    label: "Select group 5",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit5" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup6",
+    label: "Select group 6",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit6" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup7",
+    label: "Select group 7",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit7" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup8",
+    label: "Select group 8",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit8" },
+    whenTyping: true,
+  },
+  {
+    id: "selectGroup9",
+    label: "Select group 9",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "Digit9" },
     whenTyping: true,
   },
   {
