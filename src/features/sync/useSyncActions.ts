@@ -33,8 +33,9 @@ export function useSyncActions(repoId: number | null) {
   async function refreshRepoStatus(id: number) {
     try {
       const status = await ipc.repoStatus(id);
-      qc.setQueryData<RepoStatus[]>(["repo-statuses"], (prev) =>
-        prev?.map((s) => (s.id === id ? status : s)) ?? prev,
+      qc.setQueryData<RepoStatus[]>(
+        ["repo-statuses"],
+        (prev) => prev?.map((s) => (s.id === id ? status : s)) ?? prev,
       );
     } catch {
       qc.invalidateQueries({ queryKey: ["repo-statuses"] });
