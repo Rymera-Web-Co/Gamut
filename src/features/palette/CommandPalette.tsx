@@ -7,6 +7,7 @@ import { useGroups, useRepos } from "@/features/repos/api";
 import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { repoInGroup } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
+import { parsePaletteOrder, useSettings, type PaletteCategory } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { ACTIVITY_PRIORITY, type TermActivityKind, termTabLabel, useUiStore } from "@/store/ui";
 
@@ -71,6 +72,11 @@ export function CommandPalette() {
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+
+  // User-configured category render order (issue #86); the pinned "Needs
+  // attention" section always sits above these regardless.
+  const paletteCategoryOrder = useSettings((s) => s.values.paletteCategoryOrder);
+  const order = useMemo(() => parsePaletteOrder(paletteCategoryOrder), [paletteCategoryOrder]);
 
   const repos = useRepos();
   const groups = useGroups();
@@ -170,6 +176,14 @@ export function CommandPalette() {
         .forEach((a) => out.push(a.item));
     }
 
+    // Each reorderable category collects into its own block; the blocks are
+    // appended to `out` in the user-configured order (issue #86) below.
+    const blocks: Record<PaletteCategory, PaletteItem[]> = {
+      repos: [],
+      groups: [],
+      terminals: [],
+    };
+
     // Repos — search by name (path as secondary); empty query shows the most
     // recently opened, newest first.
     const matchedRepos = q
@@ -182,7 +196,7 @@ export function CommandPalette() {
           .sort((a, b) => (b.last_opened ?? "").localeCompare(a.last_opened ?? ""))
           .filter((r) => r.last_opened !== null);
     for (const r of matchedRepos.slice(0, REPO_LIMIT)) {
-      out.push({
+      blocks.repos.push({
         key: `repo:${r.id}`,
         category: q ? "Repos" : "Recent",
         icon: FolderGit2,
@@ -220,7 +234,7 @@ export function CommandPalette() {
       .filter((m) => m !== null)
       .sort((a, b) => a.score - b.score || a.g.name.localeCompare(b.g.name));
     for (const { g, kind } of matchedGroups) {
-      out.push({
+      blocks.groups.push({
         key: `group:${g.id}`,
         category: "Groups",
         icon: Folder,
@@ -256,7 +270,7 @@ export function CommandPalette() {
       .filter((m) => m !== null)
       .sort((a, b) => a.score - b.score || a.label.localeCompare(b.label));
     for (const { groupId, tab, label, gname, kind } of matchedTerms) {
-      out.push({
+      blocks.terminals.push({
         key: `term:${groupId}:${tab.id}`,
         category: "Terminals",
         icon: SquareTerminal,
@@ -267,11 +281,17 @@ export function CommandPalette() {
       });
     }
 
+    // Append the reorderable categories below any pinned attention section, in
+    // the user-configured order. The top item of the first non-empty block is
+    // pre-selected on open (`selected = 0`).
+    for (const cat of order) out.push(...blocks[cat]);
+
     return out;
     // `close` is omitted from deps on purpose — it only calls the stable
     // `setOpen` store action, so its identity never affects the result.
   }, [
     query,
+    order,
     repos.data,
     groups.data,
     terminals,

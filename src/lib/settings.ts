@@ -54,6 +54,11 @@ export interface Settings {
   // Updates
   updateChannel: "stable" | "nightly";
 
+  // Command palette — comma-separated order of the result categories the palette
+  // renders (see PALETTE_CATEGORIES). The "Needs attention" section (#84) always
+  // sits above these regardless of order. Parsed via `parsePaletteOrder`.
+  paletteCategoryOrder: string;
+
   // Keyboard — JSON map of per-command binding overrides (see lib/shortcuts.ts).
   // "" means no overrides (every command uses its default).
   keybindings: string;
@@ -72,6 +77,34 @@ export interface Settings {
  */
 export const TERMINAL_SOUNDS = ["chime", "ping", "blip", "knock", "alert", "custom"] as const;
 export type TerminalSound = (typeof TERMINAL_SOUNDS)[number];
+
+/**
+ * Reorderable command-palette result categories (issue #86). "repos" covers the
+ * Repos/Recent block; the order here is the order the palette renders them in.
+ * The list doubles as the source of truth for the default and for validation.
+ */
+export const PALETTE_CATEGORIES = ["repos", "groups", "terminals"] as const;
+export type PaletteCategory = (typeof PALETTE_CATEGORIES)[number];
+
+/**
+ * Parse the `paletteCategoryOrder` setting into a complete, de-duplicated order.
+ * Unknown/duplicate tokens are dropped and any categories missing from the
+ * stored value are appended in their canonical order, so the result is always a
+ * full permutation of `PALETTE_CATEGORIES` even if the stored string is corrupt.
+ */
+export function parsePaletteOrder(raw: string): PaletteCategory[] {
+  const valid = new Set<string>(PALETTE_CATEGORIES);
+  const seen = new Set<PaletteCategory>();
+  const out: PaletteCategory[] = [];
+  for (const token of raw.split(",").map((s) => s.trim())) {
+    if (valid.has(token) && !seen.has(token as PaletteCategory)) {
+      seen.add(token as PaletteCategory);
+      out.push(token as PaletteCategory);
+    }
+  }
+  for (const c of PALETTE_CATEGORIES) if (!seen.has(c)) out.push(c);
+  return out;
+}
 
 export const DEFAULTS: Settings = {
   editorFontSize: 12,
@@ -110,6 +143,9 @@ export const DEFAULTS: Settings = {
 
   // Updates
   updateChannel: "stable",
+
+  // Default preserves the historical render order (Repos/Recent → Groups → Terminals).
+  paletteCategoryOrder: PALETTE_CATEGORIES.join(","),
 
   keybindings: "",
 
