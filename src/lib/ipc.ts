@@ -473,6 +473,7 @@ export const ipc = {
   // repos
   listRepos: () => invoke<Repo[]>("list_repos"),
   repoStatuses: () => invoke<RepoStatus[]>("repo_statuses"),
+  repoStatus: (repoId: number) => invoke<RepoStatus>("repo_status", { repoId }),
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),

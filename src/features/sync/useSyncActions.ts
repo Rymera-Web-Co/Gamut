@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { ipc } from "@/lib/ipc";
+import { ipc, type RepoStatus } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 
 import { summarizePull } from "./summarizePull";
@@ -23,7 +23,23 @@ export function useSyncActions(repoId: number | null) {
     qc.invalidateQueries({ queryKey: ["branches", repoId] });
     qc.invalidateQueries({ queryKey: ["log", repoId] });
     qc.invalidateQueries({ queryKey: ["review-files", repoId] });
-    qc.invalidateQueries({ queryKey: ["repo-statuses"] });
+  }
+
+  // Refresh just this repo's ahead/behind and patch it into the cached
+  // `repo-statuses` list, so the commit count updates the moment the pull/push
+  // returns — rather than waiting on a full all-repos status scan (which is
+  // gated and walks every repo's working tree), or on the filesystem watcher's
+  // debounced round (#101). Falls back to a full invalidation if it fails.
+  async function refreshRepoStatus(id: number) {
+    try {
+      const status = await ipc.repoStatus(id);
+      qc.setQueryData<RepoStatus[]>(
+        ["repo-statuses"],
+        (prev) => prev?.map((s) => (s.id === id ? status : s)) ?? prev,
+      );
+    } catch {
+      qc.invalidateQueries({ queryKey: ["repo-statuses"] });
+    }
   }
 
   function requireRepo() {
@@ -36,6 +52,7 @@ export function useSyncActions(repoId: number | null) {
     mutationFn: () => ipc.gitPull(requireRepo()),
     onSuccess: (out) => {
       invalidate();
+      if (repoId != null) void refreshRepoStatus(repoId);
       toast.success(summarizePull(out));
     },
   });
@@ -43,6 +60,7 @@ export function useSyncActions(repoId: number | null) {
     mutationFn: () => ipc.gitPush(requireRepo()),
     onSuccess: (out) => {
       invalidate();
+      if (repoId != null) void refreshRepoStatus(repoId);
       toast.success(out || "Pushed");
     },
   });
