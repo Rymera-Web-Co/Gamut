@@ -18,8 +18,9 @@ import { useUiStore } from "@/store/ui";
 /**
  * Global keyboard shortcuts, dispatched from the user-configurable binding map
  * (see `lib/shortcuts.ts` for the command set and `Settings → Keyboard` for
- * remapping). Defaults reproduce the original hardcoded bindings:
- *   ⌘/Ctrl+1–4 → Files / History / Review / Pull Requests
+ * remapping). Defaults:
+ *   ⌘/Ctrl+1–9 → select the Nth group in the rail (cmux-style; issue #95)
+ *   ⌃1–4 → Files / History / Review / Pull Requests
  *   ⌘/Ctrl+B repo sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
  *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal   ⌘/Ctrl+⇧+` maximize terminal
  *   ⌘/Ctrl+, settings   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
@@ -41,6 +42,7 @@ export function useKeyboardShortcuts() {
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const toggleTheme = useTheme((s) => s.toggle);
@@ -69,6 +71,7 @@ export function useKeyboardShortcuts() {
     push,
     busy,
     setActiveRepo,
+    setActiveGroup,
     setView,
     toggleRepoSidebar,
     toggleTerminal,
@@ -139,6 +142,15 @@ export function useKeyboardShortcuts() {
       "view.history": () => ref.current.setView("history"),
       "view.review": () => ref.current.setView("review"),
       "view.pulls": () => ref.current.setView("pulls"),
+      selectGroup1: () => selectGroup(1),
+      selectGroup2: () => selectGroup(2),
+      selectGroup3: () => selectGroup(3),
+      selectGroup4: () => selectGroup(4),
+      selectGroup5: () => selectGroup(5),
+      selectGroup6: () => selectGroup(6),
+      selectGroup7: () => selectGroup(7),
+      selectGroup8: () => selectGroup(8),
+      selectGroup9: () => selectGroup(9),
       toggleSidebar: () => ref.current.toggleRepoSidebar(),
       repoSearch: () => ref.current.focusRepoSearch(),
       toggleTheme: () => ref.current.toggleTheme(),
@@ -158,6 +170,16 @@ export function useKeyboardShortcuts() {
       cycleRepoNext: () => cycleRepo(1),
       cycleRepoPrev: () => cycleRepo(-1),
     };
+
+    // Select the Nth group in the rail (1-based), in rail order (`groups.data`).
+    // Returns false for an out-of-range number so the key isn't swallowed.
+    function selectGroup(n: number): boolean {
+      const s = ref.current;
+      const group = (s.groups ?? [])[n - 1];
+      if (!group) return false;
+      s.setActiveGroup(group.id);
+      return true;
+    }
 
     function onKey(e: KeyboardEvent) {
       const bindings = bindingsRef.current;
