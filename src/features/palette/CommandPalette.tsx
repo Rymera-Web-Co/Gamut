@@ -4,13 +4,32 @@ import { Folder, FolderGit2, SquareTerminal, type LucideIcon } from "lucide-reac
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGroups, useRepos } from "@/features/repos/api";
+import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { repoInGroup } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { termTabLabel, useUiStore } from "@/store/ui";
+import { ACTIVITY_PRIORITY, type TermActivityKind, termTabLabel, useUiStore } from "@/store/ui";
 
 /** Max repo results shown for a non-empty query (and recents when empty). */
 const REPO_LIMIT = 8;
+
+/**
+ * "Requesting action" is the salient subset of unseen activity (issue #84):
+ * a rung bell or an exited process — never plain `output`, which is too noisy
+ * to float to the top of the palette.
+ */
+function isAttention(kind: TermActivityKind | undefined): kind is "bell" | "exit" {
+  return kind === "bell" || kind === "exit";
+}
+
+/**
+ * Score subtracted from an attention item's text-match rank so it sorts above
+ * non-attention matches of similar relevance while a query is active, ordered
+ * by salience (exit before bell). A strong text match elsewhere can still win.
+ */
+function attentionBoost(kind: "bell" | "exit"): number {
+  return 100 + ACTIVITY_PRIORITY[kind];
+}
 
 interface PaletteItem {
   key: string;
@@ -19,6 +38,8 @@ interface PaletteItem {
   label: string;
   /** Secondary text (repo path, terminal's group) shown dimmed beside the label. */
   sublabel?: string;
+  /** Unseen-activity kind, set on "Needs attention" entries to show its dot. */
+  activity?: TermActivityKind;
   run: () => void;
 }
 
@@ -49,6 +70,7 @@ export function CommandPalette() {
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
   const terminals = useUiStore((s) => s.terminals);
+  const termActivity = useUiStore((s) => s.termActivity);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
 
   const repos = useRepos();
@@ -67,6 +89,85 @@ export function CommandPalette() {
     const defaultGroup = groupList.find((g) => g.is_default) ?? groupList[0];
 
     const out: PaletteItem[] = [];
+
+    // Navigation closures, shared so a "Needs attention" entry routes exactly
+    // like the matching Group/Terminal entry does (revealing clears activity).
+    const runGroup = (id: number) => () => {
+      setActiveGroup(id);
+      close();
+    };
+    const runTerminal = (groupId: number, tabId: string) => () => {
+      setActiveGroup(groupId);
+      setTerminalOpen(true);
+      selectTerminalTab(groupId, tabId);
+      close();
+    };
+
+    // "Needs attention" (issue #84): terminals whose hidden panes are requesting
+    // action (bell/exit only — not plain output), plus the groups that contain
+    // one. Most salient first (exit before bell). When the query is empty these
+    // are pinned as a top section; with a query active they instead boost the
+    // rank of their normal Group/Terminal rows (built below) so a strong text
+    // match elsewhere can still sort first.
+    interface Attn {
+      item: PaletteItem;
+      kind: "bell" | "exit";
+    }
+    const attention: Attn[] = [];
+    for (const [gid, gt] of Object.entries(terminals)) {
+      const groupId = Number(gid);
+      const gname = groupName.get(groupId) ?? "";
+      const gkind = groupActivityKind(gt, termActivity);
+      if (isAttention(gkind)) {
+        attention.push({
+          kind: gkind,
+          item: {
+            key: `attn-group:${groupId}`,
+            category: "Needs attention",
+            icon: Folder,
+            label: gname,
+            activity: gkind,
+            run: runGroup(groupId),
+          },
+        });
+      }
+      for (const tab of gt.tabs) {
+        const tkind = tabActivityKind(tab, termActivity);
+        if (!isAttention(tkind)) continue;
+        attention.push({
+          kind: tkind,
+          item: {
+            key: `attn-term:${groupId}:${tab.id}`,
+            category: "Needs attention",
+            icon: SquareTerminal,
+            label: termTabLabel(tab),
+            sublabel: gname,
+            activity: tkind,
+            run: runTerminal(groupId, tab.id),
+          },
+        });
+      }
+    }
+    // Lookups for the query-active boost path: which terminals/groups are flagged.
+    const groupAttn = new Map<number, "bell" | "exit">();
+    const termAttn = new Map<string, "bell" | "exit">();
+    for (const a of attention) {
+      if (a.item.key.startsWith("attn-group:"))
+        groupAttn.set(Number(a.item.key.split(":")[1]), a.kind);
+      else termAttn.set(a.item.key.slice("attn-".length), a.kind);
+    }
+
+    // With an empty query, pin the attention section on top, ordered by salience
+    // (exit before bell), then alphabetically for a stable order.
+    if (!q) {
+      attention
+        .sort(
+          (a, b) =>
+            ACTIVITY_PRIORITY[b.kind] - ACTIVITY_PRIORITY[a.kind] ||
+            a.item.label.localeCompare(b.item.label),
+        )
+        .forEach((a) => out.push(a.item));
+    }
 
     // Repos — search by name (path as secondary); empty query shows the most
     // recently opened, newest first.
@@ -106,45 +207,63 @@ export function CommandPalette() {
     }
 
     // Groups — folder-bound groups are still just groups (issue scoped
-    // "folders" to these); show them all when the query is empty.
+    // "folders" to these); show them all when the query is empty. When a query
+    // is active, an attention-flagged group's score is boosted (see #84).
     const matchedGroups = groupList
-      .map((g) => ({ g, score: rank(q, g.name) }))
-      .filter((m): m is { g: (typeof groupList)[number]; score: number } => m.score !== null)
+      .map((g) => {
+        const base = rank(q, g.name);
+        if (base === null) return null;
+        const kind = groupAttn.get(g.id);
+        return { g, kind, score: q && kind ? base - attentionBoost(kind) : base };
+      })
+      .filter((m) => m !== null)
       .sort((a, b) => a.score - b.score || a.g.name.localeCompare(b.g.name));
-    for (const { g } of matchedGroups) {
+    for (const { g, kind } of matchedGroups) {
       out.push({
         key: `group:${g.id}`,
         category: "Groups",
         icon: Folder,
         label: g.name,
-        run: () => {
-          setActiveGroup(g.id);
-          close();
-        },
+        // With a query active there's no pinned section, so show why a boosted
+        // group floated up. Empty-query groups never carry the dot here.
+        activity: q ? kind : undefined,
+        run: runGroup(g.id),
       });
     }
 
-    // Open terminal tabs across every group, labelled by their group.
-    for (const [gid, gt] of Object.entries(terminals)) {
-      const groupId = Number(gid);
-      for (const tab of gt.tabs) {
-        const label = termTabLabel(tab);
+    // Open terminal tabs across every group, labelled by their group. With a
+    // query active, attention-flagged tabs are scored with a boost (see #84).
+    const matchedTerms = Object.entries(terminals)
+      .flatMap(([gid, gt]) => {
+        const groupId = Number(gid);
         const gname = groupName.get(groupId) ?? "";
-        if (rank(q, label, gname) === null) continue;
-        out.push({
-          key: `term:${groupId}:${tab.id}`,
-          category: "Terminals",
-          icon: SquareTerminal,
-          label,
-          sublabel: gname,
-          run: () => {
-            setActiveGroup(groupId);
-            setTerminalOpen(true);
-            selectTerminalTab(groupId, tab.id);
-            close();
-          },
+        return gt.tabs.map((tab) => {
+          const label = termTabLabel(tab);
+          const base = rank(q, label, gname);
+          if (base === null) return null;
+          const kind = termAttn.get(`term:${groupId}:${tab.id}`);
+          return {
+            groupId,
+            tab,
+            label,
+            gname,
+            kind,
+            score: q && kind ? base - attentionBoost(kind) : base,
+          };
         });
-      }
+      })
+      .filter((m) => m !== null)
+      .sort((a, b) => a.score - b.score || a.label.localeCompare(b.label));
+    for (const { groupId, tab, label, gname, kind } of matchedTerms) {
+      out.push({
+        key: `term:${groupId}:${tab.id}`,
+        category: "Terminals",
+        icon: SquareTerminal,
+        label,
+        sublabel: gname,
+        activity: q ? kind : undefined,
+        run: runTerminal(groupId, tab.id),
+      });
     }
 
     return out;
@@ -155,6 +274,7 @@ export function CommandPalette() {
     repos.data,
     groups.data,
     terminals,
+    termActivity,
     activeGroupId,
     setActiveRepo,
     setActiveGroup,
@@ -254,6 +374,7 @@ export function CommandPalette() {
                   >
                     <Icon className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.activity && <ActivityDot kind={item.activity} />}
                     {item.sublabel && (
                       <span className="min-w-0 max-w-[55%] shrink-0 truncate text-xs text-[var(--color-muted-foreground)]">
                         {item.sublabel}
