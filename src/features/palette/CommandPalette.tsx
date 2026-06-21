@@ -46,8 +46,7 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
-  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
-  const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const focusTerminal = useUiStore((s) => s.focusTerminal);
   const terminals = useUiStore((s) => s.terminals);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
 
@@ -138,9 +137,11 @@ export function CommandPalette() {
           label,
           sublabel: gname,
           run: () => {
-            setActiveGroup(groupId);
-            setTerminalOpen(true);
-            selectTerminalTab(groupId, tab.id);
+            // Reveal the tab and land keyboard focus inside its active pane —
+            // same state path the notification-click handler uses. The dialog's
+            // `onCloseAutoFocus` is prevented (below) so closing the palette
+            // doesn't yank focus back out of the terminal.
+            focusTerminal(groupId, tab.id, tab.activePaneId);
             close();
           },
         });
@@ -158,8 +159,7 @@ export function CommandPalette() {
     activeGroupId,
     setActiveRepo,
     setActiveGroup,
-    setTerminalOpen,
-    selectTerminalTab,
+    focusTerminal,
   ]);
 
   // Reset query + selection each time the palette opens.
@@ -203,6 +203,13 @@ export function CommandPalette() {
         className="top-[12%] w-full max-w-xl translate-y-0 gap-0 overflow-hidden p-0 [&>button]:hidden"
         onOpenAutoFocus={(e) => {
           // Let our input grab focus rather than the first result row.
+          e.preventDefault();
+        }}
+        onCloseAutoFocus={(e) => {
+          // Radix restores focus to whatever was focused before the dialog
+          // opened (the previous app focus). For a terminal result we've just
+          // moved focus into the xterm pane, so suppress the restore — otherwise
+          // it yanks focus straight back out.
           e.preventDefault();
         }}
       >

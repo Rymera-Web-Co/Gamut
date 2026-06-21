@@ -123,6 +123,10 @@ interface UiState {
   // Monotonic counter bumped to ask the search panel to focus its input — lets
   // ⌘/Ctrl+⇧+F re-focus search even when it's already the active panel.
   searchFocusNonce: number;
+  // Monotonic counter bumped to ask the terminal pane to focus its active xterm
+  // — lets the command palette / notification click land keyboard focus inside
+  // the terminal even when its tab/pane state didn't change.
+  terminalFocusNonce: number;
   setView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null) => void;
@@ -160,6 +164,13 @@ interface UiState {
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
   renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
   setActivePane: (groupId: number, tabId: string, paneId: string) => void;
+  /**
+   * Reveal a terminal pane and put keyboard focus in it: open the panel, switch
+   * to its group/tab/pane, then bump `terminalFocusNonce` so the pane re-focuses
+   * its xterm even when none of that state changed. Used by the command palette
+   * and notification-click handler.
+   */
+  focusTerminal: (groupId: number, tabId: string, paneId: string) => void;
   /** Remove a tab (caller kills its panes' PTYs first). */
   closeTerminalTab: (groupId: number, tabId: string) => void;
   /** Remove one split pane; removes the tab if it was the last pane. */
@@ -189,6 +200,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   commandPaletteOpen: false,
   filesPanel: storedFilesPanel(),
   searchFocusNonce: 0,
+  terminalFocusNonce: 0,
   setView: (view) => set({ view }),
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
@@ -327,6 +339,14 @@ export const useUiStore = create<UiState>((set, get) => ({
       const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t));
       return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
+  focusTerminal: (groupId, tabId, paneId) => {
+    const ui = get();
+    ui.setActiveGroup(groupId);
+    ui.setTerminalOpen(true);
+    ui.selectTerminalTab(groupId, tabId);
+    ui.setActivePane(groupId, tabId, paneId);
+    set((s) => ({ terminalFocusNonce: s.terminalFocusNonce + 1 }));
+  },
   closeTerminalTab: (groupId, tabId) =>
     set((s) => {
       const g = s.terminals[groupId];
