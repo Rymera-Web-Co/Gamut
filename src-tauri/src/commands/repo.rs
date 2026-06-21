@@ -438,10 +438,25 @@ pub async fn list_git_tags(state: State<'_, AppState>, repo_id: i64) -> AppResul
 
 /// Check out a branch, tag, or commit (safe checkout — aborts if it would
 /// overwrite local edits). Local branches stay attached; tags/commits detach HEAD.
+///
+/// `checkout_tree` rewrites every working-tree file that differs between the two
+/// branches, so this runs on a blocking thread rather than the async runtime's
+/// worker pool — otherwise a large checkout would tie up an IPC worker and stall
+/// the UI (#100, sibling of #88).
 #[tauri::command]
-pub fn checkout_branch(state: State<AppState>, repo_id: i64, name: String) -> AppResult<()> {
-    let repo = open_repo(&state, repo_id)?;
-    let obj = repo.revparse_single(&name)?;
+pub async fn checkout_branch(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    name: String,
+) -> AppResult<()> {
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| checkout_at(p, &name)).await
+}
+
+/// Blocking core of [`checkout_branch`]; opens the repo from `path`.
+fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
+    let repo = git::open(path)?;
+    let obj = repo.revparse_single(name)?;
     // Peel through annotated tags to the underlying commit.
     let commit = obj.peel_to_commit()?;
 
