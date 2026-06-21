@@ -24,6 +24,12 @@ export interface Repo {
   group_ids: number[];
   /** The repo's directory no longer exists on disk (deleted/moved away). */
   missing: boolean;
+  /**
+   * Whether the entry is an actual git repository. Plain (non-git) folders can
+   * be added too; for those only the Files tab is shown and all git operations
+   * (status, branch, sync) are skipped.
+   */
+  is_git_repo: boolean;
 }
 
 export interface DiscoveredRepo {

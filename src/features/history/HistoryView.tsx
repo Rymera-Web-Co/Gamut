@@ -147,6 +147,15 @@ export function HistoryView() {
   const logQuery = useLog(repoId, limit);
   const repo = repos.data?.find((r) => r.id === repoId);
 
+  // Reset per-repo view state when the active repo changes — the component stays
+  // mounted across repo switches, so a selection/limit/filter from one repo would
+  // otherwise leak into the next.
+  useEffect(() => {
+    setSelectedSha(null);
+    setLimit(PAGE);
+    setQuery("");
+  }, [repoId]);
+
   // Reveal a commit requested from elsewhere (e.g. a PR's commit list): select
   // it, clear any active filter, scroll it into view, then clear the signal.
   useEffect(() => {
@@ -157,6 +166,18 @@ export function HistoryView() {
     if (idx >= 0) listRef.current?.scrollToIndex(idx, { align: "center" });
     setHistorySha(null);
   }, [historySha, logQuery.data, setHistorySha]);
+
+  // Drop the selection (and its detail pane) once the loaded log no longer holds
+  // it — e.g. after an in-app branch switch lands a different history that omits
+  // the previously-selected commit. Without this the right pane keeps showing a
+  // commit absent on the new branch (#106). Guard on a settled, non-empty fetch
+  // so we don't clear during the in-flight refetch between branches.
+  useEffect(() => {
+    if (!selectedSha || logQuery.isFetching) return;
+    const commits = logQuery.data?.commits;
+    if (!commits?.length) return;
+    if (!commits.some((c) => c.sha === selectedSha)) setSelectedSha(null);
+  }, [selectedSha, logQuery.data, logQuery.isFetching]);
 
   if (repoId == null) {
     return (

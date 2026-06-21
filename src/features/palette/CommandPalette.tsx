@@ -67,8 +67,7 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
-  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
-  const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const focusTerminal = useUiStore((s) => s.focusTerminal);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
@@ -96,10 +95,12 @@ export function CommandPalette() {
       setActiveGroup(id);
       close();
     };
-    const runTerminal = (groupId: number, tabId: string) => () => {
-      setActiveGroup(groupId);
-      setTerminalOpen(true);
-      selectTerminalTab(groupId, tabId);
+    const runTerminal = (groupId: number, tabId: string, paneId: string) => () => {
+      // Reveal the tab and land keyboard focus inside its active pane — the same
+      // state path the notification-click handler uses (#85). The dialog's
+      // `onCloseAutoFocus` is prevented (below) so closing the palette doesn't
+      // yank focus back out of the terminal.
+      focusTerminal(groupId, tabId, paneId);
       close();
     };
 
@@ -143,7 +144,7 @@ export function CommandPalette() {
             label: termTabLabel(tab),
             sublabel: gname,
             activity: tkind,
-            run: runTerminal(groupId, tab.id),
+            run: runTerminal(groupId, tab.id, tab.activePaneId),
           },
         });
       }
@@ -262,7 +263,7 @@ export function CommandPalette() {
         label,
         sublabel: gname,
         activity: q ? kind : undefined,
-        run: runTerminal(groupId, tab.id),
+        run: runTerminal(groupId, tab.id, tab.activePaneId),
       });
     }
 
@@ -278,8 +279,7 @@ export function CommandPalette() {
     activeGroupId,
     setActiveRepo,
     setActiveGroup,
-    setTerminalOpen,
-    selectTerminalTab,
+    focusTerminal,
   ]);
 
   // Reset query + selection each time the palette opens.
@@ -323,6 +323,13 @@ export function CommandPalette() {
         className="top-[12%] w-full max-w-xl translate-y-0 gap-0 overflow-hidden p-0 [&>button]:hidden"
         onOpenAutoFocus={(e) => {
           // Let our input grab focus rather than the first result row.
+          e.preventDefault();
+        }}
+        onCloseAutoFocus={(e) => {
+          // Radix restores focus to whatever was focused before the dialog
+          // opened (the previous app focus). For a terminal result we've just
+          // moved focus into the xterm pane, so suppress the restore — otherwise
+          // it yanks focus straight back out.
           e.preventDefault();
         }}
       >

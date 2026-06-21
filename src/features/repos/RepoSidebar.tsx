@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Folder,
   FolderGit2,
   GripVertical,
   Loader2,
@@ -105,13 +106,23 @@ function RepoRow({
         >
           <title>Folder no longer exists on disk</title>
         </AlertTriangle>
-      ) : (
+      ) : repo.is_git_repo ? (
         <FolderGit2
           className={cn(
             "mt-0.5 size-4 shrink-0",
             active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
           )}
         />
+      ) : (
+        <Folder
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+          )}
+          aria-label="Not a git repository"
+        >
+          <title>Not a git repository</title>
+        </Folder>
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1">
@@ -124,7 +135,7 @@ function RepoRow({
           >
             {repo.name}
           </span>
-          {!repo.missing && status?.has_uncommitted_changes && (
+          {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
             <span
               aria-label="Uncommitted changes"
               title="Uncommitted changes"
@@ -189,15 +200,18 @@ function RepoRow({
             </PopoverContent>
           </Popover>
         </div>
-        {/* Per-repo branch switcher + sync controls (manage without selecting). */}
-        <div
-          className="flex w-fit items-center gap-0.5"
-          onClick={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.stopPropagation()}
-        >
-          <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
-          <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
-        </div>
+        {/* Per-repo branch switcher + sync controls (manage without selecting).
+            Non-git folders have no branch or upstream, so neither is shown. */}
+        {repo.is_git_repo && (
+          <div
+            className="flex w-fit items-center gap-0.5"
+            onClick={(e) => e.stopPropagation()}
+            onDragStart={(e) => e.stopPropagation()}
+          >
+            <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
+            <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -230,10 +244,15 @@ export function RepoSidebar() {
   const groupFolder = activeGroup?.folder_path ?? null;
 
   const visible = visibleRepos(allRepos, activeGroup);
+  // Non-git folders are shown in their own section at the bottom, kept apart
+  // from real repos (they have no branch/sync and only a Files tab).
+  const gitRepos = visible.filter((r) => r.is_git_repo);
+  const nonGitRepos = visible.filter((r) => !r.is_git_repo);
 
   // Repos eligible for a group fetch — everything visible except missing folders
-  // (fetching a gone directory just errors).
-  const fetchableIds = visible.filter((r) => !r.missing).map((r) => r.id);
+  // (fetching a gone directory just errors) and non-git folders (nothing to
+  // fetch).
+  const fetchableIds = visible.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
 
   function reorder(srcId: number, targetId: number) {
     const order = moveBefore(
@@ -245,7 +264,7 @@ export function RepoSidebar() {
   }
 
   async function addRepo() {
-    const dir = await pickDirectory("Choose a git repository");
+    const dir = await pickDirectory("Choose a folder");
     if (!dir) return;
     const repo = await registerRepo.mutateAsync(dir);
     // Add the new repo to the active (non-default) group so it shows up here.
@@ -326,15 +345,35 @@ export function RepoSidebar() {
               : "No repositories in this group. Use + to add one, or drag a repo onto this group."}
           </p>
         ) : (
-          visible.map((r) => (
-            <RepoRow
-              key={r.id}
-              repo={r}
-              status={statusById.get(r.id)}
-              onRemove={(repo) => removeRepo.mutate(repo.id)}
-              onReorder={reorder}
-            />
-          ))
+          <>
+            {gitRepos.map((r) => (
+              <RepoRow
+                key={r.id}
+                repo={r}
+                status={statusById.get(r.id)}
+                onRemove={(repo) => removeRepo.mutate(repo.id)}
+                onReorder={reorder}
+              />
+            ))}
+            {nonGitRepos.length > 0 && (
+              <>
+                {gitRepos.length > 0 && (
+                  <div className="mb-1 mt-3 px-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                    Folders
+                  </div>
+                )}
+                {nonGitRepos.map((r) => (
+                  <RepoRow
+                    key={r.id}
+                    repo={r}
+                    status={statusById.get(r.id)}
+                    onRemove={(repo) => removeRepo.mutate(repo.id)}
+                    onReorder={reorder}
+                  />
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
 

@@ -16,6 +16,7 @@ import {
   ContextMenuItem,
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
+import { useActiveRepoIsGit } from "@/lib/useActiveRepo";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { useUiStore, type View } from "@/store/ui";
@@ -30,6 +31,10 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 export function TopTabs() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+  // Non-git folders only have the Files tab — History/Review/Pull Requests are
+  // git-only and hidden for them.
+  const isGitRepo = useActiveRepoIsGit();
+  const tabs = isGitRepo ? TABS : TABS.filter((t) => t.view === "files");
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const theme = useTheme((s) => s.theme);
@@ -44,7 +49,7 @@ export function TopTabs() {
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      {TABS.map(({ view: v, label, icon: Icon }) => (
+      {tabs.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
           onClick={() => setView(v)}

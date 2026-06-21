@@ -73,7 +73,12 @@ export function BranchSwitcher({
       // Per-repo, cheaply-keyed queries — refresh just this repo immediately.
       qc.invalidateQueries({ queryKey: ["branches", repoId] });
       qc.invalidateQueries({ queryKey: ["git-tags", repoId] });
-      qc.invalidateQueries({ queryKey: ["log", repoId] });
+      // History's `useLog` is keyed `["log", repoId, limit]`; this prefix match
+      // covers whatever limit is loaded (incl. after "Load more"). Force a refetch
+      // even for momentarily-inactive observers so the commit list always swaps to
+      // the new branch's HEAD — the default `'active'` refetchType can skip a query
+      // whose observer is briefly detached during the switch's re-render (#106).
+      qc.invalidateQueries({ queryKey: ["log", repoId], refetchType: "all" });
       qc.invalidateQueries({ queryKey: ["review-files", repoId] });
       // The all-repos `repo-statuses` scan is left to the filesystem watcher's
       // single coalesced `repos-changed` round — a checkout moves HEAD, which the

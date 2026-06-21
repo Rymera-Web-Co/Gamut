@@ -128,6 +128,7 @@ export function TerminalPane() {
   const termActivity = useUiStore((s) => s.termActivity);
   const markTermActivity = useUiStore((s) => s.markTermActivity);
   const clearTermActivity = useUiStore((s) => s.clearTermActivity);
+  const terminalFocusNonce = useUiStore((s) => s.terminalFocusNonce);
   const theme = useTheme((s) => s.theme);
 
   const repos = useRepos();
@@ -321,8 +322,11 @@ export function TerminalPane() {
       }
     });
     return () => cancelAnimationFrame(raf);
+    // `terminalFocusNonce` re-runs this so an external request (command palette,
+    // notification click) re-focuses the active pane even when its tab/pane
+    // state is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminalOpen, paneKey, tick]);
+  }, [terminalOpen, paneKey, tick, terminalFocusNonce]);
 
   // Re-theme all live sessions when the app theme toggles.
   useEffect(() => {

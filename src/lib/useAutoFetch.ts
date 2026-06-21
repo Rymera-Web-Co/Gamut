@@ -33,7 +33,8 @@ export function useAutoFetch() {
       running = true;
       try {
         const repos = await ipc.listRepos();
-        const ids = repos.filter((r) => !r.missing).map((r) => r.id);
+        // Skip missing folders and non-git entries (nothing to fetch).
+        const ids = repos.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
         if (ids.length > 0) await ipc.gitFetchMany(ids);
       } catch {
         // Background fetch failures are non-fatal and stay silent — the manual
