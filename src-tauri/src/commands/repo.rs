@@ -25,6 +25,10 @@ pub struct Repo {
     /// deleted or moved out of a bound folder). Surfaced as a "missing" flag in
     /// the UI; folder sync never auto-removes such repos.
     pub missing: bool,
+    /// True when the entry is an actual git repository. Plain (non-git) folders
+    /// can be added too; for those the UI shows only the Files tab and the
+    /// backend skips all git operations (status, branches, ahead/behind).
+    pub is_git_repo: bool,
 }
 
 #[derive(Serialize)]
@@ -51,8 +55,8 @@ fn ids_for(conn: &Connection, sql: &str, repo_id: i64) -> AppResult<Vec<i64>> {
 }
 
 fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
-    let (path, name, default_branch, last_opened, created_at) = conn.query_row(
-        "SELECT path, name, default_branch, last_opened, created_at FROM repos WHERE id = ?1",
+    let (path, name, default_branch, last_opened, created_at, is_git_repo) = conn.query_row(
+        "SELECT path, name, default_branch, last_opened, created_at, is_git_repo FROM repos WHERE id = ?1",
         [id],
         |row| {
             Ok((
@@ -61,6 +65,7 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)? != 0,
             ))
         },
     )?;
@@ -81,16 +86,25 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
             id,
         )?,
         missing,
+        is_git_repo,
     })
 }
 
-/// Register a repo path into the DB (idempotent). Returns its row id and whether
-/// the row was newly inserted (false = it already existed). Shared by the manual
-/// `register_repo` command and folder auto-sync. Errors if not a git repo.
+/// Register a folder path into the DB (idempotent). Returns its row id and
+/// whether the row was newly inserted (false = it already existed). Shared by
+/// the manual `register_repo` command and folder auto-sync.
+///
+/// `git::open` stays strict: a real git repo records its current branch and is
+/// flagged `is_git_repo`. A plain (non-git) folder is recorded as a non-git
+/// entry instead of failing registration — the UI shows only the Files tab for
+/// it and the backend skips all git operations.
 fn register_path(conn: &Connection, path: &std::path::Path) -> AppResult<(i64, bool)> {
-    let repo = git::open(path)?;
+    let (branch, is_git_repo) = match git::open(path) {
+        Ok(repo) => (git::current_branch(&repo), true),
+        Err(AppError::NotARepo(_)) => (None, false),
+        Err(e) => return Err(e),
+    };
     let name = git::repo_name(path);
-    let branch = git::current_branch(&repo);
     let canonical = path
         .canonicalize()
         .map(|p| p.display().to_string())
@@ -101,9 +115,9 @@ fn register_path(conn: &Connection, path: &std::path::Path) -> AppResult<(i64, b
         |r| r.get(0),
     )?;
     conn.execute(
-        "INSERT INTO repos (path, name, default_branch) VALUES (?1, ?2, ?3)
-         ON CONFLICT(path) DO UPDATE SET name = excluded.name, default_branch = excluded.default_branch",
-        rusqlite::params![canonical, name, branch],
+        "INSERT INTO repos (path, name, default_branch, is_git_repo) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(path) DO UPDATE SET name = excluded.name, default_branch = excluded.default_branch, is_git_repo = excluded.is_git_repo",
+        rusqlite::params![canonical, name, branch, is_git_repo as i64],
     )?;
     let id = conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
         r.get(0)
@@ -325,7 +339,9 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
     let started = std::time::Instant::now();
     let rows: Vec<(i64, String)> = {
         let conn = lock(&state)?;
-        let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
+        // Non-git folders have no branch / ahead-behind; skip them entirely so
+        // the scan never touches a plain directory.
+        let mut stmt = conn.prepare("SELECT id, path FROM repos WHERE is_git_repo != 0")?;
         let r = stmt
             .query_map([], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
@@ -589,7 +605,8 @@ mod tests {
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  path TEXT NOT NULL UNIQUE,
                  name TEXT NOT NULL,
-                 default_branch TEXT
+                 default_branch TEXT,
+                 is_git_repo INTEGER NOT NULL DEFAULT 1
              );
              CREATE TABLE groups (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -642,6 +659,39 @@ mod tests {
             })
             .unwrap();
         assert!(stamped.is_some());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn register_path_records_non_git_folder() {
+        let root = std::env::temp_dir().join("gamut_non_git_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let conn = test_conn();
+
+        // A plain folder (not a git repo) registers as a non-git entry instead
+        // of erroring on NotARepo.
+        let (id, inserted) = register_path(&conn, &root).unwrap();
+        assert!(inserted, "new folder is inserted");
+        let is_git: i64 = conn
+            .query_row("SELECT is_git_repo FROM repos WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(is_git, 0, "plain folder is flagged non-git");
+
+        // A real git repo registers as a git entry.
+        let repo_dir = root.join("real");
+        Repository::init(&repo_dir).unwrap();
+        let (gid, _) = register_path(&conn, &repo_dir).unwrap();
+        let is_git: i64 = conn
+            .query_row("SELECT is_git_repo FROM repos WHERE id = ?1", [gid], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(is_git, 1, "git repo is flagged git");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

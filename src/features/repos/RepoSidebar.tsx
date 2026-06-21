@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Folder,
   FolderGit2,
   GripVertical,
   Loader2,
@@ -105,13 +106,23 @@ function RepoRow({
         >
           <title>Folder no longer exists on disk</title>
         </AlertTriangle>
-      ) : (
+      ) : repo.is_git_repo ? (
         <FolderGit2
           className={cn(
             "mt-0.5 size-4 shrink-0",
             active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
           )}
         />
+      ) : (
+        <Folder
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+          )}
+          aria-label="Not a git repository"
+        >
+          <title>Not a git repository</title>
+        </Folder>
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1">
@@ -124,7 +135,15 @@ function RepoRow({
           >
             {repo.name}
           </span>
-          {!repo.missing && status?.has_uncommitted_changes && (
+          {!repo.missing && !repo.is_git_repo && (
+            <span
+              title="Not a git repository"
+              className="shrink-0 rounded-sm bg-[var(--color-muted)] px-1 py-0.5 text-[10px] font-medium leading-none text-[var(--color-muted-foreground)]"
+            >
+              Not a git repo
+            </span>
+          )}
+          {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
             <span
               aria-label="Uncommitted changes"
               title="Uncommitted changes"
@@ -189,15 +208,18 @@ function RepoRow({
             </PopoverContent>
           </Popover>
         </div>
-        {/* Per-repo branch switcher + sync controls (manage without selecting). */}
-        <div
-          className="flex w-fit items-center gap-0.5"
-          onClick={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.stopPropagation()}
-        >
-          <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
-          <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
-        </div>
+        {/* Per-repo branch switcher + sync controls (manage without selecting).
+            Non-git folders have no branch or upstream, so neither is shown. */}
+        {repo.is_git_repo && (
+          <div
+            className="flex w-fit items-center gap-0.5"
+            onClick={(e) => e.stopPropagation()}
+            onDragStart={(e) => e.stopPropagation()}
+          >
+            <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
+            <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -232,8 +254,9 @@ export function RepoSidebar() {
   const visible = visibleRepos(allRepos, activeGroup);
 
   // Repos eligible for a group fetch — everything visible except missing folders
-  // (fetching a gone directory just errors).
-  const fetchableIds = visible.filter((r) => !r.missing).map((r) => r.id);
+  // (fetching a gone directory just errors) and non-git folders (nothing to
+  // fetch).
+  const fetchableIds = visible.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
 
   function reorder(srcId: number, targetId: number) {
     const order = moveBefore(
@@ -245,7 +268,7 @@ export function RepoSidebar() {
   }
 
   async function addRepo() {
-    const dir = await pickDirectory("Choose a git repository");
+    const dir = await pickDirectory("Choose a folder");
     if (!dir) return;
     const repo = await registerRepo.mutateAsync(dir);
     // Add the new repo to the active (non-default) group so it shows up here.

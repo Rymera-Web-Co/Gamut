@@ -113,7 +113,7 @@ export function FilesView() {
 
   // Map changed working-tree paths so the tree can highlight files (and the
   // directories that contain them).
-  const status = useWorktreeStatus(repoId);
+  const status = useWorktreeStatus(repoId, repo?.is_git_repo ?? true);
   const changes = useMemo<TreeChanges>(() => {
     const files = new Map<string, string>();
     const dirs = new Set<string>();
@@ -318,16 +318,18 @@ export function FilesView() {
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="gap-1.5"
-            onClick={viewChanges}
-            title="Switch to Review (working tree)"
-          >
-            <GitCompare className="size-4" />
-            View changes
-          </Button>
+          {repo?.is_git_repo !== false && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5"
+              onClick={viewChanges}
+              title="Switch to Review (working tree)"
+            >
+              <GitCompare className="size-4" />
+              View changes
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"

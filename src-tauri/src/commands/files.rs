@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::history::{open_repo, repo_path};
+use crate::commands::history::repo_path;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -91,17 +91,23 @@ pub(crate) fn safe_join(root: &Path, rel: &str) -> AppResult<PathBuf> {
 /// the repo root). Skips `.git/`; entries ignored by `.gitignore` are flagged
 /// (`is_ignored`) rather than hidden. Directories sort before files,
 /// alphabetically (case-insensitive).
+///
+/// Works for plain (non-git) folders too: the root falls back to the registered
+/// path and nothing is flagged ignored (there's no repo to ask).
 #[tauri::command]
 pub fn list_dir(
     state: State<AppState>,
     repo_id: i64,
     rel_path: String,
 ) -> AppResult<Vec<DirEntry>> {
-    let repo = open_repo(&state, repo_id)?;
-    let root = repo
-        .workdir()
-        .ok_or_else(|| AppError::Other("bare repository has no working tree".into()))?
-        .to_path_buf();
+    let root = repo_path(&state, repo_id)?;
+    // A git repo gives us .gitignore-aware listings; a plain folder has no repo
+    // to consult, so entries are simply never flagged ignored.
+    let repo = crate::git::open(&root).ok();
+    let root = match repo.as_ref().and_then(|r| r.workdir()) {
+        Some(work) => work.to_path_buf(),
+        None => root,
+    };
 
     let dir = safe_join(&root, &rel_path)?;
     if !dir.is_dir() {
@@ -124,7 +130,11 @@ pub fn list_dir(
         };
         // Honor .gitignore (and core excludes) — but list ignored entries
         // (dimmed in the UI) rather than hiding them. `is_path_ignored` is cheap.
-        let is_ignored = repo.is_path_ignored(&rel).unwrap_or(false);
+        // Non-git folders have no repo, so nothing is flagged ignored.
+        let is_ignored = repo
+            .as_ref()
+            .map(|r| r.is_path_ignored(&rel).unwrap_or(false))
+            .unwrap_or(false);
 
         let file_type = entry.file_type()?;
         let is_symlink = file_type.is_symlink();
