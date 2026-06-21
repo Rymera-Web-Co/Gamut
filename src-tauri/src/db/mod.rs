@@ -19,6 +19,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_groups_folder",
         include_str!("migrations/0004_groups_folder.sql"),
     ),
+    (
+        "0005_repo_is_git",
+        include_str!("migrations/0005_repo_is_git.sql"),
+    ),
 ];
 
 /// Open (creating if needed) the SQLite database at `path`, enable sane pragmas,

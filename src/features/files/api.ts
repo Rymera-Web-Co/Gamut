@@ -30,12 +30,13 @@ export function useImageFile(repoId: number | null, path: string | null) {
   });
 }
 
-/** Staged + unstaged changes, used to highlight changed files in the tree. */
-export function useWorktreeStatus(repoId: number | null) {
+/** Staged + unstaged changes, used to highlight changed files in the tree.
+ * `enabled` lets callers skip it for non-git folders (which have no worktree). */
+export function useWorktreeStatus(repoId: number | null, enabled = true) {
   return useQuery({
     queryKey: ["worktree-status", repoId],
     queryFn: () => ipc.worktreeStatus(repoId!),
-    enabled: repoId != null,
+    enabled: repoId != null && enabled,
   });
 }
 

@@ -13,6 +13,7 @@ function makeRepo(id: number, group_ids: number[]): Repo {
     tag_ids: [],
     group_ids,
     missing: false,
+    is_git_repo: true,
   };
 }
 

@@ -18,6 +18,7 @@ import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch } from "@/lib/updater";
+import { useActiveRepoIsGit, useNonGitViewGuard } from "@/lib/useActiveRepo";
 import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
@@ -56,10 +57,12 @@ export default function App() {
   const terminalMaximized = useUiStore((s) => s.terminalMaximized);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const loadSettings = useSettings((s) => s.load);
+  const isGitRepo = useActiveRepoIsGit();
   useKeyboardShortcuts();
   useGitWatch();
   useAutoFetch();
   useActiveRepoReconciler();
+  useNonGitViewGuard();
   useMainThreadWatchdog();
 
   // Reconcile preferences with the DB once on startup (state is mirror-hydrated
@@ -141,9 +144,9 @@ export default function App() {
                     <TopTabs />
                     <div className="min-h-0 flex-1 overflow-hidden">
                       {view === "files" && <FilesView />}
-                      {view === "history" && <HistoryView />}
-                      {view === "review" && <ReviewView />}
-                      {view === "pulls" && <PullsView />}
+                      {isGitRepo && view === "history" && <HistoryView />}
+                      {isGitRepo && view === "review" && <ReviewView />}
+                      {isGitRepo && view === "pulls" && <PullsView />}
                     </div>
                   </main>
                 </Panel>
