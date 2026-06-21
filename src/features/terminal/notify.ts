@@ -219,11 +219,7 @@ function focusTarget(target: NotifyTarget) {
   void win.show().catch(() => {});
   void win.setFocus().catch(() => {});
 
-  const ui = useUiStore.getState();
-  ui.setActiveGroup(target.groupId);
-  ui.setTerminalOpen(true);
-  ui.selectTerminalTab(target.groupId, target.tabId);
-  ui.setActivePane(target.groupId, target.tabId, target.paneId);
+  useUiStore.getState().focusTerminal(target.groupId, target.tabId, target.paneId);
 }
 
 /**
