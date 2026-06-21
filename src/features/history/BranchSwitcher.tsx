@@ -25,6 +25,19 @@ export function BranchSwitcher({
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(holdTimer.current ?? undefined), []);
 
+  // Optimistic branch label. `currentBranch` comes from the all-repos
+  // `repo-statuses` scan, which only refreshes on the debounced watcher round —
+  // so the displayed name trails a switch by a beat. Show the picked target
+  // immediately, then drop the override once the real status moves off whatever
+  // it was when we started (handles both local checkouts and detached tags).
+  const [optimisticBranch, setOptimisticBranch] = useState<string | null>(null);
+  const branchAtMutate = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (optimisticBranch !== null && currentBranch !== branchAtMutate.current) {
+      setOptimisticBranch(null);
+    }
+  }, [currentBranch, optimisticBranch]);
+
   // Branch/tag lists are only needed when the dropdown is open, so they load
   // lazily — keeps the repo list cheap when many rows each have a switcher.
   const branches = useQuery({
@@ -43,12 +56,18 @@ export function BranchSwitcher({
     // Close the dropdown as soon as a target is picked so the in-progress state
     // shows on the branch field itself (the checkout can take a moment). Errors
     // surface via the global mutation toast.
-    onMutate: () => {
+    onMutate: (name: string) => {
       setOpen(false);
       setFilter("");
       setSpinHold(true);
       clearTimeout(holdTimer.current ?? undefined);
       holdTimer.current = setTimeout(() => setSpinHold(false), 500);
+      branchAtMutate.current = currentBranch;
+      setOptimisticBranch(name);
+    },
+    onError: () => {
+      // The switch failed — drop the optimistic label so it reverts to reality.
+      setOptimisticBranch(null);
     },
     onSuccess: () => {
       // Per-repo, cheaply-keyed queries — refresh just this repo immediately.
@@ -64,7 +83,8 @@ export function BranchSwitcher({
   });
 
   const q = filter.toLowerCase();
-  const current = currentBranch ?? branches.data?.find((b) => b.is_head)?.name ?? "detached";
+  const current =
+    optimisticBranch ?? currentBranch ?? branches.data?.find((b) => b.is_head)?.name ?? "detached";
   const branchList = (branches.data ?? [])
     .filter((b) => b.name.toLowerCase().includes(q))
     .sort((a, b) => Number(a.is_remote) - Number(b.is_remote));
