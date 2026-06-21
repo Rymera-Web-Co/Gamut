@@ -135,14 +135,6 @@ function RepoRow({
           >
             {repo.name}
           </span>
-          {!repo.missing && !repo.is_git_repo && (
-            <span
-              title="Not a git repository"
-              className="shrink-0 rounded-sm bg-[var(--color-muted)] px-1 py-0.5 text-[10px] font-medium leading-none text-[var(--color-muted-foreground)]"
-            >
-              Not a git repo
-            </span>
-          )}
           {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
             <span
               aria-label="Uncommitted changes"
