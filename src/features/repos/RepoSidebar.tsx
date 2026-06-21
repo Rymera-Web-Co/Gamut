@@ -252,6 +252,10 @@ export function RepoSidebar() {
   const groupFolder = activeGroup?.folder_path ?? null;
 
   const visible = visibleRepos(allRepos, activeGroup);
+  // Non-git folders are shown in their own section at the bottom, kept apart
+  // from real repos (they have no branch/sync and only a Files tab).
+  const gitRepos = visible.filter((r) => r.is_git_repo);
+  const nonGitRepos = visible.filter((r) => !r.is_git_repo);
 
   // Repos eligible for a group fetch — everything visible except missing folders
   // (fetching a gone directory just errors) and non-git folders (nothing to
@@ -349,15 +353,35 @@ export function RepoSidebar() {
               : "No repositories in this group. Use + to add one, or drag a repo onto this group."}
           </p>
         ) : (
-          visible.map((r) => (
-            <RepoRow
-              key={r.id}
-              repo={r}
-              status={statusById.get(r.id)}
-              onRemove={(repo) => removeRepo.mutate(repo.id)}
-              onReorder={reorder}
-            />
-          ))
+          <>
+            {gitRepos.map((r) => (
+              <RepoRow
+                key={r.id}
+                repo={r}
+                status={statusById.get(r.id)}
+                onRemove={(repo) => removeRepo.mutate(repo.id)}
+                onReorder={reorder}
+              />
+            ))}
+            {nonGitRepos.length > 0 && (
+              <>
+                {gitRepos.length > 0 && (
+                  <div className="mb-1 mt-3 px-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                    Folders
+                  </div>
+                )}
+                {nonGitRepos.map((r) => (
+                  <RepoRow
+                    key={r.id}
+                    repo={r}
+                    status={statusById.get(r.id)}
+                    onRemove={(repo) => removeRepo.mutate(repo.id)}
+                    onReorder={reorder}
+                  />
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
 
