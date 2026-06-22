@@ -46,3 +46,15 @@ describe("number-row defaults (issue #95)", () => {
     }
   });
 });
+
+describe("cycle-group defaults (issue #118)", () => {
+  it("binds ⌘/Ctrl+↑/↓ to stepping between groups", () => {
+    expect(SHORTCUT_BY_ID.cycleGroupPrev.defaultBinding).toEqual({ mod: true, code: "ArrowUp" });
+    expect(SHORTCUT_BY_ID.cycleGroupNext.defaultBinding).toEqual({ mod: true, code: "ArrowDown" });
+  });
+
+  it("groups the cycle commands with the rest of the group navigation", () => {
+    expect(SHORTCUT_BY_ID.cycleGroupPrev.category).toBe("Groups");
+    expect(SHORTCUT_BY_ID.cycleGroupNext.category).toBe("Groups");
+  });
+});
