@@ -264,12 +264,16 @@ export function TerminalPane() {
     // chords are physical-`code` matched so layout/⌥-mangling don't interfere.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
+      // Swallow the chord and write its byte sequence straight to the PTY.
+      const sendSeq = (seq: string) => {
+        e.preventDefault();
+        ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
+        return false;
+      };
       // Shift+Enter → LF (Enter stays CR), so multiline prompts get a newline
       // without submitting. Cross-platform.
       if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === "Enter") {
-        e.preventDefault();
-        ipc.terminalWrite(pane.id, encoder.encode("\n")).catch(() => {});
-        return false;
+        return sendSeq("\n");
       }
       // The cursor/word chords below are macOS-only: elsewhere xterm already
       // emits the right sequences for Ctrl/Alt+Arrow and Backspace.
@@ -277,20 +281,12 @@ export function TerminalPane() {
       // ⌘ = whole-line moves (Ctrl-A/E) and kill-to-start (Ctrl-U).
       if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         const seq = TERM_META_KEYS[e.code];
-        if (seq) {
-          e.preventDefault();
-          ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
-          return false;
-        }
+        if (seq) return sendSeq(seq);
       }
       // ⌥ = word-wise moves (ESC b / ESC f) and delete-word.
       if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         const seq = TERM_ALT_KEYS[e.code];
-        if (seq) {
-          e.preventDefault();
-          ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
-          return false;
-        }
+        if (seq) return sendSeq(seq);
       }
       return true;
     });
