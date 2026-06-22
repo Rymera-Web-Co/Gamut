@@ -42,7 +42,18 @@ interface SessionEntry {
 const FONT_FAMILY =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", "Roboto Mono", monospace';
 
-/** xterm palette tuned to the app's light/dark surfaces. */
+/**
+ * xterm palette tuned to the app's light/dark surfaces.
+ *
+ * The full 16-colour ANSI palette is defined explicitly (issue #120). Without
+ * it xterm.js falls back to its built-in defaults, where `white` ≈ #e5e5e5 and
+ * `brightWhite` ≈ #ffffff — and TUIs that assume a dark terminal (e.g. Claude
+ * Code printing diffs) emit explicit white / bright-white text, which then
+ * lands near-invisible on the light surface. The light palette below
+ * (GitHub-light) remaps white/brightWhite/brightBlack to dark, readable values
+ * so that text stays legible regardless of which ANSI colour a program picks.
+ * The dark palette (GitHub-dark-dimmed) matches the dark surface.
+ */
 function xtermTheme(theme: Theme) {
   return theme === "dark"
     ? {
@@ -50,12 +61,47 @@ function xtermTheme(theme: Theme) {
         foreground: "#adbac7",
         cursor: "#adbac7",
         selectionBackground: "#3392ff55",
+        black: "#545d68",
+        red: "#f47067",
+        green: "#57ab5a",
+        yellow: "#c69026",
+        blue: "#539bf5",
+        magenta: "#b083f0",
+        cyan: "#39c5cf",
+        white: "#909dab",
+        brightBlack: "#636e7b",
+        brightRed: "#ff938a",
+        brightGreen: "#6bc46d",
+        brightYellow: "#daaa3f",
+        brightBlue: "#6cb6ff",
+        brightMagenta: "#dcbdfb",
+        brightCyan: "#56d4dd",
+        brightWhite: "#cdd9e5",
       }
     : {
         background: "#f4f2ec",
         foreground: "#2b2b28",
         cursor: "#2b2b28",
         selectionBackground: "#2563eb33",
+        black: "#24292e",
+        red: "#d73a49",
+        green: "#28a745",
+        yellow: "#b08800",
+        blue: "#0366d6",
+        magenta: "#6f42c1",
+        cyan: "#1b7c83",
+        // `white` is the normal-intensity light colour TUIs use for body text;
+        // on a light surface it must be dark, not near-white.
+        white: "#6a737d",
+        brightBlack: "#959da5",
+        brightRed: "#cb2431",
+        brightGreen: "#22863a",
+        brightYellow: "#b08800",
+        brightBlue: "#005cc5",
+        brightMagenta: "#5a32a3",
+        brightCyan: "#3192aa",
+        // bright-white text (e.g. Claude Code's diff body) stays dark & readable.
+        brightWhite: "#24292e",
       };
 }
 
