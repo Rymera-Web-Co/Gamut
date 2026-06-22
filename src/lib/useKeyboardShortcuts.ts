@@ -24,7 +24,8 @@ import { useUiStore } from "@/store/ui";
  *   ⌘/Ctrl+B repo sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
  *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal   ⌘/Ctrl+⇧+` maximize terminal
  *   ⌘/Ctrl+, settings   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
- *   ⌘/Ctrl+⌥+F fetch group   ⌃Tab / ⌃⇧Tab cycle repos in the active group
+ *   ⌘/Ctrl+⌥+F fetch group   ⌘/Ctrl+↑/↓ cycle groups in the rail
+ *   ⌃Tab / ⌃⇧Tab cycle repos in the active group
  *
  * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view, and
  * terminal tab shortcuts (⌘T/⌘W/⌘D/⌘⇧[ ]/⌘⌥1–9) live in TerminalPane.
@@ -167,6 +168,8 @@ export function useKeyboardShortcuts() {
         if (s.activeRepoId != null && !s.busy) s.pull.mutate();
       },
       fetchGroup: () => fetchActiveGroup(),
+      cycleGroupPrev: () => cycleGroup(-1),
+      cycleGroupNext: () => cycleGroup(1),
       cycleRepoNext: () => cycleRepo(1),
       cycleRepoPrev: () => cycleRepo(-1),
     };
@@ -178,6 +181,19 @@ export function useKeyboardShortcuts() {
       const group = (s.groups ?? [])[n - 1];
       if (!group) return false;
       s.setActiveGroup(group.id);
+      return true;
+    }
+
+    // Step to the previous/next group in rail order, wrapping at the ends — the
+    // group-level counterpart to `cycleRepo`. Returns false when there are fewer
+    // than two groups so the key isn't swallowed.
+    function cycleGroup(dir: 1 | -1): boolean {
+      const s = ref.current;
+      const list = s.groups ?? [];
+      if (list.length < 2) return false;
+      const cur = list.findIndex((g) => g.id === s.activeGroupId);
+      const next = cur < 0 ? list[0] : list[(cur + dir + list.length) % list.length];
+      s.setActiveGroup(next.id);
       return true;
     }
 

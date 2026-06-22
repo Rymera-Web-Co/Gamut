@@ -52,6 +52,8 @@ export type ShortcutId =
   | "push"
   | "pull"
   | "fetchGroup"
+  | "cycleGroupPrev"
+  | "cycleGroupNext"
   | "cycleRepoNext"
   | "cycleRepoPrev";
 
@@ -167,6 +169,20 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Select group 9",
     category: "Groups",
     defaultBinding: { mod: true, code: "Digit9" },
+    whenTyping: true,
+  },
+  {
+    id: "cycleGroupPrev",
+    label: "Previous group",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "ArrowUp" },
+    whenTyping: true,
+  },
+  {
+    id: "cycleGroupNext",
+    label: "Next group",
+    category: "Groups",
+    defaultBinding: { mod: true, code: "ArrowDown" },
     whenTyping: true,
   },
   {
