@@ -12,6 +12,7 @@ import { useGroups, useRepos } from "@/features/repos/api";
 import { clearDrag, getDrag, setDrag } from "@/lib/dnd";
 import { visibleRepos } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
+import { isMac } from "@/lib/shortcuts";
 import { useSettings } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -59,6 +60,20 @@ function xtermTheme(theme: Theme) {
 }
 
 const encoder = new TextEncoder();
+
+/** macOS ⌘+key → control byte the shell's line editor expects. */
+const TERM_META_KEYS: Record<string, string> = {
+  ArrowLeft: "\x01", // ⌘← → start of line (Ctrl-A)
+  ArrowRight: "\x05", // ⌘→ → end of line (Ctrl-E)
+  Backspace: "\x15", // ⌘⌫ → kill to start of line (Ctrl-U)
+};
+
+/** macOS ⌥+key → escape sequence for word-wise editing. */
+const TERM_ALT_KEYS: Record<string, string> = {
+  ArrowLeft: "\x1bb", // ⌥← → back one word (ESC b)
+  ArrowRight: "\x1bf", // ⌥→ → forward one word (ESC f)
+  Backspace: "\x1b\x7f", // ⌥⌫ → delete previous word
+};
 
 /**
  * Find which group/tab a pane belongs to (a background pane firing an event may
@@ -242,6 +257,43 @@ export function TerminalPane() {
       }),
     );
     term.open(el);
+    // Translate the macOS line-editing chords xterm doesn't emit on its own into
+    // the readline/emacs control sequences the shell expects, and make
+    // Shift+Enter a soft newline (#114). Returning false tells xterm to skip its
+    // default handling; the bytes are written straight to the PTY instead. The
+    // chords are physical-`code` matched so layout/⌥-mangling don't interfere.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      // Shift+Enter → LF (Enter stays CR), so multiline prompts get a newline
+      // without submitting. Cross-platform.
+      if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === "Enter") {
+        e.preventDefault();
+        ipc.terminalWrite(pane.id, encoder.encode("\n")).catch(() => {});
+        return false;
+      }
+      // The cursor/word chords below are macOS-only: elsewhere xterm already
+      // emits the right sequences for Ctrl/Alt+Arrow and Backspace.
+      if (!isMac()) return true;
+      // ⌘ = whole-line moves (Ctrl-A/E) and kill-to-start (Ctrl-U).
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        const seq = TERM_META_KEYS[e.code];
+        if (seq) {
+          e.preventDefault();
+          ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
+          return false;
+        }
+      }
+      // ⌥ = word-wise moves (ESC b / ESC f) and delete-word.
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        const seq = TERM_ALT_KEYS[e.code];
+        if (seq) {
+          e.preventDefault();
+          ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
+          return false;
+        }
+      }
+      return true;
+    });
     // The addon only reveals links on hover, so persistently tint + underline
     // them too — otherwise there's no hint the output is interactive (#78).
     const linkHighlighter = attachLinkHighlighter(term, () => linkColor(themeRef.current));
