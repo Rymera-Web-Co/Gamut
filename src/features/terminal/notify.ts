@@ -63,13 +63,58 @@ const SOUND_RECIPES: Record<Exclude<TerminalSound, "custom">, Tone[]> = {
 };
 
 let audioCtx: AudioContext | null = null;
+let keepAlive: OscillatorNode | null = null;
+let gestureResumeBound = false;
+
+/**
+ * WebKit (the macOS system webview Gamut runs in) only resumes a *suspended*
+ * AudioContext from a user gesture. A background event — Claude finishing a task
+ * while the window is unfocused — isn't a gesture, so once the context has been
+ * idle-suspended it can't revive itself and the cue is silent (#119). Re-arm on
+ * any interaction so the context is already running by the time a background
+ * event fires.
+ */
+function bindGestureResume(ac: AudioContext) {
+  if (gestureResumeBound) return;
+  gestureResumeBound = true;
+  const resume = () => {
+    if (ac.state === "suspended") void ac.resume().catch(() => {});
+  };
+  window.addEventListener("pointerdown", resume, { capture: true });
+  window.addEventListener("keydown", resume, { capture: true });
+}
+
+/**
+ * Hold the audio graph active with a continuously running, silent (gain 0)
+ * oscillator so WebKit doesn't idle-suspend the context after a quiet stretch.
+ * Without it, the first background event after a while of no sound lands on a
+ * suspended context that can't be resumed without a gesture, and plays nothing
+ * (#119). Best-effort — if it can't start we fall back to gesture-resume alone.
+ */
+function startKeepAlive(ac: AudioContext) {
+  if (keepAlive) return;
+  try {
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain).connect(ac.destination);
+    osc.start();
+    keepAlive = osc;
+  } catch {
+    /* best-effort keep-alive; gesture-resume still re-arms on interaction */
+  }
+}
 
 /** Lazily create the shared AudioContext on first playback. */
 function ctx(): AudioContext | null {
   type WithWebkit = typeof globalThis & { webkitAudioContext?: typeof AudioContext };
   const Ctor = window.AudioContext ?? (window as WithWebkit).webkitAudioContext;
   if (!Ctor) return null;
-  if (!audioCtx) audioCtx = new Ctor();
+  if (!audioCtx) {
+    audioCtx = new Ctor();
+    bindGestureResume(audioCtx);
+    startKeepAlive(audioCtx);
+  }
   return audioCtx;
 }
 
