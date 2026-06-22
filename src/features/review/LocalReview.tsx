@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { FileCheck2, Loader2 } from "lucide-react";
+import { FileCheck2, Loader2, Pencil } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { FileTree } from "@/components/FileTree";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
@@ -10,6 +11,7 @@ import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
+import { useUiStore } from "@/store/ui";
 import { useMentionables, usePrComment, useReviewFileDiff, useReviewFiles } from "./api";
 import { InlineCommentBox } from "./InlineCommentBox";
 
@@ -30,6 +32,8 @@ export function LocalReview({
 }) {
   const review = useReviewFiles(repoId, source);
   const diffPrefs = useDiffEditorPrefs();
+  const setView = useUiStore((s) => s.setView);
+  const setFilesPath = useUiStore((s) => s.setFilesPath);
   const [selected, setSelected] = useState<FileChange | null>(null);
 
   // Reset selection when the source or file set changes.
@@ -221,50 +225,77 @@ export function LocalReview({
       <ResizeHandle />
 
       <Panel className="min-w-0">
-        {!selected ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
-            Select a file to see its diff.
-          </div>
-        ) : diff.isLoading || !diff.data ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
-          </div>
-        ) : diff.data.is_binary ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
-            Binary file — diff not shown.
-          </div>
-        ) : (
-          <div className="relative h-full overflow-hidden">
-            <DiffEditor
-              height="100%"
-              theme={isDarkTheme() ? GITHUB_DARK : "light"}
-              language={languageFor(selected.path)}
-              original={diff.data.old_text ?? ""}
-              modified={diff.data.new_text ?? ""}
-              onMount={handleMount}
-              options={{
-                readOnly: true,
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                glyphMargin: !!pr,
-                ...diffPrefs,
-              }}
-            />
-            {composer && (
-              <div className="absolute inset-x-2 z-20" style={{ top: Math.max(0, overlayTop) }}>
-                <InlineCommentBox
-                  lineLabel={lineLabel}
-                  mentions={mentionables.data ?? []}
-                  hasDrafts={drafts.length > 0}
-                  posting={postComment.isPending}
-                  onCancel={closeComposer}
-                  onComment={submitComment}
-                  onAddDraft={stashDraft}
+        <div className="flex h-full flex-col">
+          {selected && (
+            <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
+                {selected.path}
+              </span>
+              {/* Deleted files no longer exist on disk, so there's nothing to edit. */}
+              {selected.status !== "deleted" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1.5"
+                  title="Edit this file in the Files tab"
+                  onClick={() => {
+                    setFilesPath(selected.path);
+                    setView("files");
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                  Edit
+                </Button>
+              )}
+            </div>
+          )}
+          <div className="min-h-0 flex-1">
+            {!selected ? (
+              <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+                Select a file to see its diff.
+              </div>
+            ) : diff.isLoading || !diff.data ? (
+              <div className="flex h-full items-center justify-center">
+                <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
+              </div>
+            ) : diff.data.is_binary ? (
+              <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+                Binary file — diff not shown.
+              </div>
+            ) : (
+              <div className="relative h-full overflow-hidden">
+                <DiffEditor
+                  height="100%"
+                  theme={isDarkTheme() ? GITHUB_DARK : "light"}
+                  language={languageFor(selected.path)}
+                  original={diff.data.old_text ?? ""}
+                  modified={diff.data.new_text ?? ""}
+                  onMount={handleMount}
+                  options={{
+                    readOnly: true,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    glyphMargin: !!pr,
+                    ...diffPrefs,
+                  }}
                 />
+                {composer && (
+                  <div className="absolute inset-x-2 z-20" style={{ top: Math.max(0, overlayTop) }}>
+                    <InlineCommentBox
+                      lineLabel={lineLabel}
+                      mentions={mentionables.data ?? []}
+                      hasDrafts={drafts.length > 0}
+                      posting={postComment.isPending}
+                      onCancel={closeComposer}
+                      onComment={submitComment}
+                      onAddDraft={stashDraft}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
+        </div>
       </Panel>
     </PanelGroup>
   );
