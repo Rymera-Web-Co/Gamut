@@ -1,6 +1,6 @@
 [package]
 name = "gamut"
-version = "0.5.0"
+version = "0.6.0"
 description = "Gamut — a local git app for reviewing PRs and browsing history"
 authors = ["Rymera"]
 edition = "2021"
