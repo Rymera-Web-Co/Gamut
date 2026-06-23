@@ -42,7 +42,7 @@ pub struct FileContent {
 /// inside `root`. For paths that don't exist yet (new file writes) the parent
 /// directory is validated instead.
 pub(crate) fn safe_join(root: &Path, rel: &str) -> AppResult<PathBuf> {
-    let escape = || AppError::Other("path escapes the repository root".into());
+    let escape = || AppError::PathEscapesRoot;
 
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
