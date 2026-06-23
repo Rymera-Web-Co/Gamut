@@ -243,6 +243,21 @@ interface MergePrVars {
  * deleted the remote head branch. Never throws: the merge already succeeded, so
  * any failure here surfaces as a non-fatal toast instead of failing the merge.
  */
+/**
+ * Whether the remote head branch is still there after a merge. GitHub's
+ * auto-delete is asynchronous, so we re-check a few times with backoff
+ * (~0s, 1s, 2s, 3s — up to ~6s) and return `false` as soon as it's gone. Only a
+ * branch that survives the whole window is treated as genuinely kept (#132).
+ */
+async function remoteBranchPersists(repoId: number, headRef: string): Promise<boolean> {
+  const delays = [1000, 2000, 3000];
+  for (let attempt = 0; ; attempt++) {
+    if (!(await ipc.githubRemoteBranchExists(repoId, headRef))) return false;
+    if (attempt >= delays.length) return true;
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+  }
+}
+
 async function postMergeCleanup(
   qc: ReturnType<typeof useQueryClient>,
   repoId: number,
@@ -255,7 +270,10 @@ async function postMergeCleanup(
     await ipc.checkoutBranch(repoId, baseRef);
     // Only drop the local branch if GitHub deleted the remote head branch
     // (its "Automatically delete head branches" setting); otherwise keep it.
-    const remoteExists = await ipc.githubRemoteBranchExists(repoId, headRef);
+    // GitHub deletes the head branch *asynchronously* after the merge call
+    // returns, so the ref can linger a second or two — poll with backoff before
+    // concluding it's being kept (#132).
+    const remoteExists = await remoteBranchPersists(repoId, headRef);
     if (!remoteExists) {
       // delete_branches refuses protected/current branches, reporting per-branch.
       const results = await ipc.deleteBranches(repoId, [headRef]);
