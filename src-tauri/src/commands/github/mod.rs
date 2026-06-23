@@ -1020,31 +1020,16 @@ pub async fn github_pr_timeline(
     let token = require_token(&state)?;
     let api = api_base(&state);
     let client = http()?;
-    let url = format!("{api}/repos/{owner}/{repo}/issues/{number}/timeline");
 
-    // Walk pages until a short page (cap at 5 pages / 500 events — plenty).
-    let mut raw: Vec<serde_json::Value> = Vec::new();
-    for page in 1..=5u32 {
-        let resp = client
-            .get(&url)
-            .query(&[("per_page", "100".to_string()), ("page", page.to_string())])
-            .bearer_auth(&token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            if page == 1 {
-                return Err(api_error("loading the PR timeline", resp).await);
-            }
-            break;
-        }
-        let batch: Vec<serde_json::Value> = resp.json().await?;
-        let full = batch.len() == 100;
-        raw.extend(batch);
-        if !full {
-            break;
-        }
-    }
+    // Follow `Link: rel="next"` to the end rather than capping at a fixed page
+    // count, so a long-lived PR's timeline isn't silently truncated (#135).
+    let raw: Vec<serde_json::Value> = get_all_pages(
+        &client,
+        &token,
+        format!("{api}/repos/{owner}/{repo}/issues/{number}/timeline?per_page=100"),
+        "loading the PR timeline",
+    )
+    .await?;
 
     let actor = |e: &serde_json::Value| str_at(e, "/actor/login");
     let actor_avatar = |e: &serde_json::Value| str_at(e, "/actor/avatar_url");
@@ -1342,16 +1327,32 @@ pub struct ReviewThread {
 }
 
 const THREADS_QUERY: &str = r#"
-query($owner:String!,$repo:String!,$number:Int!){
+query($owner:String!,$repo:String!,$number:Int!,$after:String){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
-      reviewThreads(first:100){
+      reviewThreads(first:100,after:$after){
+        pageInfo{ hasNextPage endCursor }
         nodes{
           id isResolved isOutdated path line originalLine
           comments(first:100){
+            pageInfo{ hasNextPage endCursor }
             nodes{ databaseId body createdAt url diffHunk pullRequestReview{ databaseId } author{ login avatarUrl } }
           }
         }
+      }
+    }
+  }
+}"#;
+
+/// Follow-up query for a single thread whose comments exceeded the first page
+/// (>100 replies). Pages the thread node's `comments` connection by cursor (#135).
+const THREAD_COMMENTS_QUERY: &str = r#"
+query($id:ID!,$after:String){
+  node(id:$id){
+    ... on PullRequestReviewThread{
+      comments(first:100,after:$after){
+        pageInfo{ hasNextPage endCursor }
+        nodes{ databaseId body createdAt url diffHunk pullRequestReview{ databaseId } author{ login avatarUrl } }
       }
     }
   }
@@ -1380,6 +1381,24 @@ struct GqlPr {
 #[derive(Deserialize)]
 struct GqlConn<T> {
     nodes: Vec<T>,
+    #[serde(rename = "pageInfo", default)]
+    page_info: GqlPageInfo,
+}
+#[derive(Deserialize, Default)]
+struct GqlPageInfo {
+    #[serde(rename = "hasNextPage", default)]
+    has_next_page: bool,
+    #[serde(rename = "endCursor", default)]
+    end_cursor: Option<String>,
+}
+/// Response shape for THREAD_COMMENTS_QUERY (`node(id:…)` → a review thread).
+#[derive(Deserialize)]
+struct GqlNodeData {
+    node: Option<GqlThreadComments>,
+}
+#[derive(Deserialize)]
+struct GqlThreadComments {
+    comments: GqlConn<GqlComment>,
 }
 #[derive(Deserialize)]
 struct GqlThread {
@@ -1459,58 +1478,90 @@ pub async fn github_review_threads(
     let (owner, repo) = owner_repo(&state, repo_id)?;
     let token = require_token(&state)?;
     let client = http()?;
-    let data: GqlThreadsData = graphql(
-        &client,
-        &graphql_url(&state),
-        &token,
-        THREADS_QUERY,
-        serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
-        "loading review threads",
-    )
-    .await?;
+    let url = graphql_url(&state);
 
-    let nodes = data
-        .repository
-        .and_then(|r| r.pull_request)
-        .map(|p| p.review_threads.nodes)
-        .unwrap_or_default();
+    // Page through the reviewThreads connection by cursor so a PR with >100
+    // inline review threads keeps them all rather than dropping the overflow (#135).
+    let mut nodes: Vec<GqlThread> = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let data: GqlThreadsData = graphql(
+            &client,
+            &url,
+            &token,
+            THREADS_QUERY,
+            serde_json::json!({ "owner": owner, "repo": repo, "number": number, "after": after }),
+            "loading review threads",
+        )
+        .await?;
+        let Some(conn) = data
+            .repository
+            .and_then(|r| r.pull_request)
+            .map(|p| p.review_threads)
+        else {
+            break;
+        };
+        let page = conn.page_info;
+        nodes.extend(conn.nodes);
+        match (page.has_next_page, page.end_cursor) {
+            (true, Some(cursor)) => after = Some(cursor),
+            _ => break,
+        }
+    }
 
-    Ok(nodes
-        .into_iter()
-        .map(|t| {
-            let first = t.comments.nodes.first();
-            let diff_hunk = first.and_then(|c| c.diff_hunk.clone());
-            let review_id = first
-                .and_then(|c| c.pull_request_review.as_ref())
-                .and_then(|p| p.database_id);
-            ReviewThread {
-                id: t.id,
-                is_resolved: t.is_resolved,
-                is_outdated: t.is_outdated,
-                path: t.path,
-                line: t.line.or(t.original_line),
-                diff_hunk,
-                review_id,
-                comments: t
-                    .comments
-                    .nodes
-                    .into_iter()
-                    .map(|c| ThreadComment {
-                        id: c.database_id,
-                        author: c
-                            .author
-                            .as_ref()
-                            .map(|a| a.login.clone())
-                            .unwrap_or_else(|| "ghost".into()),
-                        author_avatar: c.author.and_then(|a| a.avatar_url),
-                        body: c.body,
-                        created_at: c.created_at,
-                        url: c.url,
-                    })
-                    .collect(),
-            }
-        })
-        .collect())
+    let mut out: Vec<ReviewThread> = Vec::with_capacity(nodes.len());
+    for t in nodes {
+        // A single thread can also overflow its first 100 comments; follow that
+        // connection's cursor too so long discussions aren't truncated (#135).
+        let mut comment_nodes = t.comments.nodes;
+        let mut page = t.comments.page_info;
+        while page.has_next_page {
+            let Some(cursor) = page.end_cursor else { break };
+            let data: GqlNodeData = graphql(
+                &client,
+                &url,
+                &token,
+                THREAD_COMMENTS_QUERY,
+                serde_json::json!({ "id": t.id.clone(), "after": cursor }),
+                "loading review thread comments",
+            )
+            .await?;
+            let Some(node) = data.node else { break };
+            comment_nodes.extend(node.comments.nodes);
+            page = node.comments.page_info;
+        }
+
+        let first = comment_nodes.first();
+        let diff_hunk = first.and_then(|c| c.diff_hunk.clone());
+        let review_id = first
+            .and_then(|c| c.pull_request_review.as_ref())
+            .and_then(|p| p.database_id);
+        out.push(ReviewThread {
+            id: t.id,
+            is_resolved: t.is_resolved,
+            is_outdated: t.is_outdated,
+            path: t.path,
+            line: t.line.or(t.original_line),
+            diff_hunk,
+            review_id,
+            comments: comment_nodes
+                .into_iter()
+                .map(|c| ThreadComment {
+                    id: c.database_id,
+                    author: c
+                        .author
+                        .as_ref()
+                        .map(|a| a.login.clone())
+                        .unwrap_or_else(|| "ghost".into()),
+                    author_avatar: c.author.and_then(|a| a.avatar_url),
+                    body: c.body,
+                    created_at: c.created_at,
+                    url: c.url,
+                })
+                .collect(),
+        });
+    }
+    Ok(out)
 }
 
 /// Reply to an existing inline review comment thread (REST).
