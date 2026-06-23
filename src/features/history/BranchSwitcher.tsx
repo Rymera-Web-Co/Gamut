@@ -138,8 +138,11 @@ export function BranchSwitcher({
 
   // Local branches and tags the new branch can be based on (current HEAD is the
   // default, offered separately). Remote-tracking refs are valid revparse
-  // targets too, so they're included.
-  const sourceOptions = [...(branches.data ?? []).map((b) => b.name), ...(tags.data ?? [])];
+  // targets too, so they're included. Deduped because a branch and tag can
+  // share a name (e.g. `v1.0`), which would otherwise collide on the option key.
+  const sourceOptions = Array.from(
+    new Set([...(branches.data ?? []).map((b) => b.name), ...(tags.data ?? [])]),
+  );
 
   return (
     <>
@@ -233,83 +236,83 @@ export function BranchSwitcher({
             </form>
           ) : (
             <>
-          <div className="p-2">
-            <Input
-              autoFocus
-              placeholder="Filter branches and tags…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="h-8"
-            />
-          </div>
-          <div className="max-h-72 overflow-auto border-t">
-            {empty ? (
-              <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
-                No matching branches or tags.
-              </p>
-            ) : (
-              <>
-                {branchList.map((b) => (
-                  <button
-                    key={`${b.is_remote ? "r" : "l"}:${b.name}`}
-                    disabled={checkout.isPending}
-                    onClick={() => checkout.mutate(b.name)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
-                  >
-                    <span className="w-4 shrink-0">
-                      {b.is_head && <Check className="size-3.5" />}
-                    </span>
-                    <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs">{b.name}</span>
-                    {b.is_remote && (
-                      <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
-                        remote
-                      </span>
-                    )}
-                  </button>
-                ))}
+              <div className="p-2">
+                <Input
+                  autoFocus
+                  placeholder="Filter branches and tags…"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="h-8"
+                />
+              </div>
+              <div className="max-h-72 overflow-auto border-t">
+                {empty ? (
+                  <p className="p-3 text-center text-sm text-[var(--color-muted-foreground)]">
+                    No matching branches or tags.
+                  </p>
+                ) : (
+                  <>
+                    {branchList.map((b) => (
+                      <button
+                        key={`${b.is_remote ? "r" : "l"}:${b.name}`}
+                        disabled={checkout.isPending}
+                        onClick={() => checkout.mutate(b.name)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                      >
+                        <span className="w-4 shrink-0">
+                          {b.is_head && <Check className="size-3.5" />}
+                        </span>
+                        <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{b.name}</span>
+                        {b.is_remote && (
+                          <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
+                            remote
+                          </span>
+                        )}
+                      </button>
+                    ))}
 
-                {tagList.length > 0 && (
-                  <div className="border-t bg-[var(--color-sidebar)] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                    Tags
-                  </div>
+                    {tagList.length > 0 && (
+                      <div className="border-t bg-[var(--color-sidebar)] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                        Tags
+                      </div>
+                    )}
+                    {tagList.map((t) => (
+                      <button
+                        key={`t:${t}`}
+                        disabled={checkout.isPending}
+                        onClick={() => checkout.mutate(t)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
+                      >
+                        <span className="w-4 shrink-0" />
+                        <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{t}</span>
+                      </button>
+                    ))}
+                  </>
                 )}
-                {tagList.map((t) => (
-                  <button
-                    key={`t:${t}`}
-                    disabled={checkout.isPending}
-                    onClick={() => checkout.mutate(t)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-accent)]"
-                  >
-                    <span className="w-4 shrink-0" />
-                    <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs">{t}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-          <button
-            onClick={() => {
-              setNewName(filter);
-              setCreating(true);
-            }}
-            className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
-          >
-            <GitBranchPlus className="size-3.5 shrink-0" />
-            Create branch…
-          </button>
-          <button
-            onClick={() => {
-              setOpen(false);
-              setFilter("");
-              setCleanupOpen(true);
-            }}
-            className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
-          >
-            <Sparkles className="size-3.5 shrink-0" />
-            Clean up stale branches…
-          </button>
+              </div>
+              <button
+                onClick={() => {
+                  setNewName(filter);
+                  setCreating(true);
+                }}
+                className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+              >
+                <GitBranchPlus className="size-3.5 shrink-0" />
+                Create branch…
+              </button>
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  setFilter("");
+                  setCleanupOpen(true);
+                }}
+                className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
+              >
+                <Sparkles className="size-3.5 shrink-0" />
+                Clean up stale branches…
+              </button>
             </>
           )}
         </PopoverContent>
