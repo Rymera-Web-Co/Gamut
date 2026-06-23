@@ -75,11 +75,28 @@ export function CompareDialog() {
     if (!open) return;
     setResult(null);
     setError(null);
-    setLeftPath("");
-    setRightPath("");
     setLeftRef("");
     setRightRef("");
     setRevLeft(WORKTREE);
+
+    // "Compare with Selected" (VSCode-style): two absolute paths, run at once.
+    if (seed?.files) {
+      const { leftPath: l, rightPath: r } = seed.files;
+      setMode("files");
+      setLeftPath(l);
+      setRightPath(r);
+      setPath("");
+      setLoading(true);
+      ipc
+        .compareFiles(l, r)
+        .then(setResult)
+        .catch((e) => setError(String(e)))
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    setLeftPath("");
+    setRightPath("");
     setPath(seed?.path ?? "");
     // A seeded file defaults to the across-refs flow; otherwise compare two files.
     setMode(seed?.path ? "refs" : "files");

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } fro
 import {
   ChevronDown,
   ChevronRight,
+  Columns2,
   FilePlus,
   Folder,
   FolderOpen,
@@ -20,6 +21,7 @@ import { fileIcon } from "@/lib/fileIcons";
 import { ipc, type DirEntry } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
+import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDirChildren } from "./api";
 
@@ -276,6 +278,11 @@ export function RepoTree({
   changes: TreeChanges;
 }) {
   const queryClient = useQueryClient();
+  // File Compare (#130), VSCode-style: "Select for Compare" stashes a file
+  // app-globally, then "Compare with Selected" diffs it against another file.
+  const compareSelection = useUiStore((s) => s.compareSelection);
+  const setCompareSelection = useUiStore((s) => s.setCompareSelection);
+  const openCompare = useUiStore((s) => s.openCompare);
   // Expansion is lifted here so a create can force the target dir open and the
   // new entry becomes visible immediately.
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
@@ -334,6 +341,23 @@ export function RepoTree({
       toast.error(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Diff the previously "Select for Compare" file against `target`. Both are
+  // resolved to absolute paths (they may be in different repos) and fed to the
+  // two-files compare flow.
+  async function compareWithSelected(target: MenuTarget) {
+    if (!compareSelection) return;
+    setMenu(null);
+    try {
+      const [leftPath, rightPath] = await Promise.all([
+        ipc.resolvePath(compareSelection.repoId, compareSelection.path),
+        ipc.resolvePath(repoId, target.path),
+      ]);
+      openCompare({ files: { leftPath, rightPath } });
+    } catch (e) {
+      toast.error(String(e));
     }
   }
 
@@ -416,6 +440,31 @@ export function RepoTree({
           <LinkIcon />
           Copy Relative Path
         </ContextMenuItem>
+        {menu?.kind === "file" && (
+          <>
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-xs"
+              onClick={() => {
+                setCompareSelection({ repoId, path: menu!.path });
+                setMenu(null);
+              }}
+            >
+              <Columns2 />
+              Select for Compare
+            </ContextMenuItem>
+            {compareSelection &&
+              !(compareSelection.repoId === repoId && compareSelection.path === menu.path) && (
+                <ContextMenuItem
+                  className="text-xs"
+                  onClick={() => void compareWithSelected(menu!)}
+                >
+                  <Columns2 />
+                  Compare with Selected
+                </ContextMenuItem>
+              )}
+          </>
+        )}
         <div className="my-1 border-t border-[var(--color-border)]" />
         <ContextMenuItem
           className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
