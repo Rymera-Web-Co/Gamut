@@ -53,6 +53,20 @@ while the terminal is hidden.
 When a group has no terminals: *"No terminals open in this group"* (or a prompt to add a
 repo / bind a folder first).
 
+## Session restore
+
+The terminal **layout** — each group's tabs, splits, working directories and titles — is
+saved as you work and reopened on the next launch, so a quit or crash doesn't mean
+rebuilding your workspace by hand. On launch each pane respawns a **fresh** shell in its
+saved directory (the previous shells are gone, so this is a re-open, not a literal process
+resume).
+
+- **Scrollback and running processes are not restored** — respawned panes start empty.
+- **Moved/deleted directories** fall back gracefully: a pane whose saved directory no
+  longer exists opens in your home directory instead of failing.
+- Toggle it under **Settings → Terminal → Restore sessions on launch** (on by default).
+  Turn it off to start every launch with a clean slate.
+
 ## Activity indicator
 
 Because hidden panes keep running, Gamut surfaces background activity so you don't have to
