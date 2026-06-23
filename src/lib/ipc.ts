@@ -692,6 +692,11 @@ export const ipc = {
    * Spawn (or reuse) a shell for `sessionId` rooted at `cwd`, streaming its raw
    * output bytes to `onOutput`. Idempotent on the backend, so calling twice for
    * the same id is safe.
+   *
+   * Returns the spawn promise plus a `dispose` that detaches the output
+   * `Channel` callback. Without it a respawn/restart leaks the original
+   * callback, which keeps firing against a now-disposed consumer (#139); call
+   * `dispose` whenever the consuming terminal is torn down.
    */
   terminalSpawn: (
     sessionId: string,
@@ -699,16 +704,22 @@ export const ipc = {
     cols: number,
     rows: number,
     onOutput: (bytes: Uint8Array) => void,
-  ) => {
+  ): { ready: Promise<void>; dispose: () => void } => {
     const channel = new Channel<number[]>();
     channel.onmessage = (msg) => onOutput(new Uint8Array(msg));
-    return invoke<void>("terminal_spawn", {
+    const ready = invoke<void>("terminal_spawn", {
       sessionId,
       cwd,
       cols,
       rows,
       onOutput: channel,
     });
+    // Replace the handler with a no-op so late bytes from the backend are
+    // dropped instead of reaching a stale consumer.
+    const dispose = () => {
+      channel.onmessage = () => {};
+    };
+    return { ready, dispose };
   },
   terminalWrite: (sessionId: string, data: Uint8Array) =>
     invoke<void>("terminal_write", { sessionId, data: Array.from(data) }),

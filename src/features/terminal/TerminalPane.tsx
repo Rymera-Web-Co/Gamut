@@ -37,6 +37,10 @@ interface SessionEntry {
   linkHighlighter: LinkHighlighter;
   /** True once the backend PTY has been spawned for this session. */
   spawned: boolean;
+  /** Set once the entry has been torn down; gates late output callbacks. */
+  disposed: boolean;
+  /** Detaches the spawn output channel, if a spawn has happened. */
+  disposeChannel?: () => void;
 }
 
 const FONT_FAMILY =
@@ -376,7 +380,7 @@ export function TerminalPane() {
       const { groupId, tabId } = ctxRef.current;
       if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
     });
-    const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false };
+    const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false, disposed: false };
     sessionsRef.current.set(pane.id, entry);
     return entry;
   }
@@ -416,15 +420,25 @@ export function TerminalPane() {
             next.delete(pane.id);
             return next;
           });
-          ipc
-            .terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
+          const handle = ipc.terminalSpawn(
+            pane.id,
+            pane.cwd,
+            e.term.cols,
+            e.term.rows,
+            (bytes) => {
+              // Drop bytes that arrive after the entry was torn down — the xterm
+              // is disposed and `e` is stale (#139).
+              if (e.disposed) return;
               e.term.write(bytes);
               // Output to a pane the user isn't viewing is unseen activity.
               if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
-            })
-            .catch((err) => {
-              e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
-            });
+            },
+          );
+          e.disposeChannel = handle.dispose;
+          handle.ready.catch((err) => {
+            if (e.disposed) return;
+            e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
+          });
         } else {
           ipc.terminalResize(pane.id, e.term.cols, e.term.rows).catch(() => {});
         }
@@ -500,6 +514,10 @@ export function TerminalPane() {
   function disposeEntry(id: string) {
     const e = sessionsRef.current.get(id);
     if (e) {
+      // Mark disposed first so any output callback still in flight bails out,
+      // then detach the spawn channel so it stops firing entirely (#139).
+      e.disposed = true;
+      e.disposeChannel?.();
       e.linkHighlighter.dispose();
       e.term.dispose();
       e.el.remove();
@@ -520,6 +538,9 @@ export function TerminalPane() {
   }
 
   function restart(id: string) {
+    // Kill the orphaned backend PTY before tearing down the entry — otherwise
+    // the old session lingers and the respawn races a still-live channel (#139).
+    ipc.terminalKill(id).catch(() => {});
     disposeEntry(id);
     setTick((t) => t + 1); // recreate + respawn on next layout pass
   }
