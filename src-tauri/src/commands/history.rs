@@ -212,23 +212,34 @@ pub async fn log(
         }
 
         let take = offset + limit + 1; // +1 to detect has_more
-        let mut nodes: Vec<graph::CommitNode> = Vec::new();
-        let mut metas: Vec<CommitRow> = Vec::new();
 
-        for oid in walk.take(take) {
-            let oid = oid?;
+        // Collect the window's oids first, then build only what each stage
+        // needs: lightweight graph nodes for the *whole* window (the layout
+        // needs the full ancestry up to `offset`), but the expensive CommitRow
+        // metadata — string allocs, ref-label clones — only for the page that's
+        // actually returned. A fully incremental layout is hard (it needs
+        // ancestry context), but there's no reason to stringify thousands of
+        // rows a deep page immediately discards (#134).
+        let oids: Vec<Oid> = walk.take(take).collect::<Result<_, _>>()?;
+        let has_more = oids.len() > offset + limit;
+
+        let mut nodes: Vec<graph::CommitNode> = Vec::with_capacity(oids.len());
+        for &oid in &oids {
+            let parents: Vec<Oid> = repo.find_commit(oid)?.parent_ids().collect();
+            nodes.push(graph::CommitNode { oid, parents });
+        }
+
+        let (mut graph_rows, width) = graph::layout(&nodes);
+
+        let mut commits: Vec<CommitRow> = Vec::new();
+        for (i, &oid) in oids.iter().enumerate().skip(offset).take(limit) {
             let commit = repo.find_commit(oid)?;
-            let parents: Vec<Oid> = commit.parent_ids().collect();
             let author = commit.author();
-
-            nodes.push(graph::CommitNode {
-                oid,
-                parents: parents.clone(),
-            });
-            metas.push(CommitRow {
+            let row = &mut graph_rows[i];
+            commits.push(CommitRow {
                 sha: oid.to_string(),
                 short_sha: oid.to_string()[..8].to_string(),
-                parents: parents.iter().map(|p| p.to_string()).collect(),
+                parents: commit.parent_ids().map(|p| p.to_string()).collect(),
                 author_name: author.name().unwrap_or("").to_string(),
                 author_email: author.email().unwrap_or("").to_string(),
                 timestamp: commit.time().seconds(),
@@ -237,23 +248,12 @@ pub async fn log(
                     .get(&oid)
                     .map(|v| clone_labels(v))
                     .unwrap_or_default(),
-                node_col: 0,
-                color: 0,
-                paths: Vec::new(),
+                node_col: row.node_col,
+                color: row.color,
+                paths: std::mem::take(&mut row.paths),
             });
         }
 
-        let has_more = metas.len() > offset + limit;
-        let (graph_rows, width) = graph::layout(&nodes);
-
-        // Attach graph layout to each commit.
-        for (meta, row) in metas.iter_mut().zip(graph_rows) {
-            meta.node_col = row.node_col;
-            meta.color = row.color;
-            meta.paths = row.paths;
-        }
-
-        let commits = metas.into_iter().skip(offset).take(limit).collect();
         Ok(LogPage {
             commits,
             width,
@@ -346,6 +346,14 @@ pub async fn file_diff(
     .await
 }
 
+/// Upper bound on commits examined by [`file_history`]. Without it, a file that
+/// changed only a handful of times still walks the *entire* history to confirm
+/// there are no older changes — O(total history) for a rarely-touched file in a
+/// large repo (#134). The cap bounds that cost; in practice it means the view
+/// surfaces a file's changes within its most recent ~`FILE_HISTORY_SCAN_CAP`
+/// commits, which is what the incrementally-loaded UI shows anyway.
+const FILE_HISTORY_SCAN_CAP: usize = 10_000;
+
 /// Commits that touched a given path (newest first).
 #[tauri::command]
 pub async fn file_history(
@@ -365,8 +373,9 @@ pub async fn file_history(
         walk.push_head()?;
 
         let mut out = Vec::new();
-        for oid in walk {
-            if out.len() >= limit {
+        for (scanned, oid) in walk.enumerate() {
+            // Stop once the page is full or the scan budget is spent (#134).
+            if out.len() >= limit || scanned >= FILE_HISTORY_SCAN_CAP {
                 break;
             }
             let oid = oid?;
