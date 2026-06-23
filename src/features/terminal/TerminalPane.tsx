@@ -198,6 +198,7 @@ export function TerminalPane() {
   const terminalMaximized = useUiStore((s) => s.terminalMaximized);
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
   const terminals = useUiStore((s) => s.terminals);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
@@ -539,12 +540,16 @@ export function TerminalPane() {
     setTick((t) => t + 1); // recreate + respawn on next layout pass
   }
 
-  // The cwd/title a brand-new tab should default to: the active group's bound
-  // folder, else the first repo shown in that group.
+  // The cwd/title a brand-new tab should default to: the repo selected in the
+  // active group (an explicit per-action intent), else the group's bound folder,
+  // else the first repo shown in that group.
   function defaultTarget(): { cwd: string; title: string } | null {
     const group = groupList.find((g) => g.id === activeGroupId);
+    const visible = visibleRepos(repoList, group);
+    const selected = visible.find((r) => r.id === activeRepoId && !r.missing);
+    if (selected) return { cwd: selected.path, title: selected.name };
     if (group?.folder_path) return { cwd: group.folder_path, title: group.name };
-    const first = visibleRepos(repoList, group).find((r) => !r.missing);
+    const first = visible.find((r) => !r.missing);
     return first ? { cwd: first.path, title: first.name } : null;
   }
 
