@@ -324,8 +324,8 @@ function ResultView({
   editable: boolean;
 }) {
   const diffPrefs = useDiffEditorPrefs();
-  const origRef = useRef<Monaco.editor.ICodeEditor | null>(null);
-  const modRef = useRef<Monaco.editor.ICodeEditor | null>(null);
+  const origRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const modRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [leftDirty, setLeftDirty] = useState(false);
   const [rightDirty, setRightDirty] = useState(false);
   const [saving, setSaving] = useState<"left" | "right" | null>(null);
@@ -341,13 +341,19 @@ function ResultView({
     setRightDirty(false);
   }, [result]);
 
-  function handleMount(editor: Monaco.editor.IStandaloneDiffEditor) {
+  function handleMount(editor: Monaco.editor.IStandaloneDiffEditor, monaco: typeof Monaco) {
     const orig = editor.getOriginalEditor();
     const mod = editor.getModifiedEditor();
     origRef.current = orig;
     modRef.current = mod;
     orig.onDidChangeModelContent(() => setLeftDirty(orig.getValue() !== (result.left_text ?? "")));
     mod.onDidChangeModelContent(() => setRightDirty(mod.getValue() !== (result.right_text ?? "")));
+    // ⌘/Ctrl+S saves the focused side (Monaco has no default save binding).
+    // Registering on each sub-editor also stops the chord from bubbling to the
+    // Files view's window-level ⌘S handler behind the dialog.
+    const key = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS;
+    orig.addCommand(key, () => void save("left"));
+    mod.addCommand(key, () => void save("right"));
   }
 
   async function save(side: "left" | "right") {
