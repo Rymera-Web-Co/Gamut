@@ -635,12 +635,8 @@ export const ipc = {
    * Diff one repo-relative file across refs / the working tree. A `null` ref
    * means the working tree; any string is a revparse target (branch/tag/sha).
    */
-  compareRefs: (
-    repoId: number,
-    path: string,
-    leftRef: string | null,
-    rightRef: string | null,
-  ) => invoke<CompareResult>("compare_refs", { repoId, path, leftRef, rightRef }),
+  compareRefs: (repoId: number, path: string, leftRef: string | null, rightRef: string | null) =>
+    invoke<CompareResult>("compare_refs", { repoId, path, leftRef, rightRef }),
 
   // github
   githubSetToken: (token: string) => invoke<AuthStatus>("github_set_token", { token }),

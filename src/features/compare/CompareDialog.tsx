@@ -3,12 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DiffEditor } from "@monaco-editor/react";
 import { ArrowLeftRight, FolderOpen, Loader2 } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc, pickFile, type CompareResult } from "@/lib/ipc";
@@ -32,13 +27,6 @@ function recentRefs(): string[] {
   } catch {
     return [];
   }
-}
-
-function rememberRefs(...refs: string[]) {
-  const real = refs.filter((r) => r && r !== WORKTREE);
-  if (!real.length) return;
-  const next = [...new Set([...real, ...recentRefs()])].slice(0, 12);
-  localStorage.setItem(RECENT_REFS_KEY, JSON.stringify(next));
 }
 
 /**
@@ -70,6 +58,17 @@ export function CompareDialog() {
   const [result, setResult] = useState<CompareResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Recently-used refs, in React state so newly-remembered ones show up in the
+  // datalist immediately (localStorage alone isn't a render dependency).
+  const [recent, setRecent] = useState<string[]>(recentRefs);
+
+  function rememberRefs(...refs: string[]) {
+    const real = refs.filter((r) => r && r !== WORKTREE);
+    if (!real.length) return;
+    const next = [...new Set([...real, ...recent])].slice(0, 12);
+    localStorage.setItem(RECENT_REFS_KEY, JSON.stringify(next));
+    setRecent(next);
+  }
 
   // (Re)initialize each time the dialog opens with a fresh seed.
   useEffect(() => {
@@ -101,8 +100,8 @@ export function CompareDialog() {
 
   const refOptions = useMemo(() => {
     const known = refsQuery.data ?? [];
-    return [...new Set([...recentRefs(), ...known])];
-  }, [refsQuery.data]);
+    return [...new Set([...recent, ...known])];
+  }, [refsQuery.data, recent]);
 
   const canCompare =
     mode === "files"
@@ -198,8 +197,18 @@ export function CompareDialog() {
         <div className="shrink-0 space-y-2">
           {mode === "files" && (
             <>
-              <PathRow label="File A" value={leftPath} onChange={setLeftPath} onBrowse={browse(setLeftPath)} />
-              <PathRow label="File B" value={rightPath} onChange={setRightPath} onBrowse={browse(setRightPath)} />
+              <PathRow
+                label="File A"
+                value={leftPath}
+                onChange={setLeftPath}
+                onBrowse={browse(setLeftPath)}
+              />
+              <PathRow
+                label="File B"
+                value={rightPath}
+                onChange={setRightPath}
+                onBrowse={browse(setRightPath)}
+              />
             </>
           )}
 
@@ -249,7 +258,11 @@ export function CompareDialog() {
           )}
 
           <div className="flex items-center justify-end gap-2">
-            {error && <span className="mr-auto truncate text-xs text-[var(--color-destructive)]">{error}</span>}
+            {error && (
+              <span className="mr-auto truncate text-xs text-[var(--color-destructive)]">
+                {error}
+              </span>
+            )}
             <Button size="sm" disabled={!canCompare || loading} onClick={runCompare}>
               {loading && <Loader2 className="animate-spin" />}
               Compare
@@ -345,7 +358,9 @@ function PathRow({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">{label}</span>
+      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
+        {label}
+      </span>
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -373,7 +388,9 @@ function RefRow({
   const listId = `compare-refs-${label}`;
   return (
     <div className="flex flex-1 items-center gap-2">
-      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">{label}</span>
+      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
+        {label}
+      </span>
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
