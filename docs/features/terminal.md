@@ -32,7 +32,9 @@ while the terminal is hidden.
 
 ## Tabs & splits
 
-- Each group keeps its own set of tabs. Click a tab to activate it.
+- Each group keeps its own set of tabs. Click a tab to activate it, or cycle through them
+  with `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[`. While the terminal is focused, `Ctrl+Tab` /
+  `Ctrl+⇧+Tab` also cycle to the next / previous tab (with two or more tabs).
 - **Reorder** — drag a tab and drop it before/after another tab in the strip; an
   insertion line shows where it'll land. Reordering stays within the group and
   doesn't change which tab is active or disturb running panes.

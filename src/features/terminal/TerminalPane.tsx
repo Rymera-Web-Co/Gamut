@@ -676,6 +676,20 @@ export function TerminalPane() {
         }
         return;
       }
+      // Ctrl+Tab / Ctrl+⇧+Tab cycle terminal tabs while the terminal is focused
+      // (#156). Control-only on every platform, matching the repo-cycle binding
+      // it shadows here — the global repo-cycle is suppressed while .xterm has
+      // focus, so the two never fight. Only rotates with ≥2 tabs.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Tab") {
+        if (tabs.length > 1 && s.gt?.activeTabId) {
+          e.preventDefault();
+          const i = tabs.findIndex((t) => t.id === s.gt!.activeTabId);
+          const dir = e.shiftKey ? -1 : 1;
+          const next = tabs[(i + dir + tabs.length) % tabs.length];
+          s.selectTerminalTab(s.activeGroupId, next.id);
+        }
+        return;
+      }
       if (e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
         const n = Number(e.code.slice(5));
         const idx = n === 9 ? tabs.length - 1 : n - 1;
