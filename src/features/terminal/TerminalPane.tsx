@@ -48,10 +48,11 @@ const FONT_FAMILY =
  * The full 16-colour ANSI palette is defined explicitly (issue #120). Without
  * it xterm.js falls back to its built-in defaults, where `white` ≈ #e5e5e5 and
  * `brightWhite` ≈ #ffffff — and TUIs that assume a dark terminal (e.g. Claude
- * Code printing diffs) emit explicit white / bright-white text, which then
- * lands near-invisible on the light surface. The light palette below
- * (GitHub-light) remaps white/brightWhite/brightBlack to dark, readable values
- * so that text stays legible regardless of which ANSI colour a program picks.
+ * Code printing diffs) emit white / bright-white text that lands near-invisible
+ * on the light surface. The light palette below (GitHub-light) gives the named
+ * ANSI colours dark, readable values. This only covers the ANSI-16 case though;
+ * programs that emit *truecolor* (24-bit) white bypass the palette entirely, so
+ * legibility is ultimately guaranteed by `xtermContrast()` (see below).
  * The dark palette (GitHub-dark-dimmed) matches the dark surface.
  */
 function xtermTheme(theme: Theme) {
@@ -103,6 +104,23 @@ function xtermTheme(theme: Theme) {
         // bright-white text (e.g. Claude Code's diff body) stays dark & readable.
         brightWhite: "#24292e",
       };
+}
+
+/**
+ * Minimum foreground/background contrast xterm enforces per cell (issue #120).
+ *
+ * The palette above only governs the 16 named ANSI colours; programs that print
+ * truecolor white (Claude Code's diffs do) sail straight past it and render as
+ * literal #ffffff, invisible on the light surface. `minimumContrastRatio` makes
+ * xterm adjust each cell's foreground against *that cell's own background* until
+ * the ratio is met — so white-on-light gets darkened to readable, while a cell a
+ * program paints with its own dark background (black-bg + white text) already
+ * clears the ratio and is left untouched. We enforce WCAG AA (4.5) in light mode
+ * and leave dark mode at the default (1 = off), since it already has the
+ * contrast TUIs assume and adjusting it would shift their tuned colours.
+ */
+function xtermContrast(theme: Theme): number {
+  return theme === "dark" ? 1 : 4.5;
 }
 
 const encoder = new TextEncoder();
@@ -288,6 +306,7 @@ export function TerminalPane() {
       cursorBlink: prefs.terminalCursorBlink,
       scrollback: prefs.terminalScrollback,
       theme: xtermTheme(theme),
+      minimumContrastRatio: xtermContrast(theme),
       allowProposedApi: true,
     });
     const fit = new FitAddon();
@@ -425,8 +444,10 @@ export function TerminalPane() {
   // Re-theme all live sessions when the app theme toggles.
   useEffect(() => {
     const t = xtermTheme(theme);
+    const contrast = xtermContrast(theme);
     for (const entry of sessionsRef.current.values()) {
       entry.term.options.theme = t;
+      entry.term.options.minimumContrastRatio = contrast;
       // Repaint link highlights in the new theme's accent.
       entry.linkHighlighter.refresh();
     }
