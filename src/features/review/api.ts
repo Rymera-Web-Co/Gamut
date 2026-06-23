@@ -260,7 +260,8 @@ async function postMergeCleanup(
       // delete_branches refuses protected/current branches, reporting per-branch.
       const results = await ipc.deleteBranches(repoId, [headRef]);
       const failed = results.find((r) => !r.deleted && r.error);
-      if (failed) toast.error(`Merged. Checked out ${baseRef}, but kept ${headRef}: ${failed.error}`);
+      if (failed)
+        toast.error(`Merged. Checked out ${baseRef}, but kept ${headRef}: ${failed.error}`);
       else toast.success(`Checked out ${baseRef} and deleted ${headRef}`);
     } else {
       toast.info(`Checked out ${baseRef}; ${headRef} still exists on the remote, kept locally`);
