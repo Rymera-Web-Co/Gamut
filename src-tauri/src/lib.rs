@@ -103,6 +103,7 @@ pub fn run() {
             commands::review::review_file_diff,
             commands::compare::compare_files,
             commands::compare::compare_refs,
+            commands::compare::write_compare_file,
             commands::search::search_repo,
             commands::search::replace_in_files,
             commands::settings::get_setting,

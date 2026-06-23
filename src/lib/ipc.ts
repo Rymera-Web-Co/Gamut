@@ -637,6 +637,9 @@ export const ipc = {
    */
   compareRefs: (repoId: number, path: string, leftRef: string | null, rightRef: string | null) =>
     invoke<CompareResult>("compare_refs", { repoId, path, leftRef, rightRef }),
+  /** Write edited content back to an absolute file path (editable compare, #130). */
+  writeCompareFile: (path: string, content: string) =>
+    invoke<void>("write_compare_file", { path, content }),
 
   // github
   githubSetToken: (token: string) => invoke<AuthStatus>("github_set_token", { token }),

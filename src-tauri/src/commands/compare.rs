@@ -41,6 +41,15 @@ fn classify(bytes: &[u8]) -> (Option<String>, bool) {
     }
 }
 
+/// Write `content` back to an absolute file path. Backs editing a side of a
+/// two-files comparison (#130) — those sides are real on-disk files (unlike the
+/// git-ref sides, which aren't writable). The path is the same one that was read
+/// for the comparison, so this is a user-intended save, not arbitrary traversal.
+#[tauri::command]
+pub fn write_compare_file(path: String, content: String) -> AppResult<()> {
+    std::fs::write(&path, content).map_err(|e| AppError::Other(format!("writing {path}: {e}")))
+}
+
 /// Diff two arbitrary files anywhere on disk (mode 1). No git involvement — the
 /// two paths need not be in the same repo, or any repo at all.
 #[tauri::command]

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DiffEditor } from "@monaco-editor/react";
-import { ArrowLeftRight, FolderOpen, Loader2 } from "lucide-react";
+import type * as Monaco from "monaco-editor";
+import { ArrowLeftRight, FolderOpen, Loader2, Save } from "lucide-react";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { GITHUB_DARK } from "@/lib/monaco";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useRepos } from "@/features/repos/api";
 import { useUiStore } from "@/store/ui";
+import { toast } from "@/store/toast";
 
 type Mode = "files" | "refs" | "revision";
 
@@ -290,7 +292,14 @@ export function CompareDialog() {
         {/* Result. */}
         <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-[var(--color-border)]">
           {result ? (
-            <ResultView result={result} lang={lang} onSwap={swapSides} />
+            // Only the two-files mode has writable sides — ref/working-tree
+            // blobs aren't files you can save back to (#130).
+            <ResultView
+              result={result}
+              lang={lang}
+              onSwap={swapSides}
+              editable={mode === "files"}
+            />
           ) : (
             <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--color-muted-foreground)]">
               Pick what to compare, then press Compare.
@@ -306,18 +315,82 @@ function ResultView({
   result,
   lang,
   onSwap,
+  editable,
 }: {
   result: CompareResult;
   lang: string;
   onSwap: () => void;
+  /** Two-files mode: both sides are real on-disk files, so allow editing+saving. */
+  editable: boolean;
 }) {
   const diffPrefs = useDiffEditorPrefs();
+  const origRef = useRef<Monaco.editor.ICodeEditor | null>(null);
+  const modRef = useRef<Monaco.editor.ICodeEditor | null>(null);
+  const [leftDirty, setLeftDirty] = useState(false);
+  const [rightDirty, setRightDirty] = useState(false);
+  const [saving, setSaving] = useState<"left" | "right" | null>(null);
+
+  // In two-files mode the side labels ARE the absolute file paths (compare_files
+  // sets them so), and they swap with Swap sides — so save straight to them.
+  const savable = editable && !result.is_binary;
+
+  // A fresh comparison/swap remounts the diff editor (keyed below) with new
+  // content; clear the dirty flags to match.
+  useEffect(() => {
+    setLeftDirty(false);
+    setRightDirty(false);
+  }, [result]);
+
+  function handleMount(editor: Monaco.editor.IStandaloneDiffEditor) {
+    const orig = editor.getOriginalEditor();
+    const mod = editor.getModifiedEditor();
+    origRef.current = orig;
+    modRef.current = mod;
+    orig.onDidChangeModelContent(() => setLeftDirty(orig.getValue() !== (result.left_text ?? "")));
+    mod.onDidChangeModelContent(() => setRightDirty(mod.getValue() !== (result.right_text ?? "")));
+  }
+
+  async function save(side: "left" | "right") {
+    const path = side === "left" ? result.left_label : result.right_label;
+    const editor = side === "left" ? origRef.current : modRef.current;
+    if (!editor) return;
+    setSaving(side);
+    try {
+      await ipc.writeCompareFile(path, editor.getValue());
+      if (side === "left") setLeftDirty(false);
+      else setRightDirty(false);
+      toast.success(`Saved ${path}`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const saveBtn = (side: "left" | "right", dirty: boolean) =>
+    savable && dirty ? (
+      <button
+        title={`Save ${side === "left" ? result.left_label : result.right_label}`}
+        onClick={() => void save(side)}
+        disabled={saving === side}
+        className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[var(--color-primary)] hover:bg-[var(--color-accent)] disabled:opacity-40"
+      >
+        {saving === side ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <Save className="size-3" />
+        )}
+        Save
+      </button>
+    ) : null;
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1 text-xs">
         <span className="min-w-0 flex-1 truncate font-mono" title={result.left_label}>
           {result.left_label}
         </span>
+        {saveBtn("left", leftDirty)}
         <button
           title="Swap sides"
           onClick={onSwap}
@@ -325,24 +398,29 @@ function ResultView({
         >
           <ArrowLeftRight className="size-3.5" />
         </button>
+        {saveBtn("right", rightDirty)}
         <span className="min-w-0 flex-1 truncate text-right font-mono" title={result.right_label}>
           {result.right_label}
         </span>
       </div>
       <div className="min-h-0 flex-1">
-        {result.identical ? (
-          <Centered>Files are identical.</Centered>
-        ) : result.is_binary ? (
+        {result.is_binary ? (
           <Centered>Binary file — content differs.</Centered>
+        ) : result.identical && !editable ? (
+          <Centered>Files are identical.</Centered>
         ) : (
           <DiffEditor
+            // Remount on a new comparison/swap so editor content + dirty reset.
+            key={`${result.left_label} ${result.right_label}`}
             height="100%"
             theme={isDarkTheme() ? GITHUB_DARK : "light"}
             language={lang}
             original={result.left_text ?? ""}
             modified={result.right_text ?? ""}
+            onMount={savable ? handleMount : undefined}
             options={{
-              readOnly: true,
+              readOnly: !savable,
+              originalEditable: savable,
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
               ...diffPrefs,
