@@ -110,6 +110,56 @@ fn http() -> AppResult<reqwest::Client> {
     Ok(reqwest::Client::builder().user_agent("gamut").build()?)
 }
 
+/// Parse the `next` page URL from a REST `Link` header value, if present.
+/// e.g. `<https://api.github.com/…&page=2>; rel="next", <…>; rel="last"`.
+fn parse_next_link(link: &str) -> Option<String> {
+    link.split(',').find_map(|part| {
+        let mut segs = part.split(';');
+        let url = segs.next()?.trim();
+        segs.any(|s| s.trim() == "rel=\"next\"").then(|| {
+            url.trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_string()
+        })
+    })
+}
+
+/// The `next` page URL from a response's `Link` header, if any.
+fn next_page_url(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    parse_next_link(&header_str(headers, "link")?)
+}
+
+/// GET a paginated REST collection, following `Link: rel="next"` to the last
+/// page so items past the first `per_page` aren't silently dropped (#135).
+/// `first_url` should already carry its query (including `per_page`); GitHub's
+/// `next` links preserve it.
+async fn get_all_pages<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    token: &str,
+    first_url: String,
+    context: &str,
+) -> AppResult<Vec<T>> {
+    let mut url = Some(first_url);
+    let mut out = Vec::new();
+    while let Some(current) = url {
+        let resp = client
+            .get(&current)
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(api_error(context, resp).await);
+        }
+        let next = next_page_url(resp.headers());
+        let page: Vec<T> = resp.json().await?;
+        // Stop at the last page — or defensively if a page comes back empty.
+        url = if page.is_empty() { None } else { next };
+        out.extend(page);
+    }
+    Ok(out)
+}
+
 fn get_setting(state: &AppState, key: &str) -> AppResult<Option<String>> {
     let conn = state
         .db
@@ -188,16 +238,57 @@ fn client_id() -> Option<String> {
     Some(DEFAULT_CLIENT_ID.to_string())
 }
 
+/// Read a response header as an owned string, if present and valid UTF-8.
+fn header_str(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+/// Seconds to wait before retrying a rate-limited request: GitHub's
+/// `Retry-After` (secondary limits) if present, else `X-RateLimit-Reset`
+/// (an epoch second for primary limits) minus now.
+fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    if let Some(secs) =
+        header_str(headers, "retry-after").and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        return Some(secs);
+    }
+    let reset = header_str(headers, "x-ratelimit-reset")?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(reset.saturating_sub(now))
+}
+
 /// Build a descriptive error from a failed GitHub response: include GitHub's
 /// own `message`, and surface the SSO header when org SAML authorization is
 /// required (GitHub returns 403 with `x-github-sso` in that case).
 async fn api_error(context: &str, resp: reqwest::Response) -> AppError {
     let status = resp.status();
-    let sso = resp
-        .headers()
-        .get("x-github-sso")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    let headers = resp.headers();
+    // Rate limiting: GitHub signals it with 403/429 plus either
+    // `X-RateLimit-Remaining: 0` (primary) or `Retry-After` (secondary). Detect
+    // it before reading the body so users get a clear, actionable message with a
+    // wait time instead of an opaque "GitHub 403" (#135).
+    let rate_limited = matches!(status.as_u16(), 403 | 429)
+        && (header_str(headers, "retry-after").is_some()
+            || header_str(headers, "x-ratelimit-remaining").as_deref() == Some("0"));
+    if rate_limited {
+        let when = match retry_after_secs(headers) {
+            Some(secs) => format!("retry in {secs}s"),
+            None => "retry shortly".to_string(),
+        };
+        return AppError::Other(format!(
+            "GitHub rate limit reached while {context} — {when}"
+        ));
+    }
+    let sso = header_str(headers, "x-github-sso");
     let body = resp.text().await.unwrap_or_default();
     let detail = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
@@ -893,35 +984,26 @@ pub async fn github_pr_thread(
     }
     let pr: GhPullFull = pr_resp.json().await?;
 
-    let issue_comments: Vec<GhIssueComment> = {
-        let resp = client
-            .get(format!("{base}/issues/{number}/comments"))
-            .query(&[("per_page", "100")])
-            .bearer_auth(&token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await?;
-        if resp.status().is_success() {
-            resp.json().await?
-        } else {
-            Vec::new()
-        }
-    };
+    // Follow pagination so a PR with >100 issue comments or >100 reviews keeps
+    // the full conversation (#135). Errors stay non-fatal (empty), matching the
+    // prior behavior — the PR header still renders without its comment list.
+    let issue_comments: Vec<GhIssueComment> = get_all_pages(
+        &client,
+        &token,
+        format!("{base}/issues/{number}/comments?per_page=100"),
+        "loading PR comments",
+    )
+    .await
+    .unwrap_or_default();
 
-    let reviews: Vec<GhReview> = {
-        let resp = client
-            .get(format!("{base}/pulls/{number}/reviews"))
-            .query(&[("per_page", "100")])
-            .bearer_auth(&token)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await?;
-        if resp.status().is_success() {
-            resp.json().await?
-        } else {
-            Vec::new()
-        }
-    };
+    let reviews: Vec<GhReview> = get_all_pages(
+        &client,
+        &token,
+        format!("{base}/pulls/{number}/reviews?per_page=100"),
+        "loading PR reviews",
+    )
+    .await
+    .unwrap_or_default();
 
     // Inline review comments are grouped into threads separately (see
     // github_review_threads), so they're not added to this flat timeline.
@@ -1338,17 +1420,15 @@ pub async fn github_mentionables(
     let token = require_token(&state)?;
     let api = api_base(&state);
     let client = http()?;
-    let resp = client
-        .get(format!("{api}/repos/{owner}/{repo}/assignees"))
-        .query(&[("per_page", "100")])
-        .bearer_auth(&token)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        return Err(api_error("listing mentionable users", resp).await);
-    }
-    let users: Vec<GhUser> = resp.json().await?;
+    // Follow pagination so repos with >100 assignees don't lose the rest from
+    // @-mention autocomplete (#135).
+    let users: Vec<GhUser> = get_all_pages(
+        &client,
+        &token,
+        format!("{api}/repos/{owner}/{repo}/assignees?per_page=100"),
+        "listing mentionable users",
+    )
+    .await?;
     Ok(users.into_iter().map(|u| u.login).collect())
 }
 
@@ -1864,9 +1944,25 @@ pub async fn github_merge_pr(
 #[cfg(test)]
 mod tests {
     use super::{
-        https_host, is_github_asset_host, normalize_base, parse_owner_repo, parse_pr_url,
-        split_remote, DEFAULT_API,
+        https_host, is_github_asset_host, normalize_base, parse_next_link, parse_owner_repo,
+        parse_pr_url, split_remote, DEFAULT_API,
     };
+
+    #[test]
+    fn parses_next_link_rel() {
+        let link =
+            "<https://api.github.com/repos/o/r/assignees?per_page=100&page=2>; rel=\"next\", \
+             <https://api.github.com/repos/o/r/assignees?per_page=100&page=5>; rel=\"last\"";
+        assert_eq!(
+            parse_next_link(link).as_deref(),
+            Some("https://api.github.com/repos/o/r/assignees?per_page=100&page=2")
+        );
+        // Last page: only prev/first links, no next.
+        let last = "<https://api.github.com/x?page=4>; rel=\"prev\", \
+             <https://api.github.com/x?page=1>; rel=\"first\"";
+        assert_eq!(parse_next_link(last), None);
+        assert_eq!(parse_next_link(""), None);
+    }
 
     #[test]
     fn normalizes_configured_base() {
