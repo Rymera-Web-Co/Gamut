@@ -13,6 +13,8 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
+import { useRepos } from "@/features/repos/api";
 import { CleanupStaleDialog } from "./CleanupStaleDialog";
 
 export function BranchSwitcher({
@@ -144,6 +146,23 @@ export function BranchSwitcher({
     new Set([...(branches.data ?? []).map((b) => b.name), ...(tags.data ?? [])]),
   );
 
+  // The repo's base branch, used as the default source for a new branch — you
+  // usually branch off main, not off whatever happens to be checked out. Prefer
+  // the repo's recorded default branch, then the configured base-branch
+  // precedence (trunk/main/master), restricted to branches that actually exist
+  // locally. Falls back to "" (current HEAD) when none match.
+  const baseBranchPrecedence = useSettings((s) => s.values.baseBranchPrecedence);
+  const repos = useRepos();
+  const baseBranch = (() => {
+    const local = new Set((branches.data ?? []).filter((b) => !b.is_remote).map((b) => b.name));
+    const repoDefault = repos.data?.find((r) => r.id === repoId)?.default_branch ?? null;
+    const candidates = [
+      repoDefault,
+      ...baseBranchPrecedence.split(",").map((s) => s.trim()),
+    ].filter((s): s is string => !!s);
+    return candidates.find((name) => local.has(name)) ?? "";
+  })();
+
   return (
     <>
       <Popover
@@ -205,18 +224,21 @@ export function BranchSwitcher({
               <label className="block text-[10px] font-medium text-[var(--color-muted-foreground)]">
                 Base it on
               </label>
-              <select
-                value={sourceRef}
-                onChange={(e) => setSourceRef(e.target.value)}
-                className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-foreground)]"
-              >
-                <option value="">Current branch (HEAD)</option>
-                {sourceOptions.map((ref) => (
-                  <option key={ref} value={ref}>
-                    {ref}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <select
+                  value={sourceRef}
+                  onChange={(e) => setSourceRef(e.target.value)}
+                  className="h-8 w-full appearance-none rounded-md border border-[var(--color-input)] bg-transparent pr-7 pl-2 font-mono text-xs text-[var(--color-foreground)] shadow-sm transition-colors hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                >
+                  <option value="">Current branch (HEAD)</option>
+                  {sourceOptions.map((ref) => (
+                    <option key={ref} value={ref}>
+                      {ref}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+              </div>
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
@@ -295,6 +317,8 @@ export function BranchSwitcher({
               <button
                 onClick={() => {
                   setNewName(filter);
+                  // Default the source to the repo's base branch (#131 follow-up).
+                  setSourceRef(baseBranch);
                   setCreating(true);
                 }}
                 className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)]"
