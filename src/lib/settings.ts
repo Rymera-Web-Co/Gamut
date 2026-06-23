@@ -48,6 +48,9 @@ export interface Settings {
   // Where ⌘/Ctrl+T opens a new terminal when no repo is selected in the active
   // group. A selected repo always wins; this picks the fallback (#154).
   terminalNewTabDir: "group" | "first"; // group's bound folder, or first repo
+  // Reopen the terminal layout (tabs/splits/cwds) on launch, respawning a fresh
+  // shell per pane at its saved directory (#155). Off → start with a clean slate.
+  terminalRestoreSessions: boolean;
 
   // Terminal notifications (background-pane bell / process-exit; see #28)
   terminalNotifySound: boolean; // master on/off for the audible cue
@@ -142,6 +145,9 @@ export const DEFAULTS: Settings = {
   // Default to the first repo; users who work mostly from a group's bound folder
   // can switch the fallback to the group folder.
   terminalNewTabDir: "first",
+  // On by default: reopening yesterday's terminal layout is the point of the
+  // feature; opt out for a clean slate each launch.
+  terminalRestoreSessions: true,
 
   // Sound on by default for both discrete events; desktop notifications stay
   // off until the user opts in (they require an OS permission grant).

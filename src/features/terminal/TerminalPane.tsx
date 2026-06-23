@@ -41,6 +41,22 @@ interface SessionEntry {
   disposed: boolean;
   /** Detaches the spawn output channel, if a spawn has happened. */
   disposeChannel?: () => void;
+  /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
+  lastCols?: number;
+  lastRows?: number;
+}
+
+/**
+ * Send a `terminalResize` only when the cell grid actually changed (#142). A
+ * ResizeObserver fires on every sub-cell pixel reflow (e.g. a window drag), but
+ * the PTY only cares about cols/rows — so we cache the last sent pair per session
+ * and skip the IPC when it's unchanged.
+ */
+function resizeIfChanged(id: string, e: SessionEntry) {
+  if (e.term.cols === e.lastCols && e.term.rows === e.lastRows) return;
+  e.lastCols = e.term.cols;
+  e.lastRows = e.term.rows;
+  ipc.terminalResize(id, e.term.cols, e.term.rows).catch(() => {});
 }
 
 const FONT_FAMILY =
@@ -422,6 +438,10 @@ export function TerminalPane() {
             next.delete(pane.id);
             return next;
           });
+          // The spawn carries the initial grid size; seed the cache so the first
+          // resize IPC only fires once the grid actually changes (#142).
+          e.lastCols = e.term.cols;
+          e.lastRows = e.term.rows;
           const handle = ipc.terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
             // Drop bytes that arrive after the entry was torn down — the xterm
             // is disposed and `e` is stale (#139).
@@ -436,7 +456,7 @@ export function TerminalPane() {
             e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
           });
         } else {
-          ipc.terminalResize(pane.id, e.term.cols, e.term.rows).catch(() => {});
+          resizeIfChanged(pane.id, e);
         }
       });
       // Focus the active pane.
@@ -475,7 +495,7 @@ export function TerminalPane() {
         } catch {
           /* hidden / unsized */
         }
-        ipc.terminalResize(id, e.term.cols, e.term.rows).catch(() => {});
+        resizeIfChanged(id, e);
       }
     });
     ro.observe(host);

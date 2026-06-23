@@ -497,6 +497,7 @@ function TerminalPanel() {
   const [terminalCursorBlink, setCursorBlink] = useSetting("terminalCursorBlink");
   const [terminalScrollback, setScrollback] = useSetting("terminalScrollback");
   const [newTabDir, setNewTabDir] = useSetting("terminalNewTabDir");
+  const [restoreSessions, setRestoreSessions] = useSetting("terminalRestoreSessions");
 
   return (
     <div>
@@ -542,6 +543,13 @@ function TerminalPanel() {
             { value: "group", label: "Group folder" },
           ]}
         />
+      </Field>
+      <Divider />
+      <Field
+        label="Restore sessions on launch"
+        hint="Reopen your terminal tabs and splits, respawning a fresh shell in each saved directory. Scrollback and running processes aren't restored."
+      >
+        <Toggle checked={restoreSessions} onChange={setRestoreSessions} />
       </Field>
     </div>
   );

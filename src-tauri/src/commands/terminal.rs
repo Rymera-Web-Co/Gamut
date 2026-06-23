@@ -92,6 +92,27 @@ fn apply_login_shell(cmd: &mut CommandBuilder, shell: &str) {
 #[cfg(windows)]
 fn apply_login_shell(_cmd: &mut CommandBuilder, _shell: &str) {}
 
+/// A usable working directory for a new shell: the requested `cwd` if it still
+/// exists, else the user's home directory, else the filesystem root. A restored
+/// terminal layout (#155) can reference a repo path that has since moved or been
+/// deleted; falling back keeps the respawned shell usable instead of failing the
+/// spawn outright.
+fn resolve_cwd(cwd: &str) -> String {
+    if std::path::Path::new(cwd).is_dir() {
+        return cwd.to_string();
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        if std::path::Path::new(&home).is_dir() {
+            return home.to_string_lossy().into_owned();
+        }
+    }
+    if cfg!(windows) {
+        "C:\\".to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows: rows.max(1),
@@ -136,7 +157,8 @@ pub fn terminal_spawn(
     // Run as a login shell so the user's init files are sourced, matching
     // Terminal.app / iTerm2 / VS Code behaviour (see `apply_login_shell`).
     apply_login_shell(&mut cmd, &shell);
-    cmd.cwd(&cwd);
+    // Fall back to home/root if the requested directory is gone (#155).
+    cmd.cwd(resolve_cwd(&cwd));
     // Advertise a capable terminal so prompts, colors and full-screen apps work.
     cmd.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(cmd).map_err(pty_err)?;

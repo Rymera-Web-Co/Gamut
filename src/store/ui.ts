@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { moveAdjacent } from "@/lib/dnd";
+import { useSettings } from "@/lib/settings";
 
 export type View = "files" | "history" | "review" | "pulls";
 export type ReviewMode = "working" | "branch";
@@ -86,6 +87,10 @@ export interface GroupSelection {
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
 const TERMINAL_OPEN_KEY = "gamut.terminalOpen";
 const FILES_PANEL_KEY = "gamut.filesPanel";
+// The terminal layout (tabs/splits/cwds per group) so it can be reopened on the
+// next launch (#155). Bigger than the boolean prefs above, but still client-only
+// view state, so it stays in localStorage rather than the DB-backed settings.
+const TERMINALS_KEY = "gamut.terminals";
 
 /** Which sidebar mode the Files view shows: the file tree or repo-wide search. */
 export type FilesPanel = "tree" | "search";
@@ -100,6 +105,95 @@ function storedTerminalOpen(): boolean {
 
 function storedFilesPanel(): FilesPanel {
   return localStorage.getItem(FILES_PANEL_KEY) === "search" ? "search" : "tree";
+}
+
+/** Shape-check one persisted pane: an id + a cwd string. */
+function isValidPane(p: unknown): p is TermPane {
+  return (
+    typeof p === "object" &&
+    p !== null &&
+    typeof (p as TermPane).id === "string" &&
+    typeof (p as TermPane).cwd === "string"
+  );
+}
+
+/** Shape-check one persisted tab: an id, title, a non-empty pane list, and an
+ * activePaneId that names one of its panes. */
+function isValidTab(t: unknown): t is TermTab {
+  if (typeof t !== "object" || t === null) return false;
+  const tab = t as TermTab;
+  return (
+    typeof tab.id === "string" &&
+    typeof tab.title === "string" &&
+    (tab.customTitle === undefined || typeof tab.customTitle === "string") &&
+    Array.isArray(tab.panes) &&
+    tab.panes.length > 0 &&
+    tab.panes.every(isValidPane) &&
+    tab.panes.some((p) => p.id === tab.activePaneId)
+  );
+}
+
+/**
+ * Parse the persisted terminal layout, dropping anything malformed so a corrupt
+ * or stale blob can never break startup. Returns the layout plus the next id
+ * counter, bumped past every restored id so freshly-added tabs/panes can't
+ * collide with a restored session.
+ */
+export function parseStoredTerminals(raw: string): {
+  terminals: Record<number, GroupTerminals>;
+  nextTermId: number;
+} {
+  const empty = { terminals: {}, nextTermId: 1 };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return empty;
+  }
+  if (typeof parsed !== "object" || parsed === null) return empty;
+  const src = (parsed as { terminals?: unknown }).terminals;
+  if (typeof src !== "object" || src === null) return empty;
+
+  const terminals: Record<number, GroupTerminals> = {};
+  let maxId = 0;
+  const noteId = (id: string) => {
+    const n = Number(id.split("-").pop());
+    if (Number.isFinite(n) && n > maxId) maxId = n;
+  };
+  for (const [gid, value] of Object.entries(src as Record<string, unknown>)) {
+    const groupId = Number(gid);
+    if (!Number.isFinite(groupId)) continue;
+    const g = value as GroupTerminals;
+    if (typeof g !== "object" || g === null || !Array.isArray(g.tabs)) continue;
+    const tabs = g.tabs.filter(isValidTab);
+    if (tabs.length === 0) continue;
+    tabs.forEach((t) => {
+      noteId(t.id);
+      t.panes.forEach((p) => noteId(p.id));
+    });
+    const activeTabId = tabs.some((t) => t.id === g.activeTabId) ? g.activeTabId : tabs[0].id;
+    terminals[groupId] = { tabs, activeTabId };
+  }
+  return { terminals, nextTermId: maxId + 1 };
+}
+
+/** The terminal layout to start with: the saved one if session restore is on
+ * and a valid blob exists, otherwise empty. */
+function storedTerminals(): { terminals: Record<number, GroupTerminals>; nextTermId: number } {
+  const empty = { terminals: {}, nextTermId: 1 };
+  if (!useSettings.getState().values.terminalRestoreSessions) return empty;
+  const raw = localStorage.getItem(TERMINALS_KEY);
+  return raw ? parseStoredTerminals(raw) : empty;
+}
+
+/** Write the current terminal layout so the next launch can reopen it. Called on
+ * every mutation (not just clean quit) so a crash still leaves it restorable. */
+function persistTerminals(terminals: Record<number, GroupTerminals>, nextTermId: number) {
+  try {
+    localStorage.setItem(TERMINALS_KEY, JSON.stringify({ terminals, nextTermId }));
+  } catch {
+    // Ignore quota / unavailable storage — restore is best-effort.
+  }
 }
 
 interface UiState {
@@ -213,6 +307,11 @@ interface UiState {
   clearTermActivity: (paneId: string) => void;
 }
 
+// Hydrate the saved terminal layout synchronously so restored tabs are present
+// on first paint (#155). The panes themselves respawn lazily when their group's
+// tab is first viewed — TerminalPane spawns a fresh PTY per pane at its cwd.
+const restoredTerminals = storedTerminals();
+
 export const useUiStore = create<UiState>((set, get) => ({
   view: "files",
   reviewMode: "working",
@@ -222,10 +321,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   repoSidebarHidden: storedRepoSidebarHidden(),
   terminalOpen: storedTerminalOpen(),
   terminalMaximized: false,
-  terminals: {},
+  terminals: restoredTerminals.terminals,
   groupSelections: {},
   termActivity: {},
-  nextTermId: 1,
+  nextTermId: restoredTerminals.nextTermId,
   historySha: null,
   filesPath: null,
   settingsOpen: false,
@@ -439,3 +538,13 @@ export const useUiStore = create<UiState>((set, get) => ({
       return { termActivity };
     }),
 }));
+
+// Persist the terminal layout whenever it changes (#155). The reference check
+// keeps this near-free on unrelated state updates — every terminal mutation
+// produces a fresh `terminals` object — and persisting per-mutation (rather than
+// only on clean quit) means a crash still leaves the layout restorable.
+useUiStore.subscribe((s, prev) => {
+  if (s.terminals !== prev.terminals || s.nextTermId !== prev.nextTermId) {
+    persistTerminals(s.terminals, s.nextTermId);
+  }
+});
