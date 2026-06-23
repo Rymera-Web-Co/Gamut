@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { ipc } from "@/lib/ipc";
@@ -12,6 +13,25 @@ type MdNode = {
   value?: string;
   url?: string;
   children?: MdNode[];
+};
+
+/**
+ * Sanitizer schema for the raw HTML that `rehype-raw` lets through (#137).
+ *
+ * PR bodies and review comments are remote, attacker-controllable GitHub
+ * content rendered with `rehype-raw` (which permits raw HTML) inside the Tauri
+ * webview — so unsanitized markup is a stored-XSS surface with full IPC access.
+ * We run `rehype-sanitize` after `rehype-raw` with GitHub's own default schema,
+ * extended only to keep the `checked` attribute on task-list checkboxes (the
+ * default schema drops it, which the `input` override below reads to render the
+ * box). This is the in-renderer defense paired with the webview CSP.
+ */
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    input: [...(defaultSchema.attributes?.input ?? []), "checked"],
+  },
 };
 
 /**
@@ -195,7 +215,9 @@ export function Markdown({
     >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[rehypeRaw]}
+        // Sanitize AFTER rehype-raw parses the raw HTML, so injected markup in
+        // remote GitHub content can't reach the webview unsanitized (#137).
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
         components={{
           input(props) {
             if (props.type !== "checkbox") return <input {...props} />;
