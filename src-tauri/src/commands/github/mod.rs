@@ -1800,6 +1800,33 @@ pub async fn github_pr_details(
     })
 }
 
+/// Whether `branch` still exists on the repo's GitHub `origin`. Used by the
+/// post-merge cleanup (#132) to decide whether GitHub auto-deleted the head
+/// branch: a 404 means the remote branch is gone, so deleting the local copy is
+/// safe; if it still exists, the local branch is kept.
+#[tauri::command]
+pub async fn github_remote_branch_exists(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    branch: String,
+) -> AppResult<bool> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let api = api_base(&state);
+    let client = http()?;
+    let resp = client
+        .get(format!("{api}/repos/{owner}/{repo}/branches/{branch}"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    match resp.status() {
+        s if s.is_success() => Ok(true),
+        reqwest::StatusCode::NOT_FOUND => Ok(false),
+        _ => Err(api_error("checking the remote branch", resp).await),
+    }
+}
+
 /// Merge a pull request. `method` is "merge" | "squash" | "rebase".
 #[tauri::command]
 pub async fn github_merge_pr(

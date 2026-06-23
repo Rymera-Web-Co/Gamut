@@ -9,6 +9,8 @@ import {
   type ReviewEvent,
   type ReviewSource,
 } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
+import { toast } from "@/store/toast";
 
 // ---- Local self-review ----
 
@@ -218,13 +220,77 @@ export function usePrDetails(repoId: number, number: number | null) {
 export function useMergePr(repoId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ number, method }: { number: number; method: MergeMethod }) =>
-      ipc.githubMergePr(repoId, number, method),
-    onSuccess: (_d, { number }) => {
+    mutationFn: ({ number, method }: MergePrVars) => ipc.githubMergePr(repoId, number, method),
+    onSuccess: async (_d, { number, baseRef, headRef }) => {
       qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
       qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+      await postMergeCleanup(qc, repoId, baseRef, headRef);
     },
   });
+}
+
+interface MergePrVars {
+  number: number;
+  method: MergeMethod;
+  /** PR base/head branches, for optional post-merge cleanup (#132). */
+  baseRef?: string;
+  headRef?: string;
+}
+
+/**
+ * Best-effort post-merge cleanup (#132): when enabled, check out the PR's base
+ * branch and delete the merged local head branch — but only if GitHub already
+ * deleted the remote head branch. Never throws: the merge already succeeded, so
+ * any failure here surfaces as a non-fatal toast instead of failing the merge.
+ */
+/**
+ * Whether the remote head branch is still there after a merge. GitHub's
+ * auto-delete is asynchronous, so we re-check a few times with backoff
+ * (~0s, 1s, 2s, 3s — up to ~6s) and return `false` as soon as it's gone. Only a
+ * branch that survives the whole window is treated as genuinely kept (#132).
+ */
+async function remoteBranchPersists(repoId: number, headRef: string): Promise<boolean> {
+  const delays = [1000, 2000, 3000];
+  for (let attempt = 0; ; attempt++) {
+    if (!(await ipc.githubRemoteBranchExists(repoId, headRef))) return false;
+    if (attempt >= delays.length) return true;
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+  }
+}
+
+async function postMergeCleanup(
+  qc: ReturnType<typeof useQueryClient>,
+  repoId: number,
+  baseRef?: string,
+  headRef?: string,
+) {
+  if (!useSettings.getState().values.autoCleanupAfterMerge) return;
+  if (!baseRef || !headRef || baseRef === headRef) return;
+  try {
+    await ipc.checkoutBranch(repoId, baseRef);
+    // Only drop the local branch if GitHub deleted the remote head branch
+    // (its "Automatically delete head branches" setting); otherwise keep it.
+    // GitHub deletes the head branch *asynchronously* after the merge call
+    // returns, so the ref can linger a second or two — poll with backoff before
+    // concluding it's being kept (#132).
+    const remoteExists = await remoteBranchPersists(repoId, headRef);
+    if (!remoteExists) {
+      // delete_branches refuses protected/current branches, reporting per-branch.
+      const results = await ipc.deleteBranches(repoId, [headRef]);
+      const failed = results.find((r) => !r.deleted && r.error);
+      if (failed)
+        toast.error(`Merged. Checked out ${baseRef}, but kept ${headRef}: ${failed.error}`);
+      else toast.success(`Checked out ${baseRef} and deleted ${headRef}`);
+    } else {
+      toast.info(`Checked out ${baseRef}; ${headRef} still exists on the remote, kept locally`);
+    }
+    qc.invalidateQueries({ queryKey: ["branches", repoId] });
+    qc.invalidateQueries({ queryKey: ["log", repoId], refetchType: "all" });
+    qc.invalidateQueries({ queryKey: ["review-files", repoId] });
+    qc.invalidateQueries({ queryKey: ["repo-statuses"] });
+  } catch (e) {
+    toast.error(`Pull request merged, but post-merge cleanup failed: ${String(e)}`);
+  }
 }
 
 /** Inline review-comment threads (grouped comments + replies + resolved state). */
