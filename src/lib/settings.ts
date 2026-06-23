@@ -36,6 +36,9 @@ export interface Settings {
   pruneDirs: string; // comma-separated
   watchDebounceMs: number; // applied at startup
   mergeStrategy: "merge" | "squash" | "rebase";
+  // After merging a PR, check out its base branch and delete the merged local
+  // branch (only when the remote head branch was auto-deleted). See #132.
+  autoCleanupAfterMerge: boolean;
   autoFetch: boolean; // periodically fetch repos in the background
   autoFetchIntervalMinutes: number; // minutes between background fetches
 
@@ -127,6 +130,7 @@ export const DEFAULTS: Settings = {
   pruneDirs: "node_modules, vendor, target, .git, dist, build, .next, .cache",
   watchDebounceMs: 400,
   mergeStrategy: "merge",
+  autoCleanupAfterMerge: true,
   autoFetch: true,
   autoFetchIntervalMinutes: 5,
 

@@ -417,6 +417,7 @@ function GitPanel() {
   const [pruneDirs, setPruneDirs] = useSetting("pruneDirs");
   const [watchDebounceMs, setWatchDebounce] = useSetting("watchDebounceMs");
   const [mergeStrategy, setMergeStrategy] = useSetting("mergeStrategy");
+  const [autoCleanupAfterMerge, setAutoCleanup] = useSetting("autoCleanupAfterMerge");
   const [autoFetch, setAutoFetch] = useSetting("autoFetch");
   const [autoFetchInterval, setAutoFetchInterval] = useSetting("autoFetchIntervalMinutes");
 
@@ -460,6 +461,12 @@ function GitPanel() {
             { value: "rebase", label: "Rebase" },
           ]}
         />
+      </Field>
+      <Field
+        label="Clean up after merging a PR"
+        hint="After merging, check out the base branch and delete the merged local branch (only when its remote branch was auto-deleted). Protected branches are never deleted."
+      >
+        <Toggle checked={autoCleanupAfterMerge} onChange={setAutoCleanup} />
       </Field>
       <Divider />
       <Field

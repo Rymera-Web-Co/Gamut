@@ -712,6 +712,9 @@ export const ipc = {
     invoke<void>("github_resolve_thread", { threadId, resolved }),
   githubMergePr: (repoId: number, number: number, method: MergeMethod) =>
     invoke<void>("github_merge_pr", { repoId, number, method }),
+  /** Whether a branch still exists on the repo's GitHub origin (#132). */
+  githubRemoteBranchExists: (repoId: number, branch: string) =>
+    invoke<boolean>("github_remote_branch_exists", { repoId, branch }),
   githubPrDetails: (repoId: number, number: number) =>
     invoke<PrDetails>("github_pr_details", { repoId, number }),
 

@@ -1114,7 +1114,19 @@ const MERGE_METHODS: { method: MergeMethod; label: string }[] = [
   { method: "rebase", label: "Rebase and merge" },
 ];
 
-function MergeBar({ repoId, number, state }: { repoId: number; number: number; state: string }) {
+function MergeBar({
+  repoId,
+  number,
+  state,
+  baseRef,
+  headRef,
+}: {
+  repoId: number;
+  number: number;
+  state: string;
+  baseRef?: string;
+  headRef?: string;
+}) {
   const merge = useMergePr(repoId);
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState<MergeMethod>(useSettings.getState().values.mergeStrategy);
@@ -1163,7 +1175,7 @@ function MergeBar({ repoId, number, state }: { repoId: number; number: number; s
             disabled={merge.isPending}
             onClick={() =>
               merge.mutate(
-                { number, method },
+                { number, method, baseRef, headRef },
                 {
                   onSuccess: () => {
                     setOpen(false);
@@ -1483,7 +1495,13 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                 )}
               </div>
               {thread.data && (
-                <MergeBar repoId={repoId} number={selected} state={thread.data.state} />
+                <MergeBar
+                  repoId={repoId}
+                  number={selected}
+                  state={thread.data.state}
+                  baseRef={selectedPr?.base_ref}
+                  headRef={selectedPr?.head_ref}
+                />
               )}
             </>
           )}

@@ -152,6 +152,7 @@ pub fn run() {
             commands::github::github_resolve_thread,
             commands::github::github_pr_details,
             commands::github::github_merge_pr,
+            commands::github::github_remote_branch_exists,
             commands::terminal::terminal_spawn,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
