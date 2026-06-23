@@ -317,6 +317,9 @@ function AppearancePanel() {
   const setPreference = useTheme((s) => s.setPreference);
   const [editorFontSize, setEditorFontSize] = useSetting("editorFontSize");
   const [editorFontFamily, setEditorFontFamily] = useSetting("editorFontFamily");
+  const [markdownPreviewByDefault, setMarkdownPreviewByDefault] = useSetting(
+    "markdownPreviewByDefault",
+  );
   const [toastTimeout, setToastTimeout] = useSetting("toastTimeout");
 
   return (
@@ -353,6 +356,12 @@ function AppearancePanel() {
           onChange={setEditorFontFamily}
           placeholder="e.g. JetBrains Mono"
         />
+      </Field>
+      <Field
+        label="Open markdown in preview"
+        hint="Show .md files rendered by default. The Edit/Preview toggle still switches per file."
+      >
+        <Toggle checked={markdownPreviewByDefault} onChange={setMarkdownPreviewByDefault} />
       </Field>
       <Divider />
       <Field label="Toast auto-dismiss">

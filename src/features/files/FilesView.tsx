@@ -8,7 +8,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
-import { useEditorPrefs } from "@/lib/settings";
+import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
@@ -111,10 +111,12 @@ export function FilesView() {
   const content = useFileContent(repoId, isImage ? null : selectedPath);
   const editable = content.data?.text != null;
   const dirty = editable && value !== baseline;
-  // Markdown files get a rendered-preview toggle (issue #121); the editor shows
-  // raw source by default and `mdPreview` swaps in the rendered view.
+  // Markdown files get a rendered-preview toggle (issue #121); `mdPreview` swaps
+  // the editor between raw source and the rendered view. Its initial state per
+  // file follows the "open markdown in preview" preference.
   const isMarkdown = selectedPath != null && !isImage && languageFor(selectedPath) === "markdown";
-  const [mdPreview, setMdPreview] = useState(false);
+  const markdownPreviewByDefault = useSettings((s) => s.values.markdownPreviewByDefault);
+  const [mdPreview, setMdPreview] = useState(markdownPreviewByDefault);
 
   // Map changed working-tree paths so the tree can highlight files (and the
   // directories that contain them).
@@ -135,11 +137,12 @@ export function FilesView() {
     return { files, dirs };
   }, [status.data]);
 
-  // Reset to source view whenever the open file changes, so opening a markdown
-  // file always lands on the editable buffer rather than a stale preview.
+  // Reapply the preview default whenever the open file changes, so opening a
+  // markdown file lands on the preferred view rather than a stale per-file
+  // toggle. Re-runs if the preference itself changes while a file is open.
   useEffect(() => {
-    setMdPreview(false);
-  }, [selectedPath]);
+    setMdPreview(markdownPreviewByDefault);
+  }, [selectedPath, markdownPreviewByDefault]);
 
   // Switching repos: drop the buffer and restore that repo's last-open file.
   useEffect(() => {
