@@ -2,7 +2,7 @@ use git2::{DiffOptions, Oid, Repository};
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::history::{blob_text, files_from_diff, open_repo, FileChange, FileDiff};
+use crate::commands::history::{blob_text, files_from_diff, repo_path, FileChange, FileDiff};
 use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -81,34 +81,41 @@ pub async fn review_files(
     source: ReviewSource,
     base: Option<String>,
 ) -> AppResult<ReviewDiff> {
-    let repo = open_repo(&state, repo_id)?;
-    let head_commit = repo.head()?.peel_to_commit()?;
-    let head_tree = head_commit.tree()?;
+    // Read the base-branch precedence (a settings lookup) before crossing the
+    // thread boundary — the closure can't borrow `State` (#133).
+    let precedence = base_precedence(&state);
+    let dir = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(dir, move |p| {
+        let repo = crate::git::open(p)?;
+        let head_commit = repo.head()?.peel_to_commit()?;
+        let head_tree = head_commit.tree()?;
 
-    match source {
-        ReviewSource::Working => {
-            let mut opts = DiffOptions::new();
-            opts.include_untracked(true).recurse_untracked_dirs(true);
-            let diff = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?;
-            Ok(ReviewDiff {
-                base_label: "HEAD".to_string(),
-                head_label: "Working tree".to_string(),
-                files: files_from_diff(&diff)?,
-            })
+        match source {
+            ReviewSource::Working => {
+                let mut opts = DiffOptions::new();
+                opts.include_untracked(true).recurse_untracked_dirs(true);
+                let diff =
+                    repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut opts))?;
+                Ok(ReviewDiff {
+                    base_label: "HEAD".to_string(),
+                    head_label: "Working tree".to_string(),
+                    files: files_from_diff(&diff)?,
+                })
+            }
+            ReviewSource::Branch => {
+                let (base_oid, base_label) = resolve_base(&repo, base.as_deref(), &precedence)?;
+                let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
+                let base_tree = repo.find_commit(merge_base)?.tree()?;
+                let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&head_tree), None)?;
+                Ok(ReviewDiff {
+                    base_label,
+                    head_label: head_branch_label(&repo),
+                    files: files_from_diff(&diff)?,
+                })
+            }
         }
-        ReviewSource::Branch => {
-            let (base_oid, base_label) =
-                resolve_base(&repo, base.as_deref(), &base_precedence(&state))?;
-            let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
-            let base_tree = repo.find_commit(merge_base)?.tree()?;
-            let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&head_tree), None)?;
-            Ok(ReviewDiff {
-                base_label,
-                head_label: head_branch_label(&repo),
-                files: files_from_diff(&diff)?,
-            })
-        }
-    }
+    })
+    .await
 }
 
 /// Old/new text for one file in a local review, for the diff editor.
@@ -121,41 +128,48 @@ pub async fn review_file_diff(
     base: Option<String>,
     old_path: Option<String>,
 ) -> AppResult<FileDiff> {
-    let repo = open_repo(&state, repo_id)?;
-    let head_commit = repo.head()?.peel_to_commit()?;
-    let head_tree = head_commit.tree()?;
-    let old_lookup = old_path.as_deref().unwrap_or(&path);
+    // Settings lookup before the thread boundary — the closure can't borrow
+    // `State` (#133).
+    let precedence = base_precedence(&state);
+    let dir = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(dir, move |p| {
+        let repo = crate::git::open(p)?;
+        let head_commit = repo.head()?.peel_to_commit()?;
+        let head_tree = head_commit.tree()?;
+        let old_lookup = old_path.as_deref().unwrap_or(&path);
 
-    let (old, new) = match source {
-        ReviewSource::Working => {
-            let old = blob_text(&repo, &head_tree, old_lookup);
-            // New content is the file on disk; missing means deleted.
-            let new = repo.workdir().and_then(|wd| {
-                let full = wd.join(&path);
-                std::fs::read(&full).ok().map(|bytes| {
-                    let is_binary = bytes.contains(&0);
-                    (String::from_utf8_lossy(&bytes).into_owned(), is_binary)
-                })
-            });
-            (old, new)
-        }
-        ReviewSource::Branch => {
-            let (base_oid, _) = resolve_base(&repo, base.as_deref(), &base_precedence(&state))?;
-            let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
-            let base_tree = repo.find_commit(merge_base)?.tree()?;
-            let old = blob_text(&repo, &base_tree, old_lookup);
-            let new = blob_text(&repo, &head_tree, &path);
-            (old, new)
-        }
-    };
+        let (old, new) = match source {
+            ReviewSource::Working => {
+                let old = blob_text(&repo, &head_tree, old_lookup);
+                // New content is the file on disk; missing means deleted.
+                let new = repo.workdir().and_then(|wd| {
+                    let full = wd.join(&path);
+                    std::fs::read(&full).ok().map(|bytes| {
+                        let is_binary = bytes.contains(&0);
+                        (String::from_utf8_lossy(&bytes).into_owned(), is_binary)
+                    })
+                });
+                (old, new)
+            }
+            ReviewSource::Branch => {
+                let (base_oid, _) = resolve_base(&repo, base.as_deref(), &precedence)?;
+                let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
+                let base_tree = repo.find_commit(merge_base)?.tree()?;
+                let old = blob_text(&repo, &base_tree, old_lookup);
+                let new = blob_text(&repo, &head_tree, &path);
+                (old, new)
+            }
+        };
 
-    let is_binary = old.as_ref().map(|(_, b)| *b).unwrap_or(false)
-        || new.as_ref().map(|(_, b)| *b).unwrap_or(false);
+        let is_binary = old.as_ref().map(|(_, b)| *b).unwrap_or(false)
+            || new.as_ref().map(|(_, b)| *b).unwrap_or(false);
 
-    Ok(FileDiff {
-        path,
-        old_text: old.map(|(t, _)| t),
-        new_text: new.map(|(t, _)| t),
-        is_binary,
+        Ok(FileDiff {
+            path,
+            old_text: old.map(|(t, _)| t),
+            new_text: new.map(|(t, _)| t),
+            is_binary,
+        })
     })
+    .await
 }

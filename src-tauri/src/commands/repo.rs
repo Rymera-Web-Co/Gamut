@@ -5,7 +5,6 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::history::open_repo;
 use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::git;
@@ -436,35 +435,43 @@ pub struct BranchInfo {
 /// List local and remote branches; the current branch is flagged `is_head`.
 #[tauri::command]
 pub async fn list_branches(state: State<'_, AppState>, repo_id: i64) -> AppResult<Vec<BranchInfo>> {
-    let repo = open_repo(&state, repo_id)?;
-    let mut out = Vec::new();
-    for kind in [BranchType::Local, BranchType::Remote] {
-        for b in repo.branches(Some(kind))? {
-            let (branch, _) = b?;
-            if let Some(name) = branch.name()? {
-                out.push(BranchInfo {
-                    name: name.to_string(),
-                    is_head: branch.is_head(),
-                    is_remote: matches!(kind, BranchType::Remote),
-                });
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        let repo = git::open(p)?;
+        let mut out = Vec::new();
+        for kind in [BranchType::Local, BranchType::Remote] {
+            for b in repo.branches(Some(kind))? {
+                let (branch, _) = b?;
+                if let Some(name) = branch.name()? {
+                    out.push(BranchInfo {
+                        name: name.to_string(),
+                        is_head: branch.is_head(),
+                        is_remote: matches!(kind, BranchType::Remote),
+                    });
+                }
             }
         }
-    }
-    Ok(out)
+        Ok(out)
+    })
+    .await
 }
 
 /// List tag names in the repository.
 #[tauri::command]
 pub async fn list_git_tags(state: State<'_, AppState>, repo_id: i64) -> AppResult<Vec<String>> {
-    let repo = open_repo(&state, repo_id)?;
-    let mut names: Vec<String> = repo
-        .tag_names(None)?
-        .iter()
-        .flatten()
-        .map(|s| s.to_string())
-        .collect();
-    names.sort();
-    Ok(names)
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        let repo = git::open(p)?;
+        let mut names: Vec<String> = repo
+            .tag_names(None)?
+            .iter()
+            .flatten()
+            .map(|s| s.to_string())
+            .collect();
+        names.sort();
+        Ok(names)
+    })
+    .await
 }
 
 /// Check out a branch, tag, or commit (safe checkout — aborts if it would
