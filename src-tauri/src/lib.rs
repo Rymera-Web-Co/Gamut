@@ -71,6 +71,7 @@ pub fn run() {
             commands::repo::list_branches,
             commands::repo::list_git_tags,
             commands::repo::checkout_branch,
+            commands::repo::create_branch,
             commands::cleanup::list_stale_branches,
             commands::cleanup::delete_branches,
             commands::tags::list_tags,

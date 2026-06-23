@@ -566,6 +566,66 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Create a new local branch and check it out. Mirrors `git checkout -b <name>
+/// [<from_ref>]`.
+///
+/// The branch is created from `from_ref` (any branch / tag / commit) when given,
+/// otherwise from the current `HEAD`, then checked out with the same
+/// safe-checkout the manual switch uses. `checkout_tree` can rewrite the working
+/// tree, so this runs on a blocking thread like `checkout_branch` (#131).
+/// Local-only: the git2 build has networking disabled, so no remote branch is
+/// created and nothing is pushed.
+#[tauri::command]
+pub async fn create_branch(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    name: String,
+    from_ref: Option<String>,
+) -> AppResult<()> {
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        create_branch_at(p, &name, from_ref.as_deref())
+    })
+    .await
+}
+
+/// Blocking core of [`create_branch`]; opens the repo from `path`.
+fn create_branch_at(path: &std::path::Path, name: &str, from_ref: Option<&str>) -> AppResult<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::Other("Branch name cannot be empty".into()));
+    }
+    // Validate against git's ref-name rules up front so the user gets a clear
+    // message instead of a cryptic libgit2 error on `branch()`.
+    if !git2::Reference::is_valid_name(&format!("refs/heads/{name}")) {
+        return Err(AppError::Other(format!(
+            "\"{name}\" is not a valid branch name"
+        )));
+    }
+
+    let repo = git::open(path)?;
+
+    if repo.find_branch(name, BranchType::Local).is_ok() {
+        return Err(AppError::Other(format!(
+            "A branch named \"{name}\" already exists"
+        )));
+    }
+
+    // Resolve the starting point: an explicit ref, else current HEAD.
+    let commit = repo
+        .revparse_single(from_ref.unwrap_or("HEAD"))?
+        .peel_to_commit()?;
+
+    // force = false → errors if the branch somehow exists (already guarded above).
+    repo.branch(name, &commit, false)?;
+
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.safe();
+    repo.checkout_tree(commit.as_object(), Some(&mut checkout))?;
+    repo.set_head(&format!("refs/heads/{name}"))?;
+    Ok(())
+}
+
 /// Scan a directory for git repos, flagging which are already registered.
 #[tauri::command]
 pub fn discover_repos(
@@ -654,6 +714,35 @@ mod tests {
         index.add_path(Path::new("a.txt")).unwrap();
         index.write().unwrap();
         assert!(has_uncommitted_changes(&repo), "staged change is dirty");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn creates_and_checks_out_a_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_create_branch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        commit_file(&repo, "a.txt", "hello\n");
+
+        // Default base is HEAD; the new branch becomes current.
+        create_branch_at(&root, "feature-x", None).unwrap();
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature-x"));
+
+        // Duplicate, invalid, and blank names are rejected with an error.
+        assert!(
+            create_branch_at(&root, "feature-x", None).is_err(),
+            "duplicate"
+        );
+        assert!(create_branch_at(&root, "bad name", None).is_err(), "space");
+        assert!(create_branch_at(&root, "  ", None).is_err(), "blank");
+
+        // An explicit source ref bases the branch on that ref instead of HEAD.
+        create_branch_at(&root, "feature-y", Some("feature-x")).unwrap();
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature-y"));
 
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -490,6 +490,9 @@ export const ipc = {
   listGitTags: (repoId: number) => invoke<string[]>("list_git_tags", { repoId }),
   checkoutBranch: (repoId: number, name: string) =>
     invoke<void>("checkout_branch", { repoId, name }),
+  /** Create a local branch (from `fromRef`, else HEAD) and check it out (#131). */
+  createBranch: (repoId: number, name: string, fromRef?: string) =>
+    invoke<void>("create_branch", { repoId, name, fromRef: fromRef ?? null }),
   listStaleBranches: (repoId: number) => invoke<StaleBranch[]>("list_stale_branches", { repoId }),
   deleteBranches: (repoId: number, names: string[]) =>
     invoke<DeleteResult[]>("delete_branches", { repoId, names }),
