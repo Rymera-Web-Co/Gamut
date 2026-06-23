@@ -496,6 +496,7 @@ function TerminalPanel() {
   const [terminalFontFamily, setFontFamily] = useSetting("terminalFontFamily");
   const [terminalCursorBlink, setCursorBlink] = useSetting("terminalCursorBlink");
   const [terminalScrollback, setScrollback] = useSetting("terminalScrollback");
+  const [restoreSessions, setRestoreSessions] = useSetting("terminalRestoreSessions");
 
   return (
     <div>
@@ -527,6 +528,13 @@ function TerminalPanel() {
           step={100}
           suffix="lines"
         />
+      </Field>
+      <Divider />
+      <Field
+        label="Restore sessions on launch"
+        hint="Reopen your terminal tabs and splits, respawning a fresh shell in each saved directory. Scrollback and running processes aren't restored."
+      >
+        <Toggle checked={restoreSessions} onChange={setRestoreSessions} />
       </Field>
     </div>
   );

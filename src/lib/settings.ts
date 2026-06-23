@@ -45,6 +45,9 @@ export interface Settings {
   // Terminal
   terminalShell: string; // "" → system login shell
   terminalScrollback: number;
+  // Reopen the terminal layout (tabs/splits/cwds) on launch, respawning a fresh
+  // shell per pane at its saved directory (#155). Off → start with a clean slate.
+  terminalRestoreSessions: boolean;
 
   // Terminal notifications (background-pane bell / process-exit; see #28)
   terminalNotifySound: boolean; // master on/off for the audible cue
@@ -136,6 +139,9 @@ export const DEFAULTS: Settings = {
 
   terminalShell: "",
   terminalScrollback: 5000,
+  // On by default: reopening yesterday's terminal layout is the point of the
+  // feature; opt out for a clean slate each launch.
+  terminalRestoreSessions: true,
 
   // Sound on by default for both discrete events; desktop notifications stay
   // off until the user opts in (they require an OS permission grant).
