@@ -1,0 +1,11 @@
+# Treat source as text so an stray control byte can't make git/GitHub render a
+# whole file as "binary" (and hide the diff). See #140 / lineKey's NUL separator.
+*.ts   text diff
+*.tsx  text diff
+*.js   text diff
+*.jsx  text diff
+*.json text diff
+*.rs   text diff
+*.md   text diff
+*.css  text diff
+*.html text diff
