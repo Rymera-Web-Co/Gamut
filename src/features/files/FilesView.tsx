@@ -244,7 +244,11 @@ export function FilesView() {
     });
     ed.focus();
     setPendingReveal(null);
-  }, [pendingReveal, editorReady, value]);
+    // Keyed on `content.data` (the load-completion signal that flips loadedRef in
+    // the effect above), not the editor `value` — the buffer changes on every
+    // keystroke and re-ran this effect needlessly (#142), while `content.data`
+    // only changes when a file actually loads, which is what gates the reveal.
+  }, [pendingReveal, editorReady, content.data]);
 
   // Open a search result: switch to its file (guarding unsaved edits) and queue
   // the jump-to-match for when the buffer loads.
