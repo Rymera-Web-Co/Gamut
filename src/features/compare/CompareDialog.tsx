@@ -1,0 +1,394 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { DiffEditor } from "@monaco-editor/react";
+import { ArrowLeftRight, FolderOpen, Loader2 } from "lucide-react";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ipc, pickFile, type CompareResult } from "@/lib/ipc";
+import { isDarkTheme, languageFor } from "@/lib/lang";
+import { GITHUB_DARK } from "@/lib/monaco";
+import { useDiffEditorPrefs } from "@/lib/settings";
+import { useRepos } from "@/features/repos/api";
+import { useUiStore } from "@/store/ui";
+
+type Mode = "files" | "refs" | "revision";
+
+/** Working-tree sentinel for the ref dropdowns (maps to a null ref backend-side). */
+const WORKTREE = "\0worktree";
+
+const RECENT_REFS_KEY = "gamut.compare.recentRefs";
+
+function recentRefs(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_REFS_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRefs(...refs: string[]) {
+  const real = refs.filter((r) => r && r !== WORKTREE);
+  if (!real.length) return;
+  const next = [...new Set([...real, ...recentRefs()])].slice(0, 12);
+  localStorage.setItem(RECENT_REFS_KEY, JSON.stringify(next));
+}
+
+/**
+ * File Compare (#130). Three modes in one dialog: two arbitrary files, one repo
+ * file across two refs, or a working/HEAD file against a chosen revision. The
+ * result renders in the same Monaco diff viewer used by Review/History.
+ */
+export function CompareDialog() {
+  const seed = useUiStore((s) => s.compare);
+  const close = useUiStore((s) => s.closeCompare);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
+  const open = seed != null;
+
+  // A repo is needed for the ref/revision modes; prefer the seed, else the
+  // active repo.
+  const repoId = seed?.repoId ?? activeRepoId ?? null;
+  const repos = useRepos();
+  const repoName = repos.data?.find((r) => r.id === repoId)?.name ?? null;
+
+  const [mode, setMode] = useState<Mode>("files");
+  const [leftPath, setLeftPath] = useState("");
+  const [rightPath, setRightPath] = useState("");
+  const [path, setPath] = useState("");
+  const [leftRef, setLeftRef] = useState("");
+  const [rightRef, setRightRef] = useState("");
+  // Left side for the "with revision" mode: working tree or HEAD.
+  const [revLeft, setRevLeft] = useState<typeof WORKTREE | "HEAD">(WORKTREE);
+
+  const [result, setResult] = useState<CompareResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // (Re)initialize each time the dialog opens with a fresh seed.
+  useEffect(() => {
+    if (!open) return;
+    setResult(null);
+    setError(null);
+    setLeftPath("");
+    setRightPath("");
+    setLeftRef("");
+    setRightRef("");
+    setRevLeft(WORKTREE);
+    setPath(seed?.path ?? "");
+    // A seeded file defaults to the across-refs flow; otherwise compare two files.
+    setMode(seed?.path ? "refs" : "files");
+  }, [open, seed]);
+
+  // Branch + tag names for the ref pickers (only when a repo is in play).
+  const refsQuery = useQuery({
+    queryKey: ["compare-refs", repoId],
+    queryFn: async () => {
+      const [branches, tags] = await Promise.all([
+        ipc.listBranches(repoId!),
+        ipc.listGitTags(repoId!),
+      ]);
+      return [...branches.map((b) => b.name), ...tags];
+    },
+    enabled: open && repoId != null && mode !== "files",
+  });
+
+  const refOptions = useMemo(() => {
+    const known = refsQuery.data ?? [];
+    return [...new Set([...recentRefs(), ...known])];
+  }, [refsQuery.data]);
+
+  const canCompare =
+    mode === "files"
+      ? leftPath.trim() !== "" && rightPath.trim() !== ""
+      : repoId != null &&
+        path.trim() !== "" &&
+        (mode === "refs"
+          ? leftRef.trim() !== "" && rightRef.trim() !== ""
+          : rightRef.trim() !== "");
+
+  async function runCompare() {
+    setLoading(true);
+    setError(null);
+    try {
+      let res: CompareResult;
+      if (mode === "files") {
+        res = await ipc.compareFiles(leftPath.trim(), rightPath.trim());
+      } else if (mode === "refs") {
+        res = await ipc.compareRefs(repoId!, path.trim(), leftRef.trim(), rightRef.trim());
+        rememberRefs(leftRef.trim(), rightRef.trim());
+      } else {
+        const left = revLeft === "HEAD" ? "HEAD" : null;
+        res = await ipc.compareRefs(repoId!, path.trim(), left, rightRef.trim());
+        rememberRefs(rightRef.trim());
+      }
+      setResult(res);
+    } catch (e) {
+      setError(String(e));
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function swapSides() {
+    if (!result) return;
+    setResult({
+      ...result,
+      left_text: result.right_text,
+      right_text: result.left_text,
+      left_label: result.right_label,
+      right_label: result.left_label,
+    });
+  }
+
+  const browse = (set: (p: string) => void) => async () => {
+    const p = await pickFile("Choose a file to compare");
+    if (p) set(p);
+  };
+
+  // Language hint for syntax highlighting: derive from whichever path we have.
+  const lang = languageFor(result?.right_label ?? path ?? rightPath ?? "");
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <DialogContent className="flex h-[85vh] w-[90vw] max-w-[1400px] flex-col gap-3 p-4">
+        <DialogHeader>
+          <DialogTitle>Compare files</DialogTitle>
+        </DialogHeader>
+
+        {/* Mode selector. */}
+        <div className="flex shrink-0 gap-1 rounded-md border border-[var(--color-border)] p-0.5 text-xs">
+          {(
+            [
+              { m: "files", label: "Two files" },
+              { m: "refs", label: "Across refs" },
+              { m: "revision", label: "With revision" },
+            ] as const
+          ).map(({ m, label }) => {
+            const disabled = m !== "files" && repoId == null;
+            return (
+              <button
+                key={m}
+                disabled={disabled}
+                title={disabled ? "Open a repository to compare its files" : undefined}
+                onClick={() => {
+                  setMode(m);
+                  setResult(null);
+                }}
+                className={`flex-1 rounded px-2 py-1 ${
+                  mode === m
+                    ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
+                    : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] disabled:opacity-40 disabled:hover:bg-transparent"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Inputs for the active mode. */}
+        <div className="shrink-0 space-y-2">
+          {mode === "files" && (
+            <>
+              <PathRow label="File A" value={leftPath} onChange={setLeftPath} onBrowse={browse(setLeftPath)} />
+              <PathRow label="File B" value={rightPath} onChange={setRightPath} onBrowse={browse(setRightPath)} />
+            </>
+          )}
+
+          {mode !== "files" && (
+            <div className="flex items-center gap-2">
+              <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
+                File
+              </span>
+              <Input
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                placeholder="repo-relative/path.ext"
+                className="h-8 font-mono text-xs"
+              />
+              {repoName && (
+                <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
+                  in {repoName}
+                </span>
+              )}
+            </div>
+          )}
+
+          {mode === "refs" && (
+            <div className="flex gap-2">
+              <RefRow label="Left" value={leftRef} onChange={setLeftRef} options={refOptions} />
+              <RefRow label="Right" value={rightRef} onChange={setRightRef} options={refOptions} />
+            </div>
+          )}
+
+          {mode === "revision" && (
+            <div className="flex gap-2">
+              <div className="flex flex-1 items-center gap-2">
+                <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">
+                  Left
+                </span>
+                <select
+                  value={revLeft}
+                  onChange={(e) => setRevLeft(e.target.value as typeof WORKTREE | "HEAD")}
+                  className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 text-xs"
+                >
+                  <option value={WORKTREE}>Working tree</option>
+                  <option value="HEAD">HEAD</option>
+                </select>
+              </div>
+              <RefRow label="Right" value={rightRef} onChange={setRightRef} options={refOptions} />
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            {error && <span className="mr-auto truncate text-xs text-[var(--color-destructive)]">{error}</span>}
+            <Button size="sm" disabled={!canCompare || loading} onClick={runCompare}>
+              {loading && <Loader2 className="animate-spin" />}
+              Compare
+            </Button>
+          </div>
+        </div>
+
+        {/* Result. */}
+        <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-[var(--color-border)]">
+          {result ? (
+            <ResultView result={result} lang={lang} onSwap={swapSides} />
+          ) : (
+            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--color-muted-foreground)]">
+              Pick what to compare, then press Compare.
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ResultView({
+  result,
+  lang,
+  onSwap,
+}: {
+  result: CompareResult;
+  lang: string;
+  onSwap: () => void;
+}) {
+  const diffPrefs = useDiffEditorPrefs();
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-2 py-1 text-xs">
+        <span className="min-w-0 flex-1 truncate font-mono" title={result.left_label}>
+          {result.left_label}
+        </span>
+        <button
+          title="Swap sides"
+          onClick={onSwap}
+          className="shrink-0 rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        >
+          <ArrowLeftRight className="size-3.5" />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-right font-mono" title={result.right_label}>
+          {result.right_label}
+        </span>
+      </div>
+      <div className="min-h-0 flex-1">
+        {result.identical ? (
+          <Centered>Files are identical.</Centered>
+        ) : result.is_binary ? (
+          <Centered>Binary file — content differs.</Centered>
+        ) : (
+          <DiffEditor
+            height="100%"
+            theme={isDarkTheme() ? GITHUB_DARK : "light"}
+            language={lang}
+            original={result.left_text ?? ""}
+            modified={result.right_text ?? ""}
+            options={{
+              readOnly: true,
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              ...diffPrefs,
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
+      {children}
+    </div>
+  );
+}
+
+function PathRow({
+  label,
+  value,
+  onChange,
+  onBrowse,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBrowse: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">{label}</span>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="/absolute/path/to/file"
+        className="h-8 font-mono text-xs"
+      />
+      <Button size="sm" variant="outline" onClick={onBrowse} className="shrink-0">
+        <FolderOpen /> Browse…
+      </Button>
+    </div>
+  );
+}
+
+function RefRow({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}) {
+  const listId = `compare-refs-${label}`;
+  return (
+    <div className="flex flex-1 items-center gap-2">
+      <span className="w-16 shrink-0 text-right text-xs text-[var(--color-muted-foreground)]">{label}</span>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="branch, tag or sha"
+        list={listId}
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        className="h-8 font-mono text-xs"
+      />
+      <datalist id={listId}>
+        {options.map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
+    </div>
+  );
+}

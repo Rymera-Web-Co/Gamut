@@ -14,6 +14,7 @@ import { PullsView } from "@/features/review/PullsView";
 import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { CommandPalette } from "@/features/palette/CommandPalette";
+import { CompareDialog } from "@/features/compare/CompareDialog";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
@@ -177,6 +178,7 @@ export default function App() {
       <Toaster />
       <SettingsDialog />
       <CommandPalette />
+      <CompareDialog />
     </div>
   );
 }

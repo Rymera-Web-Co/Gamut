@@ -193,6 +193,17 @@ export interface ReviewDiff {
   files: FileChange[];
 }
 
+/** Result of a File Compare (#130): the two sides for the diff viewer. */
+export interface CompareResult {
+  /** `null` when that side is binary or unreadable. */
+  left_text: string | null;
+  right_text: string | null;
+  left_label: string;
+  right_label: string;
+  is_binary: boolean;
+  identical: boolean;
+}
+
 export interface AuthStatus {
   logged_in: boolean;
   login: string | null;
@@ -616,6 +627,21 @@ export const ipc = {
       oldPath,
     }),
 
+  // file compare (#130)
+  /** Diff two arbitrary files anywhere on disk. */
+  compareFiles: (leftPath: string, rightPath: string) =>
+    invoke<CompareResult>("compare_files", { leftPath, rightPath }),
+  /**
+   * Diff one repo-relative file across refs / the working tree. A `null` ref
+   * means the working tree; any string is a revparse target (branch/tag/sha).
+   */
+  compareRefs: (
+    repoId: number,
+    path: string,
+    leftRef: string | null,
+    rightRef: string | null,
+  ) => invoke<CompareResult>("compare_refs", { repoId, path, leftRef, rightRef }),
+
   // github
   githubSetToken: (token: string) => invoke<AuthStatus>("github_set_token", { token }),
   githubAuthStatus: () => invoke<AuthStatus>("github_auth_status"),
@@ -734,6 +760,12 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 /** Open the native folder picker. Returns the chosen absolute path, or null. */
 export async function pickDirectory(title?: string): Promise<string | null> {
   const result = await openDialog({ directory: true, multiple: false, title });
+  return typeof result === "string" ? result : null;
+}
+
+/** Open the native file picker. Returns the chosen absolute path, or null (#130). */
+export async function pickFile(title?: string): Promise<string | null> {
+  const result = await openDialog({ directory: false, multiple: false, title });
   return typeof result === "string" ? result : null;
 }
 
