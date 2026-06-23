@@ -25,6 +25,17 @@ pub enum AppError {
     #[error("updater error: {0}")]
     Updater(#[from] tauri_plugin_updater::Error),
 
+    /// Not authenticated with GitHub. A typed variant rather than a stringly
+    /// `Other` for a common, distinguishable case (#138); it serializes to the
+    /// same message it always did, so the frontend is unaffected.
+    #[error("not signed in to GitHub")]
+    NotSignedIn,
+
+    /// A repo-relative path resolved outside the repository root (`..` traversal
+    /// or symlink escape) — see `commands::files::safe_join`.
+    #[error("path escapes the repository root")]
+    PathEscapesRoot,
+
     #[error("{0}")]
     Other(String),
 }
