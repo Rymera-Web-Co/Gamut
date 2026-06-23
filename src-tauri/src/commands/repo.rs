@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use git2::BranchType;
@@ -51,6 +52,20 @@ fn ids_for(conn: &Connection, sql: &str, repo_id: i64) -> AppResult<Vec<i64>> {
         .query_map([repo_id], |row| row.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ids)
+}
+
+/// Collect a `(repo_id, value)` join table into a `repo_id → [value]` map in a
+/// single query, so the list endpoint doesn't run one query per repo (#136).
+/// `sql` must select `repo_id` first and the value id second.
+fn id_map(conn: &Connection, sql: &str) -> AppResult<HashMap<i64, Vec<i64>>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut map: HashMap<i64, Vec<i64>> = HashMap::new();
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (repo_id, value) = row?;
+        map.entry(repo_id).or_default().push(value);
+    }
+    Ok(map)
 }
 
 fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
@@ -234,14 +249,50 @@ pub fn sync_group_folder(state: State<AppState>, group_id: i64) -> AppResult<usi
 #[tauri::command]
 pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
     let conn = lock(&state)?;
-    let ids: Vec<i64> = {
-        let mut stmt = conn.prepare("SELECT id FROM repos ORDER BY sort, name COLLATE NOCASE")?;
-        let ids = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        ids
-    };
-    ids.into_iter().map(|id| load_repo(&conn, id)).collect()
+    // Two batch queries for the join tables instead of two per repo — the old
+    // per-repo `load_repo` was 1 + 2 queries each (150 queries for 50 repos) on
+    // the sidebar's hottest command (#136).
+    let mut tags = id_map(&conn, "SELECT repo_id, tag_id FROM repo_tags")?;
+    let mut groups = id_map(&conn, "SELECT repo_id, group_id FROM repo_groups")?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo
+         FROM repos ORDER BY sort, name COLLATE NOCASE",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)? != 0,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, path, name, default_branch, last_opened, created_at, is_git_repo)| {
+                let missing = !std::path::Path::new(&path).exists();
+                Repo {
+                    id,
+                    path,
+                    name,
+                    default_branch,
+                    last_opened,
+                    created_at,
+                    tag_ids: tags.remove(&id).unwrap_or_default(),
+                    group_ids: groups.remove(&id).unwrap_or_default(),
+                    missing,
+                    is_git_repo,
+                }
+            },
+        )
+        .collect())
 }
 
 /// Register a repo by path. Validates it's a git repo, derives name and
@@ -252,6 +303,8 @@ pub fn register_repo(state: State<AppState>, path: String) -> AppResult<Repo> {
     let (id, _) = register_path(&conn, &PathBuf::from(&path))?;
     let repo = load_repo(&conn, id)?;
     drop(conn); // release the DB lock before resync re-reads it
+                // The (re-)registered repo's origin may have changed; drop any stale slug.
+    invalidate_origin_slug(&state, id);
     crate::watch::resync(&state);
     Ok(repo)
 }
@@ -261,8 +314,17 @@ pub fn remove_repo(state: State<AppState>, id: i64) -> AppResult<()> {
     let conn = lock(&state)?;
     conn.execute("DELETE FROM repos WHERE id = ?1", [id])?;
     drop(conn); // release the DB lock before resync re-reads it
+    invalidate_origin_slug(&state, id);
     crate::watch::resync(&state);
     Ok(())
+}
+
+/// Drop a repo's cached `origin` owner/repo slug (#136), so a later GitHub call
+/// re-resolves it. Best-effort: a poisoned lock just leaves the stale entry.
+fn invalidate_origin_slug(state: &State<AppState>, id: i64) {
+    if let Ok(mut cache) = state.origin_slug_cache.lock() {
+        cache.remove(&id);
+    }
 }
 
 /// Persist a new ordering for repos (drag-and-drop). `repo_ids` is the desired
@@ -307,27 +369,19 @@ pub struct RepoStatus {
 /// `git_worktree_status` (HEAD → index plus index → working tree, untracked
 /// included). HEAD may be unborn (a fresh repo) — then the index alone counts.
 fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
-    let head_tree = repo
-        .head()
-        .ok()
-        .and_then(|h| h.peel_to_commit().ok())
-        .and_then(|c| c.tree().ok());
-    let Ok(index) = repo.index() else {
-        return false;
-    };
-
-    let staged_dirty = repo
-        .diff_tree_to_index(head_tree.as_ref(), Some(&index), None)
-        .map(|d| d.deltas().len() > 0)
-        .unwrap_or(false);
-    if staged_dirty {
-        return true;
-    }
-
-    let mut opts = git2::DiffOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-    repo.diff_index_to_workdir(Some(&index), Some(&mut opts))
-        .map(|d| d.deltas().len() > 0)
+    let mut opts = git2::StatusOptions::new();
+    // A single status pass covers staged (HEAD→index) and unstaged (index→wd)
+    // changes plus untracked files, instead of two full working-tree diffs
+    // (#136). For the sidebar dirty-dot we only need "is there *any* change", so
+    // we don't recurse into untracked directories — an untracked dir is then a
+    // single entry rather than a walk of all its files, which was the expensive
+    // part of the convoy flagged in #89. Submodules are excluded for the same
+    // "any change in *this* tree" reason.
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .exclude_submodules(true);
+    repo.statuses(Some(&mut opts))
+        .map(|s| !s.is_empty())
         .unwrap_or(false)
 }
 

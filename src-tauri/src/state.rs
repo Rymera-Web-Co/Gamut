@@ -39,6 +39,11 @@ pub struct AppState {
     pub terminals: Mutex<HashMap<String, Session>>,
     /// Limits concurrent git status/diff scans; see [`GIT_STATUS_CONCURRENCY`].
     pub git_gate: Semaphore,
+    /// Cache of `repo_id → (owner, repo)` parsed from each repo's `origin`
+    /// remote, so GitHub commands and PR-link resolution don't re-open the repo
+    /// and re-parse the remote on every call (#136). Only successful GitHub
+    /// resolutions are cached; invalidated when a repo is registered or removed.
+    pub origin_slug_cache: Mutex<HashMap<i64, (String, String)>>,
     /// Rolling in-memory log of git operation timings for diagnostics (#90);
     /// capped at `commands::diagnostics::OP_LOG_CAP`.
     pub op_log: Mutex<VecDeque<OpTiming>>,

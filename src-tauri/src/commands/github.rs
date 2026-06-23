@@ -338,8 +338,27 @@ fn ssh_alias_resolves_to_github(host: &str) -> bool {
     })
 }
 
-/// Resolve the GitHub owner/repo from the repo's `origin` remote.
+/// Resolve the GitHub owner/repo from the repo's `origin` remote, memoizing the
+/// result. `owner_repo` is called at the top of ~15 GitHub commands and once per
+/// registered repo by PR-link resolution; without the cache each call re-opens
+/// the repo and re-parses `origin` (#136). Only successful resolutions are
+/// cached, keyed by `repo_id`; [`crate::commands::repo`] clears entries on
+/// register/remove.
 fn owner_repo(state: &State<AppState>, repo_id: i64) -> AppResult<(String, String)> {
+    if let Ok(cache) = state.origin_slug_cache.lock() {
+        if let Some(hit) = cache.get(&repo_id) {
+            return Ok(hit.clone());
+        }
+    }
+    let resolved = owner_repo_uncached(state, repo_id)?;
+    if let Ok(mut cache) = state.origin_slug_cache.lock() {
+        cache.insert(repo_id, resolved.clone());
+    }
+    Ok(resolved)
+}
+
+/// Resolve the GitHub owner/repo from the repo's `origin` remote (no cache).
+fn owner_repo_uncached(state: &State<AppState>, repo_id: i64) -> AppResult<(String, String)> {
     let repo = open_repo(state, repo_id)?;
     let remote = repo
         .find_remote("origin")

@@ -35,6 +35,7 @@ pub fn run() {
                 bound_folders: Mutex::new(Vec::new()),
                 terminals: Mutex::new(HashMap::new()),
                 git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),
+                origin_slug_cache: Mutex::new(HashMap::new()),
                 op_log: Mutex::new(VecDeque::new()),
             });
 
