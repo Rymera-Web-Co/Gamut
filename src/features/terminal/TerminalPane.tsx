@@ -214,6 +214,7 @@ export function TerminalPane() {
   const terminalMaximized = useUiStore((s) => s.terminalMaximized);
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
   const terminals = useUiStore((s) => s.terminals);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
@@ -228,6 +229,7 @@ export function TerminalPane() {
   const markTermActivity = useUiStore((s) => s.markTermActivity);
   const clearTermActivity = useUiStore((s) => s.clearTermActivity);
   const terminalFocusNonce = useUiStore((s) => s.terminalFocusNonce);
+  const newTabDir = useSettings((s) => s.values.terminalNewTabDir);
   const theme = useTheme((s) => s.theme);
 
   const repos = useRepos();
@@ -559,13 +561,24 @@ export function TerminalPane() {
     setTick((t) => t + 1); // recreate + respawn on next layout pass
   }
 
-  // The cwd/title a brand-new tab should default to: the active group's bound
-  // folder, else the first repo shown in that group.
+  // The cwd/title a brand-new tab should default to. The repo selected in the
+  // active group always wins (an explicit per-action intent); when none is
+  // selected, the `terminalNewTabDir` setting picks the fallback — the group's
+  // bound folder or the first repo shown in the group — each with the other as a
+  // secondary fallback so a folderless group or a repoless group still resolves.
   function defaultTarget(): { cwd: string; title: string } | null {
     const group = groupList.find((g) => g.id === activeGroupId);
-    if (group?.folder_path) return { cwd: group.folder_path, title: group.name };
-    const first = visibleRepos(repoList, group).find((r) => !r.missing);
-    return first ? { cwd: first.path, title: first.name } : null;
+    const visible = visibleRepos(repoList, group);
+    const selected = visible.find((r) => r.id === activeRepoId && !r.missing);
+    if (selected) return { cwd: selected.path, title: selected.name };
+
+    const groupFolder = group?.folder_path ? { cwd: group.folder_path, title: group.name } : null;
+    const firstRepo = (() => {
+      const r = visible.find((repo) => !repo.missing);
+      return r ? { cwd: r.path, title: r.name } : null;
+    })();
+
+    return newTabDir === "group" ? (groupFolder ?? firstRepo) : (firstRepo ?? groupFolder);
   }
 
   function handleNewTab() {
