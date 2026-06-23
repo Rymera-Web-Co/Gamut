@@ -194,69 +194,73 @@ pub async fn log(
     offset: usize,
     limit: usize,
 ) -> AppResult<LogPage> {
-    let repo = open_repo(&state, repo_id)?;
-    let labels = ref_labels(&repo);
+    let path = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        let repo = git::open(p)?;
+        let labels = ref_labels(&repo);
 
-    let mut walk = repo.revwalk()?;
-    walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-    // History of the current branch only (HEAD's ancestry).
-    if walk.push_head().is_err() {
-        // Unborn branch / empty repo — nothing to show.
-        return Ok(LogPage {
-            commits: Vec::new(),
-            width: 1,
-            has_more: false,
-        });
-    }
+        let mut walk = repo.revwalk()?;
+        walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+        // History of the current branch only (HEAD's ancestry).
+        if walk.push_head().is_err() {
+            // Unborn branch / empty repo — nothing to show.
+            return Ok(LogPage {
+                commits: Vec::new(),
+                width: 1,
+                has_more: false,
+            });
+        }
 
-    let take = offset + limit + 1; // +1 to detect has_more
-    let mut nodes: Vec<graph::CommitNode> = Vec::new();
-    let mut metas: Vec<CommitRow> = Vec::new();
+        let take = offset + limit + 1; // +1 to detect has_more
+        let mut nodes: Vec<graph::CommitNode> = Vec::new();
+        let mut metas: Vec<CommitRow> = Vec::new();
 
-    for oid in walk.take(take) {
-        let oid = oid?;
-        let commit = repo.find_commit(oid)?;
-        let parents: Vec<Oid> = commit.parent_ids().collect();
-        let author = commit.author();
+        for oid in walk.take(take) {
+            let oid = oid?;
+            let commit = repo.find_commit(oid)?;
+            let parents: Vec<Oid> = commit.parent_ids().collect();
+            let author = commit.author();
 
-        nodes.push(graph::CommitNode {
-            oid,
-            parents: parents.clone(),
-        });
-        metas.push(CommitRow {
-            sha: oid.to_string(),
-            short_sha: oid.to_string()[..8].to_string(),
-            parents: parents.iter().map(|p| p.to_string()).collect(),
-            author_name: author.name().unwrap_or("").to_string(),
-            author_email: author.email().unwrap_or("").to_string(),
-            timestamp: commit.time().seconds(),
-            subject: commit.summary().unwrap_or("").to_string(),
-            refs: labels
-                .get(&oid)
-                .map(|v| clone_labels(v))
-                .unwrap_or_default(),
-            node_col: 0,
-            color: 0,
-            paths: Vec::new(),
-        });
-    }
+            nodes.push(graph::CommitNode {
+                oid,
+                parents: parents.clone(),
+            });
+            metas.push(CommitRow {
+                sha: oid.to_string(),
+                short_sha: oid.to_string()[..8].to_string(),
+                parents: parents.iter().map(|p| p.to_string()).collect(),
+                author_name: author.name().unwrap_or("").to_string(),
+                author_email: author.email().unwrap_or("").to_string(),
+                timestamp: commit.time().seconds(),
+                subject: commit.summary().unwrap_or("").to_string(),
+                refs: labels
+                    .get(&oid)
+                    .map(|v| clone_labels(v))
+                    .unwrap_or_default(),
+                node_col: 0,
+                color: 0,
+                paths: Vec::new(),
+            });
+        }
 
-    let has_more = metas.len() > offset + limit;
-    let (graph_rows, width) = graph::layout(&nodes);
+        let has_more = metas.len() > offset + limit;
+        let (graph_rows, width) = graph::layout(&nodes);
 
-    // Attach graph layout to each commit.
-    for (meta, row) in metas.iter_mut().zip(graph_rows) {
-        meta.node_col = row.node_col;
-        meta.color = row.color;
-        meta.paths = row.paths;
-    }
+        // Attach graph layout to each commit.
+        for (meta, row) in metas.iter_mut().zip(graph_rows) {
+            meta.node_col = row.node_col;
+            meta.color = row.color;
+            meta.paths = row.paths;
+        }
 
-    let commits = metas.into_iter().skip(offset).take(limit).collect();
-    Ok(LogPage {
-        commits,
-        width,
-        has_more,
+        let commits = metas.into_iter().skip(offset).take(limit).collect();
+        Ok(LogPage {
+            commits,
+            width,
+            has_more,
+        })
     })
+    .await
 }
 
 fn clone_labels(labels: &[RefLabel]) -> Vec<RefLabel> {
@@ -276,28 +280,32 @@ pub async fn commit_detail(
     repo_id: i64,
     sha: String,
 ) -> AppResult<CommitDetail> {
-    let repo = open_repo(&state, repo_id)?;
-    let oid = Oid::from_str(&sha)?;
-    let commit = repo.find_commit(oid)?;
-    let tree = commit.tree()?;
-    let parent_tree = if commit.parent_count() > 0 {
-        Some(commit.parent(0)?.tree()?)
-    } else {
-        None
-    };
+    let path = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        let repo = git::open(p)?;
+        let oid = Oid::from_str(&sha)?;
+        let commit = repo.find_commit(oid)?;
+        let tree = commit.tree()?;
+        let parent_tree = if commit.parent_count() > 0 {
+            Some(commit.parent(0)?.tree()?)
+        } else {
+            None
+        };
 
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
-    let files = files_from_diff(&diff)?;
+        let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+        let files = files_from_diff(&diff)?;
 
-    let author = commit.author();
-    Ok(CommitDetail {
-        sha,
-        author_name: author.name().unwrap_or("").to_string(),
-        author_email: author.email().unwrap_or("").to_string(),
-        timestamp: commit.time().seconds(),
-        message: commit.message().unwrap_or("").to_string(),
-        files,
+        let author = commit.author();
+        Ok(CommitDetail {
+            sha,
+            author_name: author.name().unwrap_or("").to_string(),
+            author_email: author.email().unwrap_or("").to_string(),
+            timestamp: commit.time().seconds(),
+            message: commit.message().unwrap_or("").to_string(),
+            files,
+        })
     })
+    .await
 }
 
 /// Old/new text for one file in a commit, for the diff editor.
@@ -309,29 +317,33 @@ pub async fn file_diff(
     path: String,
     old_path: Option<String>,
 ) -> AppResult<FileDiff> {
-    let repo = open_repo(&state, repo_id)?;
-    let oid = Oid::from_str(&sha)?;
-    let commit = repo.find_commit(oid)?;
-    let tree = commit.tree()?;
+    let repo_dir = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(repo_dir, move |p| {
+        let repo = git::open(p)?;
+        let oid = Oid::from_str(&sha)?;
+        let commit = repo.find_commit(oid)?;
+        let tree = commit.tree()?;
 
-    let new = blob_text(&repo, &tree, &path);
-    let old = if commit.parent_count() > 0 {
-        let parent_tree = commit.parent(0)?.tree()?;
-        let op = old_path.as_deref().unwrap_or(&path);
-        blob_text(&repo, &parent_tree, op)
-    } else {
-        None
-    };
+        let new = blob_text(&repo, &tree, &path);
+        let old = if commit.parent_count() > 0 {
+            let parent_tree = commit.parent(0)?.tree()?;
+            let op = old_path.as_deref().unwrap_or(&path);
+            blob_text(&repo, &parent_tree, op)
+        } else {
+            None
+        };
 
-    let is_binary = new.as_ref().map(|(_, b)| *b).unwrap_or(false)
-        || old.as_ref().map(|(_, b)| *b).unwrap_or(false);
+        let is_binary = new.as_ref().map(|(_, b)| *b).unwrap_or(false)
+            || old.as_ref().map(|(_, b)| *b).unwrap_or(false);
 
-    Ok(FileDiff {
-        path,
-        old_text: old.map(|(t, _)| t),
-        new_text: new.map(|(t, _)| t),
-        is_binary,
+        Ok(FileDiff {
+            path,
+            old_text: old.map(|(t, _)| t),
+            new_text: new.map(|(t, _)| t),
+            is_binary,
+        })
     })
+    .await
 }
 
 /// Commits that touched a given path (newest first).
@@ -342,53 +354,57 @@ pub async fn file_history(
     path: String,
     limit: usize,
 ) -> AppResult<Vec<CommitRow>> {
-    let repo = open_repo(&state, repo_id)?;
-    let labels = ref_labels(&repo);
-    let target = Path::new(&path);
+    let repo_dir = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(repo_dir, move |p| {
+        let repo = git::open(p)?;
+        let labels = ref_labels(&repo);
+        let target = Path::new(&path);
 
-    let mut walk = repo.revwalk()?;
-    walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-    walk.push_head()?;
+        let mut walk = repo.revwalk()?;
+        walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+        walk.push_head()?;
 
-    let mut out = Vec::new();
-    for oid in walk {
-        if out.len() >= limit {
-            break;
+        let mut out = Vec::new();
+        for oid in walk {
+            if out.len() >= limit {
+                break;
+            }
+            let oid = oid?;
+            let commit = repo.find_commit(oid)?;
+            let tree = commit.tree()?;
+            let new_entry = tree.get_path(target).ok().map(|e| e.id());
+
+            let changed = if commit.parent_count() == 0 {
+                new_entry.is_some()
+            } else {
+                let parent_tree = commit.parent(0)?.tree()?;
+                let old_entry = parent_tree.get_path(target).ok().map(|e| e.id());
+                new_entry != old_entry
+            };
+
+            if changed {
+                let author = commit.author();
+                out.push(CommitRow {
+                    sha: oid.to_string(),
+                    short_sha: oid.to_string()[..8].to_string(),
+                    parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+                    author_name: author.name().unwrap_or("").to_string(),
+                    author_email: author.email().unwrap_or("").to_string(),
+                    timestamp: commit.time().seconds(),
+                    subject: commit.summary().unwrap_or("").to_string(),
+                    refs: labels
+                        .get(&oid)
+                        .map(|v| clone_labels(v))
+                        .unwrap_or_default(),
+                    node_col: 0,
+                    color: 0,
+                    paths: Vec::new(),
+                });
+            }
         }
-        let oid = oid?;
-        let commit = repo.find_commit(oid)?;
-        let tree = commit.tree()?;
-        let new_entry = tree.get_path(target).ok().map(|e| e.id());
-
-        let changed = if commit.parent_count() == 0 {
-            new_entry.is_some()
-        } else {
-            let parent_tree = commit.parent(0)?.tree()?;
-            let old_entry = parent_tree.get_path(target).ok().map(|e| e.id());
-            new_entry != old_entry
-        };
-
-        if changed {
-            let author = commit.author();
-            out.push(CommitRow {
-                sha: oid.to_string(),
-                short_sha: oid.to_string()[..8].to_string(),
-                parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-                author_name: author.name().unwrap_or("").to_string(),
-                author_email: author.email().unwrap_or("").to_string(),
-                timestamp: commit.time().seconds(),
-                subject: commit.summary().unwrap_or("").to_string(),
-                refs: labels
-                    .get(&oid)
-                    .map(|v| clone_labels(v))
-                    .unwrap_or_default(),
-                node_col: 0,
-                color: 0,
-                paths: Vec::new(),
-            });
-        }
-    }
-    Ok(out)
+        Ok(out)
+    })
+    .await
 }
 
 /// Per-line blame for a file at a given commit.
@@ -399,33 +415,37 @@ pub async fn blame(
     sha: String,
     path: String,
 ) -> AppResult<Vec<BlameHunk>> {
-    let repo = open_repo(&state, repo_id)?;
-    let oid = Oid::from_str(&sha)?;
+    let repo_dir = repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(repo_dir, move |p| {
+        let repo = git::open(p)?;
+        let oid = Oid::from_str(&sha)?;
 
-    let mut opts = git2::BlameOptions::new();
-    opts.newest_commit(oid);
-    let blame = repo.blame_file(Path::new(&path), Some(&mut opts))?;
+        let mut opts = git2::BlameOptions::new();
+        opts.newest_commit(oid);
+        let blame = repo.blame_file(Path::new(&path), Some(&mut opts))?;
 
-    let mut hunks = Vec::new();
-    for h in blame.iter() {
-        let commit_id = h.final_commit_id();
-        let (author, timestamp) = repo
-            .find_commit(commit_id)
-            .map(|c| {
-                (
-                    c.author().name().unwrap_or("").to_string(),
-                    c.time().seconds(),
-                )
-            })
-            .unwrap_or_default();
-        hunks.push(BlameHunk {
-            start_line: h.final_start_line(),
-            line_count: h.lines_in_hunk(),
-            sha: commit_id.to_string(),
-            short_sha: commit_id.to_string()[..8].to_string(),
-            author,
-            timestamp,
-        });
-    }
-    Ok(hunks)
+        let mut hunks = Vec::new();
+        for h in blame.iter() {
+            let commit_id = h.final_commit_id();
+            let (author, timestamp) = repo
+                .find_commit(commit_id)
+                .map(|c| {
+                    (
+                        c.author().name().unwrap_or("").to_string(),
+                        c.time().seconds(),
+                    )
+                })
+                .unwrap_or_default();
+            hunks.push(BlameHunk {
+                start_line: h.final_start_line(),
+                line_count: h.lines_in_hunk(),
+                sha: commit_id.to_string(),
+                short_sha: commit_id.to_string()[..8].to_string(),
+                author,
+                timestamp,
+            });
+        }
+        Ok(hunks)
+    })
+    .await
 }
