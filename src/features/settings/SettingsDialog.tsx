@@ -496,6 +496,7 @@ function TerminalPanel() {
   const [terminalFontFamily, setFontFamily] = useSetting("terminalFontFamily");
   const [terminalCursorBlink, setCursorBlink] = useSetting("terminalCursorBlink");
   const [terminalScrollback, setScrollback] = useSetting("terminalScrollback");
+  const [newTabDir, setNewTabDir] = useSetting("terminalNewTabDir");
 
   return (
     <div>
@@ -526,6 +527,20 @@ function TerminalPanel() {
           max={100000}
           step={100}
           suffix="lines"
+        />
+      </Field>
+      <Divider />
+      <Field
+        label="New terminal directory"
+        hint="Where ⌘/Ctrl+T opens. The selected repo always wins; this is the fallback when none is selected."
+      >
+        <Segmented
+          value={newTabDir}
+          onChange={setNewTabDir}
+          options={[
+            { value: "first", label: "First repo" },
+            { value: "group", label: "Group folder" },
+          ]}
         />
       </Field>
     </div>

@@ -8,9 +8,10 @@ while the terminal is hidden.
 
 - Toggle the pane with <code>⌘/Ctrl+&#96;</code> or the terminal icon in the group rail.
   Its open/closed state is remembered per group.
-- **New tab** — the **+** in the tab bar or `⌘/Ctrl+T`. The working directory defaults to
-  the repo selected in the active group, falling back to the group's bound folder, then the
-  first repo in the group; the title defaults to the repo or group name.
+- **New tab** — the **+** in the tab bar or `⌘/Ctrl+T`. The working directory is the repo
+  selected in the active group; when none is selected it falls back to the **New terminal
+  directory** setting (**Settings → Terminal**) — the first repo (default) or the group's
+  bound folder. The title defaults to the repo or group name.
 - **From a repo** — `⌘/Ctrl+click` a repo name (or its hover terminal icon) opens a
   terminal at that repo.
 - **From a group** — the terminal icon in the sidebar header opens one at a folder-bound

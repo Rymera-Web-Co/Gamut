@@ -45,6 +45,9 @@ export interface Settings {
   // Terminal
   terminalShell: string; // "" → system login shell
   terminalScrollback: number;
+  // Where ⌘/Ctrl+T opens a new terminal when no repo is selected in the active
+  // group. A selected repo always wins; this picks the fallback (#154).
+  terminalNewTabDir: "group" | "first"; // group's bound folder, or first repo
 
   // Terminal notifications (background-pane bell / process-exit; see #28)
   terminalNotifySound: boolean; // master on/off for the audible cue
@@ -136,6 +139,9 @@ export const DEFAULTS: Settings = {
 
   terminalShell: "",
   terminalScrollback: 5000,
+  // Default to the first repo; users who work mostly from a group's bound folder
+  // can switch the fallback to the group folder.
+  terminalNewTabDir: "first",
 
   // Sound on by default for both discrete events; desktop notifications stay
   // off until the user opts in (they require an OS permission grant).
@@ -171,6 +177,7 @@ const ENUMS: Partial<Record<Key, readonly string[]>> = {
   reviewMode: ["working", "branch"],
   mergeStrategy: ["merge", "squash", "rebase"],
   updateChannel: ["stable", "nightly"],
+  terminalNewTabDir: ["group", "first"],
 };
 
 /** localStorage mirror of the DB, for synchronous hydration before IPC loads. */
