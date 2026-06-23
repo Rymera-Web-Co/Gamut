@@ -1,4 +1,5 @@
 pub mod cleanup;
+pub mod compare;
 pub mod diagnostics;
 pub mod files;
 pub mod github;

@@ -5,6 +5,26 @@ import { moveAdjacent } from "@/lib/dnd";
 export type View = "files" | "history" | "review" | "pulls";
 export type ReviewMode = "working" | "branch";
 
+/** Seed for the File Compare dialog (#130): an optional repo + file to prefill. */
+export interface CompareSeed {
+  repoId?: number;
+  /** Repo-relative path, for the across-refs / with-revision modes. */
+  path?: string;
+  /**
+   * Two absolute file paths to diff immediately (VSCode-style "Compare with
+   * Selected"). When set, the dialog opens in two-files mode and runs the
+   * comparison straight away.
+   */
+  files?: { leftPath: string; rightPath: string };
+}
+
+/** A file picked via "Select for Compare", awaiting a "Compare with Selected". */
+export interface CompareSelection {
+  repoId: number;
+  /** Repo-relative path. */
+  path: string;
+}
+
 /**
  * Integrated-terminal model. Terminals are scoped to a **group**: each group
  * keeps its own set of tabs, so switching repos never disturbs them and
@@ -118,6 +138,12 @@ interface UiState {
   settingsOpen: boolean;
   // Whether the ⌘/Ctrl+K command palette is open. In-memory only.
   commandPaletteOpen: boolean;
+  // File Compare dialog (#130). `null` when closed; otherwise the seed it opened
+  // with — an optional repo + file to prefill the ref/revision modes.
+  compare: CompareSeed | null;
+  // The file picked via "Select for Compare", pending a "Compare with Selected"
+  // (VSCode-style). App-global so the pick survives switching files/repos.
+  compareSelection: CompareSelection | null;
   // Which sidebar the Files view shows (tree vs. repo search). Persisted.
   filesPanel: FilesPanel;
   // Monotonic counter bumped to ask the search panel to focus its input — lets
@@ -138,6 +164,12 @@ interface UiState {
   toggleSettings: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
+  // Open the File Compare dialog, optionally seeded with a repo + file (which
+  // prefills the across-refs / with-revision modes). Pass nothing for a blank
+  // two-files comparison.
+  openCompare: (seed?: CompareSeed) => void;
+  closeCompare: () => void;
+  setCompareSelection: (sel: CompareSelection | null) => void;
   setFilesPanel: (panel: FilesPanel) => void;
   /** Switch to the Files view's search panel and focus its input. */
   focusRepoSearch: () => void;
@@ -198,6 +230,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   filesPath: null,
   settingsOpen: false,
   commandPaletteOpen: false,
+  compare: null,
+  compareSelection: null,
   filesPanel: storedFilesPanel(),
   searchFocusNonce: 0,
   terminalFocusNonce: 0,
@@ -236,6 +270,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
+  openCompare: (seed) => set({ compare: seed ?? {}, commandPaletteOpen: false }),
+  closeCompare: () => set({ compare: null }),
+  setCompareSelection: (compareSelection) => set({ compareSelection }),
   setFilesPanel: (filesPanel) => {
     localStorage.setItem(FILES_PANEL_KEY, filesPanel);
     set({ filesPanel });

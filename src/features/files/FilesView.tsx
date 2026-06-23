@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Editor, type OnMount } from "@monaco-editor/react";
-import { FolderOpen, FolderTree, GitCompare, Loader2, Save, Search } from "lucide-react";
+import { FileDiff, FolderOpen, FolderTree, GitCompare, Loader2, Save, Search } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,7 @@ export function FilesView() {
   const setReviewMode = useUiStore((s) => s.setReviewMode);
   const filesPath = useUiStore((s) => s.filesPath);
   const setFilesPath = useUiStore((s) => s.setFilesPath);
+  const openCompare = useUiStore((s) => s.openCompare);
   const filesPanel = useUiStore((s) => s.filesPanel);
   const setFilesPanel = useUiStore((s) => s.setFilesPanel);
   const repos = useRepos();
@@ -356,6 +357,18 @@ export function FilesView() {
                 </button>
               ))}
             </div>
+          )}
+          {repo?.is_git_repo !== false && selectedPath && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5"
+              onClick={() => openCompare({ repoId, path: selectedPath })}
+              title="Compare this file across refs or against a revision"
+            >
+              <FileDiff className="size-4" />
+              Compare
+            </Button>
           )}
           {repo?.is_git_repo !== false && (
             <Button

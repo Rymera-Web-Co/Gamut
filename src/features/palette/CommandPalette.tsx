@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Folder, FolderGit2, SquareTerminal, type LucideIcon } from "lucide-react";
+import { Folder, FolderGit2, GitCompare, SquareTerminal, type LucideIcon } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -72,6 +72,7 @@ export function CommandPalette() {
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
 
   // User-configured category render order (issue #86); the pinned "Needs
   // attention" section always sits above these regardless.
@@ -286,6 +287,23 @@ export function CommandPalette() {
     // pre-selected on open (`selected = 0`).
     for (const cat of order) out.push(...blocks[cat]);
 
+    // Static commands (#130): surfaced only when the query matches, so they
+    // don't clutter the empty-state Recent/attention view.
+    if (q && rank(q, "Compare files", "diff") !== null) {
+      out.push({
+        key: "cmd:compare",
+        category: "Commands",
+        icon: GitCompare,
+        label: "Compare files…",
+        run: () => {
+          useUiStore
+            .getState()
+            .openCompare(activeRepoId != null ? { repoId: activeRepoId } : undefined);
+          close();
+        },
+      });
+    }
+
     return out;
     // `close` is omitted from deps on purpose — it only calls the stable
     // `setOpen` store action, so its identity never affects the result.
@@ -297,6 +315,7 @@ export function CommandPalette() {
     terminals,
     termActivity,
     activeGroupId,
+    activeRepoId,
     setActiveRepo,
     setActiveGroup,
     focusTerminal,
