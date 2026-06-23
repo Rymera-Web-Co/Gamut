@@ -420,20 +420,14 @@ export function TerminalPane() {
             next.delete(pane.id);
             return next;
           });
-          const handle = ipc.terminalSpawn(
-            pane.id,
-            pane.cwd,
-            e.term.cols,
-            e.term.rows,
-            (bytes) => {
-              // Drop bytes that arrive after the entry was torn down — the xterm
-              // is disposed and `e` is stale (#139).
-              if (e.disposed) return;
-              e.term.write(bytes);
-              // Output to a pane the user isn't viewing is unseen activity.
-              if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
-            },
-          );
+          const handle = ipc.terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
+            // Drop bytes that arrive after the entry was torn down — the xterm
+            // is disposed and `e` is stale (#139).
+            if (e.disposed) return;
+            e.term.write(bytes);
+            // Output to a pane the user isn't viewing is unseen activity.
+            if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
+          });
           e.disposeChannel = handle.dispose;
           handle.ready.catch((err) => {
             if (e.disposed) return;
