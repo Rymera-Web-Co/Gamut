@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Editor, type OnMount } from "@monaco-editor/react";
 import { FolderOpen, FolderTree, GitCompare, Loader2, Save, Search } from "lucide-react";
 
+import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monaco";
-import { useEditorPrefs } from "@/lib/settings";
+import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
@@ -110,6 +111,12 @@ export function FilesView() {
   const content = useFileContent(repoId, isImage ? null : selectedPath);
   const editable = content.data?.text != null;
   const dirty = editable && value !== baseline;
+  // Markdown files get a rendered-preview toggle (issue #121); `mdPreview` swaps
+  // the editor between raw source and the rendered view. Its initial state per
+  // file follows the "open markdown in preview" preference.
+  const isMarkdown = selectedPath != null && !isImage && languageFor(selectedPath) === "markdown";
+  const markdownPreviewByDefault = useSettings((s) => s.values.markdownPreviewByDefault);
+  const [mdPreview, setMdPreview] = useState(markdownPreviewByDefault);
 
   // Map changed working-tree paths so the tree can highlight files (and the
   // directories that contain them).
@@ -129,6 +136,13 @@ export function FilesView() {
     }
     return { files, dirs };
   }, [status.data]);
+
+  // Reapply the preview default whenever the open file changes, so opening a
+  // markdown file lands on the preferred view rather than a stale per-file
+  // toggle. Re-runs if the preference itself changes while a file is open.
+  useEffect(() => {
+    setMdPreview(markdownPreviewByDefault);
+  }, [selectedPath, markdownPreviewByDefault]);
 
   // Switching repos: drop the buffer and restore that repo's last-open file.
   useEffect(() => {
@@ -318,6 +332,31 @@ export function FilesView() {
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {isMarkdown && editable && (
+            <div className="mr-1 flex items-center rounded-md border p-0.5">
+              {(
+                [
+                  ["Edit", false],
+                  ["Preview", true],
+                ] as const
+              ).map(([label, preview]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={mdPreview === preview}
+                  onClick={() => setMdPreview(preview)}
+                  className={cn(
+                    "rounded px-2 py-1 text-xs font-medium",
+                    mdPreview === preview
+                      ? "bg-[var(--color-accent)] text-[var(--color-foreground)]"
+                      : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {repo?.is_git_repo !== false && (
             <Button
               size="sm"
@@ -423,6 +462,10 @@ export function FilesView() {
           ) : content.data?.encoding_error ? (
             <div className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--color-muted-foreground)]">
               Not a UTF-8 text file — not shown to avoid corrupting it on save.
+            </div>
+          ) : isMarkdown && mdPreview ? (
+            <div className="h-full overflow-auto px-6 py-4">
+              <Markdown>{value}</Markdown>
             </div>
           ) : (
             <Editor

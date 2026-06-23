@@ -23,6 +23,7 @@ export interface Settings {
   terminalFontFamily: string; // "" → built-in mono stack
   terminalCursorBlink: boolean;
   toastTimeout: number; // ms
+  markdownPreviewByDefault: boolean; // open .md files in rendered preview, not source
 
   // Diff & Review
   diffLayout: "side-by-side" | "unified";
@@ -113,6 +114,9 @@ export const DEFAULTS: Settings = {
   terminalFontFamily: "",
   terminalCursorBlink: true,
   toastTimeout: 6000,
+  // Off → markdown opens in the editable source; the Files view's Edit/Preview
+  // toggle still works per-file regardless.
+  markdownPreviewByDefault: false,
 
   diffLayout: "side-by-side",
   reviewMode: "working",
