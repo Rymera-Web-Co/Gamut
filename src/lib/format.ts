@@ -43,6 +43,29 @@ export function formatDate(unixSeconds: number): string {
 }
 
 /**
+ * Relative time from an ISO 8601 timestamp (e.g. GitHub's `created_at` /
+ * `updated_at`). Returns "" for empty or unparseable input — `Date.parse`
+ * yields `NaN` there, which would otherwise render as "NaNs ago" (#143).
+ */
+export function relativeTimeIso(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  return relativeTime(Math.floor(ms / 1000), now);
+}
+
+/**
+ * Parse an ISO 8601 timestamp to epoch milliseconds for sorting, mapping
+ * empty/unparseable input to 0 so a bad value can't produce `NaN` and corrupt
+ * comparator ordering (#143).
+ */
+export function isoToMillis(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+/**
  * Relative time from a SQLite `datetime('now')` string ("YYYY-MM-DD HH:MM:SS",
  * UTC with no zone). Returns "" if it can't be parsed.
  */
