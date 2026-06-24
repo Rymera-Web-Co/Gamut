@@ -61,6 +61,52 @@ const TERM_META_KEYS: Record<string, string> = {
   Backspace: "\x15", // ⌘⌫ → kill to start of line (Ctrl-U)
 };
 
+/**
+ * Multi-character `KeyboardEvent.key` values that are real keys, not typed
+ * text. Most named keys have `key === code` (Enter, ArrowLeft, F5, …) and are
+ * filtered by that equality; these are the ones whose `key` differs from their
+ * physical `code` (a left/right modifier, a dead/IME key), so they need an
+ * explicit allowlist. See {@link isInjectedText}.
+ */
+const NON_TEXT_KEYS = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "AltGraph",
+  "Meta",
+  "OS",
+  "Hyper",
+  "Super",
+  "Fn",
+  "FnLock",
+  "Symbol",
+  "SymbolLock",
+  "Dead",
+  "Process",
+  "Compose",
+  "Unidentified",
+]);
+
+/**
+ * Whether a keydown represents a whole run of literal text injected as one
+ * synthetic event, rather than a genuine keystroke. Voice-control / dictation
+ * tools (Fluid, macOS Voice Control) auto-paste by firing a single
+ * `KeyboardEvent` whose `key` is the entire phrase ("Hello there.") while
+ * `charCode` is only its first character — so xterm's keypress handler emits
+ * just that first char and drops the rest (#165).
+ *
+ * A genuine keystroke yields either a single-grapheme `key` (a typed character)
+ * or a named key whose `key` matches its physical `code` (`Enter`, `ArrowLeft`,
+ * `F5`). Anything else with a multi-character `key` and no chord modifier is
+ * injected text we forward verbatim to the PTY.
+ */
+function isInjectedText(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false; // a real chord, not text
+  if ([...e.key].length <= 1) return false; // an ordinary single character
+  if (e.key === e.code) return false; // a named key (Enter, ArrowLeft, F5, …)
+  return !NON_TEXT_KEYS.has(e.key); // a left/right modifier or dead/IME key
+}
+
 /** macOS ⌥+key → escape sequence for word-wise editing. */
 const TERM_ALT_KEYS: Record<string, string> = {
   ArrowLeft: "\x1bb", // ⌥← → back one word (ESC b)
@@ -257,6 +303,12 @@ export function useTerminalSessions({
         ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
         return false;
       };
+      // A voice-control / dictation tool injected a whole phrase as one
+      // synthetic key event: forward all of it. preventDefault() (via sendSeq)
+      // stops xterm's keypress from emitting just the first character and
+      // suppresses the follow-up `input` event xterm would otherwise drop
+      // (#165), so the text lands exactly once.
+      if (isInjectedText(e)) return sendSeq(e.key);
       // Shift+Enter → LF (Enter stays CR), so multiline prompts get a newline
       // without submitting. Cross-platform.
       if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === "Enter") {
