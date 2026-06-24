@@ -62,30 +62,20 @@ const TERM_META_KEYS: Record<string, string> = {
 };
 
 /**
- * Multi-character `KeyboardEvent.key` values that are real keys, not typed
- * text. Most named keys have `key === code` (Enter, ArrowLeft, F5, …) and are
- * filtered by that equality; these are the ones whose `key` differs from their
- * physical `code` (a left/right modifier, a dead/IME key), so they need an
- * explicit allowlist. See {@link isInjectedText}.
+ * `KeyboardEvent.key` values that can appear on a character-producing physical
+ * key yet are not literal text: a dead key or an in-progress IME composition.
+ * Excluded from injection detection so they're never mistaken for dictation.
  */
-const NON_TEXT_KEYS = new Set([
-  "Shift",
-  "Control",
-  "Alt",
-  "AltGraph",
-  "Meta",
-  "OS",
-  "Hyper",
-  "Super",
-  "Fn",
-  "FnLock",
-  "Symbol",
-  "SymbolLock",
-  "Dead",
-  "Process",
-  "Compose",
-  "Unidentified",
-]);
+const NON_TEXT_KEYS = new Set(["Dead", "Process", "Compose", "Unidentified"]);
+
+/**
+ * Physical key codes (`KeyboardEvent.code`) for keys that yield a single
+ * printable character on a normal press — letters, digits, punctuation, space.
+ * Every other physical key (numpad, navigation cluster, function row,
+ * modifiers, media keys) is deliberately excluded. See {@link isInjectedText}.
+ */
+const CHAR_KEY_CODE =
+  /^(?:Key[A-Z]|Digit[0-9]|Backquote|Minus|Equal|Bracket(?:Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|IntlBackslash|IntlRo|IntlYen|Space)$/;
 
 /**
  * Whether a keydown represents a whole run of literal text injected as one
@@ -95,16 +85,19 @@ const NON_TEXT_KEYS = new Set([
  * `charCode` is only its first character — so xterm's keypress handler emits
  * just that first char and drops the rest (#165).
  *
- * A genuine keystroke yields either a single-grapheme `key` (a typed character)
- * or a named key whose `key` matches its physical `code` (`Enter`, `ArrowLeft`,
- * `F5`). Anything else with a multi-character `key` and no chord modifier is
- * injected text we forward verbatim to the PTY.
+ * The signature is a multi-character `key` from a physical key that can only
+ * ever produce one printable character, with no chord modifier held. Gating on
+ * the physical `code` rather than on a denylist of named `key` values means
+ * keys whose `key` differs from their `code` are excluded for free — most
+ * importantly numpad navigation when NumLock is off (e.g. code "Numpad4" → key
+ * "ArrowLeft", code "NumpadEnter" → key "Enter"), which must reach xterm so it
+ * can emit the proper escape sequences instead of the literal key name.
  */
 function isInjectedText(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return false; // a real chord, not text
   if ([...e.key].length <= 1) return false; // an ordinary single character
-  if (e.key === e.code) return false; // a named key (Enter, ArrowLeft, F5, …)
-  return !NON_TEXT_KEYS.has(e.key); // a left/right modifier or dead/IME key
+  if (NON_TEXT_KEYS.has(e.key)) return false; // a dead key / composition state
+  return CHAR_KEY_CODE.test(e.code); // a printable physical key → injected text
 }
 
 /** macOS ⌥+key → escape sequence for word-wise editing. */
