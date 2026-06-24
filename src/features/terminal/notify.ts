@@ -67,19 +67,30 @@ let keepAlive: OscillatorNode | null = null;
 let gestureResumeBound = false;
 
 /**
- * WebKit (the macOS system webview Gamut runs in) only resumes a *suspended*
- * AudioContext from a user gesture. A background event — Claude finishing a task
- * while the window is unfocused — isn't a gesture, so once the context has been
- * idle-suspended it can't revive itself and the cue is silent (#119). Re-arm on
- * any interaction so the context is already running by the time a background
- * event fires.
+ * Resume the context whenever it isn't actively running. WebKit (the macOS
+ * system webview Gamut runs in) has a non-standard `"interrupted"` state on top
+ * of the standard `"suspended"` — entered on system sleep/wake or when another
+ * app takes the audio session — and it is *not* part of the `AudioContextState`
+ * type, so an `=== "suspended"` check silently misses it. A background event
+ * then schedules its tone against a stalled clock and plays nothing, even though
+ * the Settings "Test" button (a fresh user gesture) still works. Treat anything
+ * other than `"running"` as needing a resume so both states recover (#167).
+ */
+function resumeIfIdle(ac: AudioContext) {
+  if (ac.state !== "running") void ac.resume().catch(() => {});
+}
+
+/**
+ * WebKit only resumes a non-running AudioContext from a user gesture. A
+ * background event — Claude finishing a task while the window is unfocused —
+ * isn't a gesture, so once the context has been idle-suspended it can't revive
+ * itself and the cue is silent (#119). Re-arm on any interaction so the context
+ * is already running by the time a background event fires.
  */
 function bindGestureResume(ac: AudioContext) {
   if (gestureResumeBound) return;
   gestureResumeBound = true;
-  const resume = () => {
-    if (ac.state === "suspended") void ac.resume().catch(() => {});
-  };
+  const resume = () => resumeIfIdle(ac);
   window.addEventListener("pointerdown", resume, { capture: true });
   window.addEventListener("keydown", resume, { capture: true });
 }
@@ -114,23 +125,31 @@ function ctx(): AudioContext | null {
     audioCtx = new Ctor();
     bindGestureResume(audioCtx);
     startKeepAlive(audioCtx);
+    // Recover proactively the moment WebKit drops the context out of "running"
+    // (idle-suspend or an "interrupted" audio session), so a cue that fires
+    // before the next gesture isn't scheduled against a stalled clock (#167).
+    audioCtx.onstatechange = () => {
+      if (audioCtx) resumeIfIdle(audioCtx);
+    };
   }
   return audioCtx;
 }
 
 /**
- * Resume a suspended context before scheduling. Autoplay policies can leave the
- * context suspended until a gesture; a background event (Claude finishing while
- * the window is unfocused) isn't a gesture, so we must await the resume or the
- * tone is scheduled against a stalled clock and never sounds. Best-effort — a
- * rejected resume just means playback is a no-op, never a thrown error.
+ * Resume a non-running context before scheduling. Autoplay policies leave it
+ * `"suspended"` until a gesture, and WebKit can drop it to `"suspended"` or its
+ * non-standard `"interrupted"` state while idle/backgrounded; a background event
+ * (Claude finishing while the window is unfocused) isn't a gesture, so we must
+ * await the resume or the tone is scheduled against a stalled clock and never
+ * sounds (#167). Best-effort — a rejected resume just means playback is a no-op,
+ * never a thrown error.
  */
 async function ensureRunning(ac: AudioContext): Promise<void> {
-  if (ac.state === "suspended") {
+  if (ac.state !== "running") {
     try {
       await ac.resume();
     } catch {
-      /* still suspended — playback will be a silent no-op */
+      /* still not running — playback will be a silent no-op */
     }
   }
 }
