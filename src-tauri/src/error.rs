@@ -36,6 +36,15 @@ pub enum AppError {
     #[error("path escapes the repository root")]
     PathEscapesRoot,
 
+    /// GitHub returned a primary or secondary rate-limit response (#138).
+    /// A typed variant rather than a stringly `Other` for a common,
+    /// distinguishable case the frontend (and retry logic) can switch on; it
+    /// serializes to the same message it always did, so the UI is unaffected.
+    /// `context` is what we were doing ("listing pull requests"); `retry` is the
+    /// already-formatted wait hint ("retry in 42s" / "retry shortly").
+    #[error("GitHub rate limit reached while {context} — {retry}")]
+    RateLimited { context: String, retry: String },
+
     #[error("{0}")]
     Other(String),
 }

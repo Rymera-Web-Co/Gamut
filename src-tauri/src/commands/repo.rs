@@ -365,9 +365,11 @@ pub struct RepoStatus {
 }
 
 /// Whether the repo's working tree has any uncommitted changes — staged,
-/// unstaged, or untracked. Mirrors the dirty-tree detection in
-/// `git_worktree_status` (HEAD → index plus index → working tree, untracked
-/// included). HEAD may be unborn (a fresh repo) — then the index alone counts.
+/// unstaged, or untracked. This is the cheap "is there *any* change?" check for
+/// the sidebar dirty-dot, so it differs from `git_worktree_status`'s two-diff
+/// scan (#138): a single `statuses()` pass that stops at the first untracked
+/// *directory* rather than walking its files. HEAD may be unborn (a fresh
+/// repo) — then the index alone counts.
 fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
     let mut opts = git2::StatusOptions::new();
     // A single status pass covers staged (HEAD→index) and unstaged (index→wd)
