@@ -61,6 +61,45 @@ const TERM_META_KEYS: Record<string, string> = {
   Backspace: "\x15", // ⌘⌫ → kill to start of line (Ctrl-U)
 };
 
+/**
+ * `KeyboardEvent.key` values that can appear on a character-producing physical
+ * key yet are not literal text: a dead key or an in-progress IME composition.
+ * Excluded from injection detection so they're never mistaken for dictation.
+ */
+const NON_TEXT_KEYS = new Set(["Dead", "Process", "Compose", "Unidentified"]);
+
+/**
+ * Physical key codes (`KeyboardEvent.code`) for keys that yield a single
+ * printable character on a normal press — letters, digits, punctuation, space.
+ * Every other physical key (numpad, navigation cluster, function row,
+ * modifiers, media keys) is deliberately excluded. See {@link isInjectedText}.
+ */
+const CHAR_KEY_CODE =
+  /^(?:Key[A-Z]|Digit[0-9]|Backquote|Minus|Equal|Bracket(?:Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|IntlBackslash|IntlRo|IntlYen|Space)$/;
+
+/**
+ * Whether a keydown represents a whole run of literal text injected as one
+ * synthetic event, rather than a genuine keystroke. Voice-control / dictation
+ * tools (Fluid, macOS Voice Control) auto-paste by firing a single
+ * `KeyboardEvent` whose `key` is the entire phrase ("Hello there.") while
+ * `charCode` is only its first character — so xterm's keypress handler emits
+ * just that first char and drops the rest (#165).
+ *
+ * The signature is a multi-character `key` from a physical key that can only
+ * ever produce one printable character, with no chord modifier held. Gating on
+ * the physical `code` rather than on a denylist of named `key` values means
+ * keys whose `key` differs from their `code` are excluded for free — most
+ * importantly numpad navigation when NumLock is off (e.g. code "Numpad4" → key
+ * "ArrowLeft", code "NumpadEnter" → key "Enter"), which must reach xterm so it
+ * can emit the proper escape sequences instead of the literal key name.
+ */
+function isInjectedText(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false; // a real chord, not text
+  if ([...e.key].length <= 1) return false; // an ordinary single character
+  if (NON_TEXT_KEYS.has(e.key)) return false; // a dead key / composition state
+  return CHAR_KEY_CODE.test(e.code); // a printable physical key → injected text
+}
+
 /** macOS ⌥+key → escape sequence for word-wise editing. */
 const TERM_ALT_KEYS: Record<string, string> = {
   ArrowLeft: "\x1bb", // ⌥← → back one word (ESC b)
@@ -257,6 +296,12 @@ export function useTerminalSessions({
         ipc.terminalWrite(pane.id, encoder.encode(seq)).catch(() => {});
         return false;
       };
+      // A voice-control / dictation tool injected a whole phrase as one
+      // synthetic key event: forward all of it. preventDefault() (via sendSeq)
+      // stops xterm's keypress from emitting just the first character and
+      // suppresses the follow-up `input` event xterm would otherwise drop
+      // (#165), so the text lands exactly once.
+      if (isInjectedText(e)) return sendSeq(e.key);
       // Shift+Enter → LF (Enter stays CR), so multiline prompts get a newline
       // without submitting. Cross-platform.
       if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === "Enter") {
