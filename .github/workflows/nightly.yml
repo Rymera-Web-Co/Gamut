@@ -61,6 +61,14 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      # Serialize the matrix: every job publishes to the same fixed `nightly`
+      # release (and overwrites the shared latest.json), so running them
+      # concurrently races on the release's asset list — one job deletes an
+      # asset another is mid-upload on, surfacing as a 404 "Not Found -
+      # get-a-release-asset" on whichever platform loses. max-parallel: 1 makes
+      # the uploads happen one platform at a time. Trades wall-clock for a
+      # deterministic publish, which is the right call for an unattended build.
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
