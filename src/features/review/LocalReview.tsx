@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { FileCheck2, Loader2, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { FileTree } from "@/components/FileTree";
+import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monaco";
+import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
 import { useUiStore } from "@/store/ui";
@@ -264,7 +264,7 @@ export function LocalReview({
               </div>
             ) : (
               <div className="relative h-full overflow-hidden">
-                <DiffEditor
+                <CodeDiffEditor
                   height="100%"
                   theme={isDarkTheme() ? GITHUB_DARK : "light"}
                   language={languageFor(selected.path)}

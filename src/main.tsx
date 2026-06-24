@@ -6,7 +6,6 @@ import App from "./App";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/queryClient";
 import { initTheme } from "@/lib/theme";
-import "@/lib/monaco";
 import "./index.css";
 
 initTheme();

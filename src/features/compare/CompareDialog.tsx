@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DiffEditor } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { ArrowLeftRight, FolderOpen, Loader2, Save } from "lucide-react";
 
+import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc, pickFile, type CompareResult } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monaco";
+import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useRepos } from "@/features/repos/api";
 import { useUiStore } from "@/store/ui";
@@ -415,7 +415,7 @@ function ResultView({
         ) : result.identical && !editable ? (
           <Centered>Files are identical.</Centered>
         ) : (
-          <DiffEditor
+          <CodeDiffEditor
             // Remount on a new comparison/swap so editor content + dirty reset.
             key={`${result.left_label} ${result.right_label}`}
             height="100%"

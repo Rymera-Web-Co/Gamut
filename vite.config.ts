@@ -17,14 +17,13 @@ export default defineConfig(async () => ({
   },
 
   build: {
+    // Monaco is imported dynamically (see @/lib/monaco), so Rollup already
+    // splits it into its own async chunk loaded on first editor use (#141). A
+    // manual `monaco` chunk is unnecessary now and actively harmful: it captured
+    // Vite's `__vitePreload` helper, which the entry imports statically — forcing
+    // a modulepreload of the multi-MB monaco chunk at boot, the very thing we're
+    // deferring. Left to automatic code-splitting instead.
     chunkSizeWarningLimit: 4000,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("node_modules/monaco-editor")) return "monaco";
-        },
-      },
-    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
