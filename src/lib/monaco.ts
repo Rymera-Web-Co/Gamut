@@ -1,58 +1,38 @@
-// Bundle Monaco locally instead of loading it from a CDN, so the diff editor
-// works offline inside the Tauri app. A single editor worker is enough for a
-// read-only diff editor (diff computation + syntax highlighting); we don't ship
-// the per-language IntelliSense workers.
-import { loader } from "@monaco-editor/react";
-import * as monaco from "monaco-editor";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+// Bundle Monaco locally instead of loading it from a CDN, so the editors work
+// offline inside the Tauri app. A single editor worker is enough for the
+// read-only diff editor and the Files code editor (diff computation + syntax
+// highlighting); we don't ship the per-language IntelliSense workers.
+//
+// Monaco is the heaviest dependency in the app, and the editor only appears
+// once the user opens Files / Review / History. So nothing here is imported at
+// startup: `ensureMonaco` dynamically imports Monaco, its worker, and the
+// @monaco-editor/react loader on first editor use, keeping the multi-megabyte
+// "monaco" chunk out of the cold-start path (#141). The lazy editor wrappers in
+// `@/components/MonacoEditor` await this before rendering.
+import { GITHUB_DARK, githubDarkTheme } from "./monacoTheme";
 
-self.MonacoEnvironment = {
-  getWorker() {
-    return new EditorWorker();
-  },
-};
+let setup: Promise<void> | undefined;
 
-/** Theme id used by the diff editors in dark mode. */
-export const GITHUB_DARK = "github-dark-dimmed";
+/** Idempotently load Monaco, wire its web worker, register the app theme, and
+ *  point @monaco-editor/react's loader at the bundled instance. The promise is
+ *  cached so concurrent editors (e.g. Files + a diff) share one initialization. */
+export function ensureMonaco(): Promise<void> {
+  setup ??= (async () => {
+    const [monaco, { loader }, { default: EditorWorker }] = await Promise.all([
+      import("monaco-editor"),
+      import("@monaco-editor/react"),
+      import("monaco-editor/esm/vs/editor/editor.worker?worker"),
+    ]);
 
-// A Monaco theme matching the app's GitHub "dark dimmed" palette so the diff
-// editor blends with the surrounding UI.
-monaco.editor.defineTheme(GITHUB_DARK, {
-  base: "vs-dark",
-  inherit: true,
-  rules: [
-    { token: "", foreground: "adbac7", background: "22272e" },
-    { token: "comment", foreground: "768390", fontStyle: "italic" },
-    { token: "keyword", foreground: "f47067" },
-    { token: "operator", foreground: "f47067" },
-    { token: "string", foreground: "96d0ff" },
-    { token: "number", foreground: "6cb6ff" },
-    { token: "constant", foreground: "6cb6ff" },
-    { token: "type", foreground: "f69d50" },
-    { token: "type.identifier", foreground: "f69d50" },
-    { token: "function", foreground: "dcbdfb" },
-    { token: "variable", foreground: "adbac7" },
-    { token: "tag", foreground: "8ddb8c" },
-    { token: "attribute.name", foreground: "6cb6ff" },
-    { token: "attribute.value", foreground: "96d0ff" },
-    { token: "delimiter", foreground: "adbac7" },
-  ],
-  colors: {
-    "editor.background": "#22272e",
-    "editor.foreground": "#adbac7",
-    "editorLineNumber.foreground": "#545d68",
-    "editorLineNumber.activeForeground": "#adbac7",
-    "editor.selectionBackground": "#316dca44",
-    "editor.lineHighlightBackground": "#2d333b",
-    "editorGutter.background": "#22272e",
-    "editorWidget.background": "#2d333b",
-    "editorWidget.border": "#444c56",
-    "editorIndentGuide.background": "#373e47",
-    "diffEditor.insertedTextBackground": "#347d3933",
-    "diffEditor.removedTextBackground": "#e5534b33",
-    "diffEditor.insertedLineBackground": "#347d3926",
-    "diffEditor.removedLineBackground": "#e5534b26",
-  },
-});
+    self.MonacoEnvironment = {
+      getWorker() {
+        return new EditorWorker();
+      },
+    };
 
-loader.config({ monaco });
+    monaco.editor.defineTheme(GITHUB_DARK, githubDarkTheme);
+    loader.config({ monaco });
+    await loader.init();
+  })();
+  return setup;
+}

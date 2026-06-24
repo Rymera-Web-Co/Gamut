@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { DiffEditor } from "@monaco-editor/react";
 import {
   Archive,
   ArchiveRestore,
@@ -17,8 +16,9 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
+import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monaco";
+import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
@@ -576,7 +576,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
                 Binary file — diff not shown.
               </div>
             ) : (
-              <DiffEditor
+              <CodeDiffEditor
                 height="100%"
                 theme={isDarkTheme() ? GITHUB_DARK : "light"}
                 language={languageFor(selected.file.path)}

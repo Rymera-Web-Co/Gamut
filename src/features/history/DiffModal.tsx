@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
-import { DiffEditor } from "@monaco-editor/react";
 import { Loader2, X } from "lucide-react";
 
+import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monaco";
+import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useBlame, useFileDiff } from "./api";
 
@@ -109,7 +109,7 @@ export function DiffModal({
               Binary file — diff not shown.
             </div>
           ) : mode === "diff" ? (
-            <DiffEditor
+            <CodeDiffEditor
               height="100%"
               theme={isDark ? GITHUB_DARK : "light"}
               language={languageFor(path)}

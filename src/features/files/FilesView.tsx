@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Editor, type OnMount } from "@monaco-editor/react";
+import type { OnMount } from "@monaco-editor/react";
 import { FileDiff, FolderOpen, FolderTree, GitCompare, Loader2, Save, Search } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
+// Lazy Monaco wrapper — aliased to `Editor` so the JSX below is unchanged (#141).
+import { CodeEditor as Editor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monaco";
+import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
