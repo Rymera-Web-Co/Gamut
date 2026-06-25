@@ -19,6 +19,7 @@ import {
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
+import { takePendingCommand } from "./pendingCommands";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -396,10 +397,18 @@ export function useTerminalSessions({
             if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
           });
           e.disposeChannel = handle.dispose;
-          handle.ready.catch((err) => {
-            if (e.disposed) return;
-            e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
-          });
+          handle.ready
+            .then(() => {
+              if (e.disposed) return;
+              // Type any command queued for this pane by `gamut term` now that
+              // the PTY exists (writing earlier would be dropped). Drains once.
+              const queued = takePendingCommand(pane.id);
+              if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
+            })
+            .catch((err) => {
+              if (e.disposed) return;
+              e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
+            });
         } else {
           resizeIfChanged(pane.id, e);
         }

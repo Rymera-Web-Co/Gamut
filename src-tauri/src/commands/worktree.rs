@@ -95,26 +95,39 @@ pub async fn worktree_file_diff(
     staged: bool,
     old_path: Option<String>,
 ) -> AppResult<FileDiff> {
-    let repo = open_repo(&state, repo_id)?;
+    let repo_dir = repo_path(&state, repo_id)?;
+    worktree_file_diff_at(&repo_dir, &path, staged, old_path.as_deref())
+}
+
+/// Old/new text for one working-tree file, opening the repo from `repo_dir`.
+/// Split out of the [`worktree_file_diff`] command so the diff core is a plain
+/// path-based function.
+fn worktree_file_diff_at(
+    repo_dir: &Path,
+    path: &str,
+    staged: bool,
+    old_path: Option<&str>,
+) -> AppResult<FileDiff> {
+    let repo = crate::git::open(repo_dir)?;
     let head_tree = repo
         .head()
         .ok()
         .and_then(|h| h.peel_to_commit().ok())
         .and_then(|c| c.tree().ok());
     let index = repo.index()?;
-    let old_lookup = old_path.as_deref().unwrap_or(&path);
+    let old_lookup = old_path.unwrap_or(path);
 
     let (old, new) = if staged {
         let old = head_tree
             .as_ref()
             .and_then(|t| blob_text(&repo, t, old_lookup));
-        let new = index_blob_text(&repo, &index, &path);
+        let new = index_blob_text(&repo, &index, path);
         (old, new)
     } else {
         let old = index_blob_text(&repo, &index, old_lookup);
         // New content is the file on disk; missing means it was deleted.
         let new = repo.workdir().and_then(|wd| {
-            std::fs::read(wd.join(&path)).ok().map(|bytes| {
+            std::fs::read(wd.join(path)).ok().map(|bytes| {
                 let is_binary = bytes.contains(&0);
                 (String::from_utf8_lossy(&bytes).into_owned(), is_binary)
             })
@@ -126,7 +139,7 @@ pub async fn worktree_file_diff(
         || new.as_ref().map(|(_, b)| *b).unwrap_or(false);
 
     Ok(FileDiff {
-        path,
+        path: path.to_string(),
         old_text: old.map(|(t, _)| t),
         new_text: new.map(|(t, _)| t),
         is_binary,

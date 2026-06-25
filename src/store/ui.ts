@@ -272,8 +272,10 @@ interface UiState {
   toggleTerminal: () => void;
   setTerminalMaximized: (max: boolean) => void;
   toggleTerminalMaximized: () => void;
-  /** Open a new terminal tab in a group rooted at `cwd`, and reveal the pane. */
-  addTerminalTab: (groupId: number, cwd: string, title: string) => void;
+  /** Open a new terminal tab in a group rooted at `cwd`, reveal the pane, and
+   * return the new pane's id (so callers can queue input for it — see
+   * `gamut term`). */
+  addTerminalTab: (groupId: number, cwd: string, title: string) => string;
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
   splitTerminal: (groupId: number, cwd: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
@@ -403,11 +405,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   toggleTerminalMaximized: () => get().setTerminalMaximized(!get().terminalMaximized),
   addTerminalTab: (groupId, cwd, title) => {
     const n = get().nextTermId;
+    const paneId = `term-${n}`;
     const tab: TermTab = {
       id: `tab-${n}`,
       title,
-      panes: [{ id: `term-${n}`, cwd }],
-      activePaneId: `term-${n}`,
+      panes: [{ id: paneId, cwd }],
+      activePaneId: paneId,
     };
     get().setTerminalOpen(true);
     set((s) => {
@@ -420,6 +423,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         },
       };
     });
+    return paneId;
   },
   splitTerminal: (groupId, cwd) => {
     const n = get().nextTermId;

@@ -25,6 +25,7 @@ import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useMainThreadWatchdog } from "@/lib/useMainThreadWatchdog";
+import { useUiNav } from "@/lib/useUiNav";
 import { useUiStore } from "@/store/ui";
 
 function StatusBar() {
@@ -61,6 +62,7 @@ export default function App() {
   const isGitRepo = useActiveRepoIsGit();
   useKeyboardShortcuts();
   useGitWatch();
+  useUiNav();
   useAutoFetch();
   useActiveRepoReconciler();
   useNonGitViewGuard();

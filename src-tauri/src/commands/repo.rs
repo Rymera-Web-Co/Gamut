@@ -249,11 +249,17 @@ pub fn sync_group_folder(state: State<AppState>, group_id: i64) -> AppResult<usi
 #[tauri::command]
 pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
     let conn = lock(&state)?;
+    list_repos_from_conn(&conn)
+}
+
+/// List every registered repo, ordered as the sidebar shows them. Split out of
+/// the [`list_repos`] command so the query core takes a plain `&Connection`.
+fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
     // Two batch queries for the join tables instead of two per repo — the old
     // per-repo `load_repo` was 1 + 2 queries each (150 queries for 50 repos) on
     // the sidebar's hottest command (#136).
-    let mut tags = id_map(&conn, "SELECT repo_id, tag_id FROM repo_tags")?;
-    let mut groups = id_map(&conn, "SELECT repo_id, group_id FROM repo_groups")?;
+    let mut tags = id_map(conn, "SELECT repo_id, tag_id FROM repo_tags")?;
+    let mut groups = id_map(conn, "SELECT repo_id, group_id FROM repo_groups")?;
 
     let mut stmt = conn.prepare(
         "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo
