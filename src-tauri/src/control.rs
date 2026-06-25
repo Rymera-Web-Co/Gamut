@@ -34,7 +34,7 @@ const UI_NAV_EVENT: &str = "ui-nav";
 /// A UI-navigation command. Re-emitted verbatim to the webview as the `ui-nav`
 /// event payload; field names are snake_case to match the frontend's existing
 /// IPC types. `action` is one of `select-repo` | `view` | `open` | `goto` |
-/// `term`.
+/// `term` | `term-close`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiNav {
     pub action: String,

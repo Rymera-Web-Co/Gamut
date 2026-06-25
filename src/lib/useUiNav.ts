@@ -94,6 +94,43 @@ async function openTerm(nav: UiNav): Promise<void> {
 }
 
 /**
+ * Close a terminal tab by name — the `term-close` control command. Searches the
+ * groups the repo belongs to (where `term` would have opened it) and closes the
+ * first tab whose name matches; the session manager reaps its PTY. No-op if
+ * there's no match, and it never disturbs the active group/view.
+ */
+async function closeTerm(nav: UiNav): Promise<void> {
+  const name = nav.title;
+  if (!name || nav.repo_id == null) return;
+
+  let groupIds: number[] = [];
+  try {
+    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
+    const repo = repos.find((r) => r.id === nav.repo_id);
+    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
+    if (repo) {
+      groupIds =
+        repo.group_ids.length > 0
+          ? repo.group_ids
+          : defaultGroupId != null
+            ? [defaultGroupId]
+            : [];
+    }
+  } catch {
+    return;
+  }
+
+  const ui = useUiStore.getState();
+  for (const gid of groupIds) {
+    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    if (tab) {
+      ui.closeTerminalTab(gid, tab.id);
+      return;
+    }
+  }
+}
+
+/**
  * Apply UI-navigation commands from the local control channel to the running
  * window. Each command is routed through the existing one-shot deep-link store hooks
  * (`setActiveRepo` / `setView` / `setFilesPath` / `setHistorySha`); the Files
@@ -127,6 +164,9 @@ export function useUiNav() {
           break;
         case "term":
           void openTerm(ev.payload);
+          break;
+        case "term-close":
+          void closeTerm(ev.payload);
           break;
       }
     });

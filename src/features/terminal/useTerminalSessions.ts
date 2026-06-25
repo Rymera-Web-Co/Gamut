@@ -200,6 +200,8 @@ export function useTerminalSessions({
   const sessionsRef = useRef<Map<string, SessionEntry>>(new Map());
   const [deadKeys, setDeadKeys] = useState<Set<string>>(new Set());
   const [tick, setTick] = useState(0);
+  // All groups' terminal layout, watched so we can reap panes removed from it.
+  const allTerminals = useUiStore((s) => s.terminals);
 
   // Keep the latest group/tab around for the imperative click handlers.
   const ctxRef = useRef({ groupId: activeGroupId, tabId: activeTab?.id });
@@ -518,6 +520,23 @@ export function useTerminalSessions({
     disposeEntry(id);
     setTick((t) => t + 1); // recreate + respawn on next layout pass
   }
+
+  // Reap any live session whose pane has left the layout — a tab/pane closed by
+  // the close button, a control-channel `term-close`, or anything else. Killing
+  // here (rather than only in the close handlers) means removing a tab from the
+  // store is enough to fully tear down its shell, not just hide it.
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const g of Object.values(allTerminals)) {
+      for (const t of g.tabs) for (const p of t.panes) live.add(p.id);
+    }
+    for (const id of [...sessionsRef.current.keys()]) {
+      if (!live.has(id)) killPane(id);
+    }
+    // `killPane` is stable in behavior but re-created each render; depend only on
+    // the layout so this runs when panes are added/removed, not every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTerminals]);
 
   return { deadKeys, killPane, restart };
 }
