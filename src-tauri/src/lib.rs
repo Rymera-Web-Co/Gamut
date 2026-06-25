@@ -56,9 +56,9 @@ pub fn run() {
                 Err(e) => eprintln!("repo watcher init failed: {e}"),
             }
 
-            // Local control channel for the `gamut` CLI to drive the running
-            // window (issue #15, Phase 2). Best-effort: a bind failure just
-            // means live UI navigation is unavailable, not that the app fails.
+            // Local control channel for driving the running window from an
+            // external local process. Best-effort: a bind failure just means
+            // live UI navigation is unavailable, not that the app fails.
             control::start(app.handle().clone());
             Ok(())
         })
@@ -177,8 +177,8 @@ pub fn run() {
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
             ) {
                 commands::terminal::kill_all(&window.state::<AppState>());
-                // Drop the control-channel port file so a later CLI call reports
-                // "app not running" instead of dialing a dead port (#15).
+                // Drop the control-channel port file so a later client reports
+                // "app not running" instead of dialing a dead port.
                 control::cleanup(window.app_handle());
             }
         })

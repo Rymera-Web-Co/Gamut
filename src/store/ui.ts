@@ -273,8 +273,7 @@ interface UiState {
   setTerminalMaximized: (max: boolean) => void;
   toggleTerminalMaximized: () => void;
   /** Open a new terminal tab in a group rooted at `cwd`, reveal the pane, and
-   * return the new pane's id (so callers can queue input for it — see
-   * `gamut term`). */
+   * return the new pane's id (so callers can queue input for it). */
   addTerminalTab: (groupId: number, cwd: string, title: string) => string;
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
   splitTerminal: (groupId: number, cwd: string) => void;

@@ -1,11 +1,11 @@
 /**
  * Transient store for a command to type into a terminal pane once its PTY is
- * live (issue #15 — `gamut term`). Kept here, deliberately *outside* the Zustand
- * terminal layout, so it's never persisted: the command must run exactly once
- * when the pane first spawns, and must not replay when a saved layout is
- * restored on the next launch.
+ * live. Kept here, deliberately *outside* the Zustand terminal layout, so it's
+ * never persisted: the command must run exactly once when the pane first
+ * spawns, and must not replay when a saved layout is restored on the next
+ * launch.
  *
- * The CLI's `term` command opens a tab (which mints a pane id) and queues the
+ * A terminal-open request opens a tab (which mints a pane id) and queues the
  * command against that id; the session manager drains it after the spawn IPC
  * resolves and writes it straight to the PTY.
  */

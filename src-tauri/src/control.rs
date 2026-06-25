@@ -1,9 +1,9 @@
-//! Local control channel for the `gamut` CLI to steer the running app's window
-//! (issue #15, Phase 2).
+//! Local control channel for steering the running app's window from an external
+//! local process.
 //!
 //! The running app binds a loopback `TcpListener` and writes the chosen port to
 //! `<app-data>/control.port` and a random handshake token to
-//! `<app-data>/control.token`. The CLI reads both, connects, and sends one line
+//! `<app-data>/control.token`. A client reads both, connects, and sends one line
 //! of JSON describing a UI-navigation command; the app validates the token,
 //! re-emits the command to the webview as a `ui-nav` event, and the frontend
 //! routes it through the existing one-shot deep-link store hooks
@@ -23,8 +23,8 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// File under the app-data dir holding the active control-channel TCP port. The
-/// private `gamut` CLI reads this to connect (it recomputes this dir itself).
+/// File under the app-data dir holding the active control-channel TCP port. A
+/// client reads this to connect (it recomputes this dir itself).
 const PORT_FILE: &str = "control.port";
 /// File under the app-data dir holding the handshake token.
 const TOKEN_FILE: &str = "control.token";
@@ -61,7 +61,7 @@ pub struct UiNav {
     pub reuse: Option<bool>,
 }
 
-/// One line of request the CLI writes to the socket: the handshake token plus
+/// One line of request a client writes to the socket: the handshake token plus
 /// the navigation command (flattened so the wire form is a single flat object).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlRequest {
@@ -104,8 +104,8 @@ pub fn start(app: AppHandle) {
     };
 
     let token = generate_token();
-    // Write the token (restricted perms) before the port file, so a CLI that
-    // sees a port always finds a token too.
+    // Write the token (restricted perms) before the port file, so a client
+    // that sees a port always finds a token too.
     if let Err(e) = write_private(&data_dir.join(TOKEN_FILE), token.as_bytes()) {
         eprintln!("control channel: writing token failed: {e}");
         return;
@@ -125,7 +125,7 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Remove the port file so a later CLI call reports "app not running" instead of
+/// Remove the port file so a later client reports "app not running" instead of
 /// dialing a dead port. Called when the window closes.
 pub fn cleanup(app: &AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {

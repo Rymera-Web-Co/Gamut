@@ -7,9 +7,9 @@ import { ipc } from "@/lib/ipc";
 import { useUiStore, type View } from "@/store/ui";
 
 /**
- * A UI-navigation command from the `gamut` CLI's control channel (issue #15,
- * Phase 2). The backend re-emits the CLI's request verbatim as a `ui-nav`
- * event; field names are snake_case to match the Rust payload.
+ * A UI-navigation command from the local control channel. The backend re-emits
+ * the request verbatim as a `ui-nav` event; field names are snake_case to match
+ * the Rust payload.
  */
 interface UiNav {
   /** "select-repo" | "view" | "open" | "goto" | "term" */
@@ -35,8 +35,8 @@ function asView(v: string | undefined): View | null {
 
 /**
  * Open a terminal tab for a repo and (optionally) run a command in it — the
- * `gamut term` flow. The integrated terminal is per-group, so we open it in a
- * group the repo is actually visible in and switch the view there; otherwise the
+ * `term` control command. The integrated terminal is per-group, so we open it in
+ * a group the repo is actually visible in and switch the view there; otherwise the
  * active-repo reconciler would revert the selection and the tab would be
  * stranded under a group that doesn't list the repo. The command is queued
  * against the new pane and typed in once its PTY spawns (see `pendingCommands`).
@@ -94,8 +94,8 @@ async function openTerm(nav: UiNav): Promise<void> {
 }
 
 /**
- * Apply UI-navigation commands sent by the `gamut` CLI to the running window.
- * Each command is routed through the existing one-shot deep-link store hooks
+ * Apply UI-navigation commands from the local control channel to the running
+ * window. Each command is routed through the existing one-shot deep-link store hooks
  * (`setActiveRepo` / `setView` / `setFilesPath` / `setHistorySha`); the Files
  * and History views then consume `filesPath` / `historySha` as they already do
  * for in-app deep links, so no new navigation model is introduced.

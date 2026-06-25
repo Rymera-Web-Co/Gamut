@@ -400,8 +400,8 @@ export function useTerminalSessions({
           handle.ready
             .then(() => {
               if (e.disposed) return;
-              // Type any command queued for this pane by `gamut term` now that
-              // the PTY exists (writing earlier would be dropped). Drains once.
+              // Type any command queued for this pane now that the PTY exists
+              // (writing earlier would be dropped). Drains once.
               const queued = takePendingCommand(pane.id);
               if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
             })
@@ -411,8 +411,8 @@ export function useTerminalSessions({
             });
         } else {
           resizeIfChanged(pane.id, e);
-          // The PTY is already live (e.g. `gamut term --name` reusing this
-          // terminal): type any freshly-queued command straight away.
+          // The PTY is already live (e.g. a control-channel request reusing
+          // this terminal by name): type any freshly-queued command straight away.
           const queued = takePendingCommand(pane.id);
           if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
