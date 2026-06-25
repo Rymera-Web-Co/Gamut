@@ -57,6 +57,8 @@ pub struct UiNav {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<bool>,
 }
 
 /// One line of request the CLI writes to the socket: the handshake token plus

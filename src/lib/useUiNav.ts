@@ -23,6 +23,8 @@ interface UiNav {
   title?: string;
   command?: string;
   run?: boolean;
+  /** `term` only: reuse an existing terminal named `title` instead of opening a new one. */
+  reuse?: boolean;
 }
 
 const VIEWS: readonly View[] = ["files", "history", "review", "pulls"];
@@ -66,12 +68,29 @@ async function openTerm(nav: UiNav): Promise<void> {
   ui.setActiveGroup(groupId);
   if (nav.repo_id != null) ui.setActiveRepo(nav.repo_id);
 
-  const paneId = ui.addTerminalTab(groupId, nav.cwd ?? "", nav.title ?? "terminal");
-  if (nav.command) {
-    // CR (\r) is what Enter sends, so append it to execute; omit to leave the
-    // command staged at the prompt (--no-run).
-    setPendingCommand(paneId, nav.run === false ? nav.command : `${nav.command}\r`);
+  const name = nav.title ?? "terminal";
+
+  // Queue the command for a pane (typed once its PTY is ready). CR (\r) is what
+  // Enter sends, so append it to execute; omit to leave it staged (--no-run).
+  const queue = (paneId: string) => {
+    if (nav.command) {
+      setPendingCommand(paneId, nav.run === false ? nav.command : `${nav.command}\r`);
+    }
+  };
+
+  // `--name` (reuse): if a terminal with this name already exists in the group,
+  // run the command in it; otherwise fall through and open a new named tab.
+  if (nav.reuse) {
+    const group = useUiStore.getState().terminals[groupId];
+    const existing = group?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    if (existing) {
+      ui.focusTerminal(groupId, existing.id, existing.activePaneId);
+      queue(existing.activePaneId);
+      return;
+    }
   }
+
+  queue(ui.addTerminalTab(groupId, nav.cwd ?? "", name));
 }
 
 /**

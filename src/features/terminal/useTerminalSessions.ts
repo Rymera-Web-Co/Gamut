@@ -411,6 +411,10 @@ export function useTerminalSessions({
             });
         } else {
           resizeIfChanged(pane.id, e);
+          // The PTY is already live (e.g. `gamut term --name` reusing this
+          // terminal): type any freshly-queued command straight away.
+          const queued = takePendingCommand(pane.id);
+          if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
       });
       // Focus the active pane.
