@@ -1,4 +1,5 @@
 mod commands;
+mod control;
 mod db;
 mod error;
 mod git;
@@ -54,6 +55,11 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("repo watcher init failed: {e}"),
             }
+
+            // Local control channel for driving the running window from an
+            // external local process. Best-effort: a bind failure just means
+            // live UI navigation is unavailable, not that the app fails.
+            control::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -171,6 +177,9 @@ pub fn run() {
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
             ) {
                 commands::terminal::kill_all(&window.state::<AppState>());
+                // Drop the control-channel port file so a later client reports
+                // "app not running" instead of dialing a dead port.
+                control::cleanup(window.app_handle());
             }
         })
         .run(tauri::generate_context!())

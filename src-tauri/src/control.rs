@@ -1,0 +1,244 @@
+//! Local control channel for steering the running app's window from an external
+//! local process.
+//!
+//! The running app binds a loopback `TcpListener` and writes the chosen port to
+//! `<app-data>/control.port` and a random handshake token to
+//! `<app-data>/control.token`. A client reads both, connects, and sends one line
+//! of JSON describing a UI-navigation command; the app validates the token,
+//! re-emits the command to the webview as a `ui-nav` event, and the frontend
+//! routes it through the existing one-shot deep-link store hooks
+//! (`setActiveRepo` / `setView` / `setFilesPath` / `setHistorySha`).
+//!
+//! Loopback TCP (rather than a unix socket) keeps a single code path across
+//! macOS / Linux / Windows. The token isn't a hard security boundary against
+//! the same user — it gates *other* local users who can't read the token file,
+//! which on unix is created `0600`.
+
+use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+use std::time::{Duration, SystemTime};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
+
+/// File under the app-data dir holding the active control-channel TCP port. A
+/// client reads this to connect (it recomputes this dir itself).
+const PORT_FILE: &str = "control.port";
+/// File under the app-data dir holding the handshake token.
+const TOKEN_FILE: &str = "control.token";
+/// Event the frontend listens for to apply a UI-navigation command.
+const UI_NAV_EVENT: &str = "ui-nav";
+
+/// A UI-navigation command. Re-emitted verbatim to the webview as the `ui-nav`
+/// event payload; field names are snake_case to match the frontend's existing
+/// IPC types. `action` is one of `select-repo` | `view` | `open` | `goto` |
+/// `term` | `term-close`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UiNav {
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+    // `term` only: the working directory and tab title for the new terminal,
+    // the command to type into it, and whether to press Enter (run) vs. leave it
+    // staged at the prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<bool>,
+}
+
+/// One line of request a client writes to the socket: the handshake token plus
+/// the navigation command (flattened so the wire form is a single flat object).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlRequest {
+    pub token: String,
+    #[serde(flatten)]
+    pub nav: UiNav,
+}
+
+/// The app's single-line reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlResponse {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Start the control channel: bind a loopback port, publish the port + token
+/// files, and serve connections on a background thread. Best-effort — any
+/// failure is logged and leaves the app otherwise fully functional.
+pub fn start(app: AppHandle) {
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        eprintln!("control channel: could not resolve app-data dir");
+        return;
+    };
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    let listener = match TcpListener::bind(("127.0.0.1", 0)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("control channel: bind failed: {e}");
+            return;
+        }
+    };
+    let port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(e) => {
+            eprintln!("control channel: local_addr failed: {e}");
+            return;
+        }
+    };
+
+    let token = generate_token();
+    // Write the token (restricted perms) before the port file, so a client
+    // that sees a port always finds a token too.
+    if let Err(e) = write_private(&data_dir.join(TOKEN_FILE), token.as_bytes()) {
+        eprintln!("control channel: writing token failed: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(data_dir.join(PORT_FILE), port.to_string()) {
+        eprintln!("control channel: writing port failed: {e}");
+        return;
+    }
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(s) => handle_conn(&app, &token, s),
+                Err(_) => continue,
+            }
+        }
+    });
+}
+
+/// Remove the port file so a later client reports "app not running" instead of
+/// dialing a dead port. Called when the window closes.
+pub fn cleanup(app: &AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(dir.join(PORT_FILE));
+    }
+}
+
+/// Read one request line, validate the token, and re-emit the command as the
+/// `ui-nav` event. Replies with a single JSON line.
+fn handle_conn(app: &AppHandle, token: &str, stream: TcpStream) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).is_err() {
+        return;
+    }
+
+    let resp = match serde_json::from_str::<ControlRequest>(line.trim()) {
+        Ok(req) if req.token == token => match app.emit(UI_NAV_EVENT, &req.nav) {
+            Ok(()) => ControlResponse {
+                ok: true,
+                error: None,
+            },
+            Err(e) => ControlResponse {
+                ok: false,
+                error: Some(format!("emit failed: {e}")),
+            },
+        },
+        Ok(_) => ControlResponse {
+            ok: false,
+            error: Some("unauthorized".into()),
+        },
+        Err(e) => ControlResponse {
+            ok: false,
+            error: Some(format!("bad request: {e}")),
+        },
+    };
+
+    if let Ok(body) = serde_json::to_string(&resp) {
+        let mut stream = reader.into_inner();
+        let _ = writeln!(stream, "{body}");
+        let _ = stream.flush();
+    }
+}
+
+/// A short opaque handshake token. Not cryptographic — the token file's
+/// permissions are the real gate; this just keeps unrelated local processes
+/// from accidentally driving the window. Avoids pulling in an RNG crate by
+/// hashing high-resolution time, the pid, and a stack address.
+fn generate_token() -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+        .hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    let stack_marker = 0u8;
+    (&stack_marker as *const u8 as usize).hash(&mut hasher);
+    let a = hasher.finish();
+    // Mix a second round so the value isn't a single 64-bit hash.
+    a.wrapping_mul(0x9E37_79B9_7F4A_7C15).hash(&mut hasher);
+    format!("{:016x}{:016x}", a, hasher.finish())
+}
+
+/// Write `contents` to `path`, restricting it to the owner on unix (`0600`).
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_request_roundtrips_flat() {
+        let req = ControlRequest {
+            token: "abc".into(),
+            nav: UiNav {
+                action: "open".into(),
+                repo_id: Some(7),
+                path: Some("src/App.tsx".into()),
+                ..UiNav::default()
+            },
+        };
+        let wire = serde_json::to_string(&req).unwrap();
+        // `nav` is flattened: token + action sit on the same object.
+        assert!(wire.contains("\"token\":\"abc\""));
+        assert!(wire.contains("\"action\":\"open\""));
+        assert!(!wire.contains("\"view\""), "None fields are omitted");
+
+        let back: ControlRequest = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.token, "abc");
+        assert_eq!(back.nav.action, "open");
+        assert_eq!(back.nav.repo_id, Some(7));
+        assert_eq!(back.nav.path.as_deref(), Some("src/App.tsx"));
+    }
+
+    #[test]
+    fn response_roundtrips() {
+        let r = ControlResponse {
+            ok: false,
+            error: Some("unauthorized".into()),
+        };
+        let wire = serde_json::to_string(&r).unwrap();
+        let back: ControlResponse = serde_json::from_str(&wire).unwrap();
+        assert!(!back.ok);
+        assert_eq!(back.error.as_deref(), Some("unauthorized"));
+    }
+}

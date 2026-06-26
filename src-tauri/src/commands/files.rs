@@ -177,7 +177,14 @@ pub fn list_dir(
 #[tauri::command]
 pub fn read_file(state: State<AppState>, repo_id: i64, rel_path: String) -> AppResult<FileContent> {
     let root = repo_path(&state, repo_id)?;
-    let path = safe_join(&root, &rel_path)?;
+    read_file_at(&root, &rel_path)
+}
+
+/// Read a repo-relative working-tree file for display, given a repo root and
+/// relative path: applies the traversal guard, size cap, and binary/encoding
+/// detection. Split out of [`read_file`] so the path-based core is testable.
+fn read_file_at(root: &Path, rel_path: &str) -> AppResult<FileContent> {
+    let path = safe_join(root, rel_path)?;
 
     let meta = fs::metadata(&path)?;
     if !meta.is_file() {

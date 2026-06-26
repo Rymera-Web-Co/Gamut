@@ -19,6 +19,7 @@ import {
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
+import { takePendingCommand } from "./pendingCommands";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -199,6 +200,8 @@ export function useTerminalSessions({
   const sessionsRef = useRef<Map<string, SessionEntry>>(new Map());
   const [deadKeys, setDeadKeys] = useState<Set<string>>(new Set());
   const [tick, setTick] = useState(0);
+  // All groups' terminal layout, watched so we can reap panes removed from it.
+  const allTerminals = useUiStore((s) => s.terminals);
 
   // Keep the latest group/tab around for the imperative click handlers.
   const ctxRef = useRef({ groupId: activeGroupId, tabId: activeTab?.id });
@@ -396,12 +399,24 @@ export function useTerminalSessions({
             if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
           });
           e.disposeChannel = handle.dispose;
-          handle.ready.catch((err) => {
-            if (e.disposed) return;
-            e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
-          });
+          handle.ready
+            .then(() => {
+              if (e.disposed) return;
+              // Type any command queued for this pane now that the PTY exists
+              // (writing earlier would be dropped). Drains once.
+              const queued = takePendingCommand(pane.id);
+              if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
+            })
+            .catch((err) => {
+              if (e.disposed) return;
+              e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
+            });
         } else {
           resizeIfChanged(pane.id, e);
+          // The PTY is already live (e.g. a control-channel request reusing
+          // this terminal by name): type any freshly-queued command straight away.
+          const queued = takePendingCommand(pane.id);
+          if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
       });
       // Focus the active pane.
@@ -505,6 +520,23 @@ export function useTerminalSessions({
     disposeEntry(id);
     setTick((t) => t + 1); // recreate + respawn on next layout pass
   }
+
+  // Reap any live session whose pane has left the layout — a tab/pane closed by
+  // the close button, a control-channel `term-close`, or anything else. Killing
+  // here (rather than only in the close handlers) means removing a tab from the
+  // store is enough to fully tear down its shell, not just hide it.
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const g of Object.values(allTerminals)) {
+      for (const t of g.tabs) for (const p of t.panes) live.add(p.id);
+    }
+    for (const id of [...sessionsRef.current.keys()]) {
+      if (!live.has(id)) killPane(id);
+    }
+    // `killPane` is stable in behavior but re-created each render; depend only on
+    // the layout so this runs when panes are added/removed, not every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTerminals]);
 
   return { deadKeys, killPane, restart };
 }
