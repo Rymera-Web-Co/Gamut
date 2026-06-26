@@ -193,7 +193,12 @@ fn handle_conn(app: &AppHandle, token: &str, stream: TcpStream) {
 fn read_terminals(app: &AppHandle) -> ControlResponse {
     let data = app
         .try_state::<AppState>()
-        .and_then(|s| s.terminal_registry.lock().ok().map(|r| serde_json::to_value(&*r)))
+        .and_then(|s| {
+            s.terminal_registry
+                .lock()
+                .ok()
+                .map(|r| serde_json::to_value(&*r))
+        })
         .transpose()
         .ok()
         .flatten()
