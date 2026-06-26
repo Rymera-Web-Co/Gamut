@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRepos } from "@/features/repos/api";
+import { useGroups, useRepos } from "@/features/repos/api";
+import { repoPathRelativeToGroupFolder } from "@/lib/groupRepos";
 import { isImagePath } from "@/lib/images";
 import { useFileContent, useWorktreeStatus } from "./api";
 import { ImageView } from "./ImageView";
@@ -94,6 +95,18 @@ export function FilesView() {
   const setFilesPanel = useUiStore((s) => s.setFilesPanel);
   const repos = useRepos();
   const repo = repos.data?.find((r) => r.id === repoId);
+  // For repos in a synced (folder-bound) group, offer a copy path that's
+  // relative to the group folder rather than the repo root — sibling repos
+  // share a `src/`, so a group-relative path uniquely identifies a file across
+  // the whole folder (#173). Null when the active group isn't folder-bound or
+  // the repo doesn't live under it, in which case the tree hides the option.
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const groups = useGroups();
+  const activeGroup = groups.data?.find((g) => g.id === activeGroupId);
+  const groupRelativePrefix =
+    repo != null
+      ? repoPathRelativeToGroupFolder(repo.path, activeGroup?.folder_path ?? null)
+      : null;
   const editorPrefs = useEditorPrefs();
   const queryClient = useQueryClient();
 
@@ -447,6 +460,7 @@ export function FilesView() {
                   onSelect={selectFile}
                   onDeleted={onTreeDeleted}
                   changes={changes}
+                  groupRelativePrefix={groupRelativePrefix}
                 />
               </div>
             )}

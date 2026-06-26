@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Group, Repo } from "@/lib/ipc";
-import { repoInGroup, visibleRepos } from "@/lib/groupRepos";
+import { repoInGroup, repoPathRelativeToGroupFolder, visibleRepos } from "@/lib/groupRepos";
 
 function makeRepo(id: number, group_ids: number[]): Repo {
   return {
@@ -59,5 +59,31 @@ describe("visibleRepos", () => {
 
   it("returns nothing for an undefined group", () => {
     expect(visibleRepos([makeRepo(1, [])], undefined)).toEqual([]);
+  });
+});
+
+describe("repoPathRelativeToGroupFolder", () => {
+  it("returns null when the group isn't folder-bound", () => {
+    expect(repoPathRelativeToGroupFolder("/work/foo/bar", null)).toBeNull();
+  });
+
+  it("returns the repo path relative to the group folder", () => {
+    expect(repoPathRelativeToGroupFolder("/work/foo/bar", "/work")).toBe("foo/bar");
+    expect(repoPathRelativeToGroupFolder("/work/foo", "/work")).toBe("foo");
+  });
+
+  it("returns an empty string when the repo is the group folder root", () => {
+    expect(repoPathRelativeToGroupFolder("/work", "/work")).toBe("");
+  });
+
+  it("returns null when the repo isn't under the group folder", () => {
+    expect(repoPathRelativeToGroupFolder("/elsewhere/foo", "/work")).toBeNull();
+    // A sibling whose name merely shares a prefix must not match.
+    expect(repoPathRelativeToGroupFolder("/work-other/foo", "/work")).toBeNull();
+  });
+
+  it("tolerates trailing slashes and mixed separators", () => {
+    expect(repoPathRelativeToGroupFolder("/work/foo/bar/", "/work/")).toBe("foo/bar");
+    expect(repoPathRelativeToGroupFolder("C:\\work\\foo\\bar", "C:\\work")).toBe("foo/bar");
   });
 });
