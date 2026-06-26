@@ -110,11 +110,7 @@ async function closeTerm(nav: UiNav): Promise<void> {
     const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
     if (repo) {
       groupIds =
-        repo.group_ids.length > 0
-          ? repo.group_ids
-          : defaultGroupId != null
-            ? [defaultGroupId]
-            : [];
+        repo.group_ids.length > 0 ? repo.group_ids : defaultGroupId != null ? [defaultGroupId] : [];
     }
   } catch {
     return;
