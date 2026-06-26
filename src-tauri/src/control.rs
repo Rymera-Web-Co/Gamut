@@ -3,7 +3,13 @@
 //!
 //! The running app binds a loopback `TcpListener` and writes the chosen port to
 //! `<app-data>/control.port` and a random handshake token to
-//! `<app-data>/control.token`. A client reads both, connects, and sends one line
+//! `<app-data>/control.token`. It *also* publishes a per-instance file
+//! `<app-data>/control.d/<pid>.json` (port + token + whether this is a dev
+//! build), so that several apps sharing one app-data dir — e.g. a `tauri dev`
+//! build running alongside an installed release — don't clobber each other's
+//! endpoint. The shared `control.port`/`control.token` files remain for older
+//! clients; newer clients prefer the per-instance registry and can target a
+//! specific app. A client reads both, connects, and sends one line
 //! of JSON describing a UI-navigation command; the app validates the token,
 //! re-emits the command to the webview as a `ui-nav` event, and the frontend
 //! routes it through the existing one-shot deep-link store hooks
@@ -30,6 +36,9 @@ use crate::state::AppState;
 const PORT_FILE: &str = "control.port";
 /// File under the app-data dir holding the handshake token.
 const TOKEN_FILE: &str = "control.token";
+/// Subdirectory under the app-data dir holding one `<pid>.json` per running
+/// instance, so concurrently-running apps don't clobber each other's endpoint.
+const INSTANCE_DIR: &str = "control.d";
 /// Event the frontend listens for to apply a UI-navigation command.
 const UI_NAV_EVENT: &str = "ui-nav";
 
@@ -83,6 +92,20 @@ pub struct ControlResponse {
     pub data: Option<serde_json::Value>,
 }
 
+/// What we publish to `control.d/<pid>.json` so a client can discover this
+/// running app and target it specifically. Holds the same port + token as the
+/// shared files, plus identifying bits (`dev` distinguishes a `tauri dev` build
+/// from a release; `label` is a friendly name for listings).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceInfo {
+    pub port: u16,
+    pub token: String,
+    pub pid: u32,
+    /// True for a debug / `tauri dev` build, false for a release build.
+    pub dev: bool,
+    pub label: String,
+}
+
 /// Start the control channel: bind a loopback port, publish the port + token
 /// files, and serve connections on a background thread. Best-effort — any
 /// failure is logged and leaves the app otherwise fully functional.
@@ -120,6 +143,30 @@ pub fn start(app: AppHandle) {
         return;
     }
 
+    // Publish a per-instance file too, so a client can tell concurrently-running
+    // apps apart and target one. Best-effort: failure here only costs the
+    // multi-app selector, not the shared-file path above.
+    let dev = cfg!(debug_assertions);
+    let info = InstanceInfo {
+        port,
+        token: token.clone(),
+        pid: std::process::id(),
+        dev,
+        label: format!("Gamut{}", if dev { " (dev)" } else { "" }),
+    };
+    let inst_dir = data_dir.join(INSTANCE_DIR);
+    if let Err(e) = std::fs::create_dir_all(&inst_dir) {
+        eprintln!("control channel: creating instance dir failed: {e}");
+    } else if let Ok(body) = serde_json::to_string(&info) {
+        // The token lives in here, so lock it down like the token file.
+        if let Err(e) = write_private(
+            &inst_dir.join(format!("{}.json", info.pid)),
+            body.as_bytes(),
+        ) {
+            eprintln!("control channel: writing instance file failed: {e}");
+        }
+    }
+
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
@@ -130,11 +177,17 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Remove the port file so a later client reports "app not running" instead of
-/// dialing a dead port. Called when the window closes.
+/// Remove the port file and this instance's registry entry so a later client
+/// reports "app not running" instead of dialing a dead port. Called when the
+/// window closes. The shared port file is left for whichever app wrote it last;
+/// the per-instance file is keyed by pid, so we only ever drop our own.
 pub fn cleanup(app: &AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {
         let _ = std::fs::remove_file(dir.join(PORT_FILE));
+        let _ = std::fs::remove_file(
+            dir.join(INSTANCE_DIR)
+                .join(format!("{}.json", std::process::id())),
+        );
     }
 }
 
@@ -267,6 +320,24 @@ mod tests {
         assert_eq!(back.nav.action, "open");
         assert_eq!(back.nav.repo_id, Some(7));
         assert_eq!(back.nav.path.as_deref(), Some("src/App.tsx"));
+    }
+
+    #[test]
+    fn instance_info_roundtrips() {
+        let info = InstanceInfo {
+            port: 49321,
+            token: "deadbeef".into(),
+            pid: 4321,
+            dev: true,
+            label: "Gamut (dev)".into(),
+        };
+        let wire = serde_json::to_string(&info).unwrap();
+        let back: InstanceInfo = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.port, 49321);
+        assert_eq!(back.token, "deadbeef");
+        assert_eq!(back.pid, 4321);
+        assert!(back.dev);
+        assert_eq!(back.label, "Gamut (dev)");
     }
 
     #[test]
