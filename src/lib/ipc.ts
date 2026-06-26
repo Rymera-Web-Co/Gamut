@@ -13,6 +13,16 @@ export interface DbHealth {
   repo_count: number;
 }
 
+/** One open terminal tab, mirrored to the backend for the `term-list` control
+ * query. Field names are snake_case to match the Rust `TerminalInfo` struct. */
+export interface TerminalInfo {
+  group_id: number;
+  tab_id: string;
+  name: string;
+  panes: number;
+  cwd?: string;
+}
+
 export interface Repo {
   id: number;
   path: string;
@@ -757,6 +767,10 @@ export const ipc = {
   terminalResize: (sessionId: string, cols: number, rows: number) =>
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalKill: (sessionId: string) => invoke<void>("terminal_kill", { sessionId }),
+  /** Mirror the open terminal tabs to the backend so the local control channel's
+   * `term-list` query can report active terminals. Fire-and-forget on layout change. */
+  terminalRegistryReport: (terminals: TerminalInfo[]) =>
+    invoke<void>("terminal_registry_report", { terminals }),
   /** Read a custom notification sound file's raw bytes by path (#28). The
    * backend rejects non-audio extensions, so this isn't a general file read. */
   readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),

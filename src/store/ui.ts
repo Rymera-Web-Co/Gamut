@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { moveAdjacent } from "@/lib/dnd";
+import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 
 export type View = "files" | "history" | "review" | "pulls";
@@ -542,12 +543,30 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
 }));
 
+// Flatten the per-group terminal layout into the snapshot the backend mirrors
+// for the `term-list` control query (one entry per open tab).
+function reportTerminals(terminals: Record<number, GroupTerminals>) {
+  const entries = Object.entries(terminals).flatMap(([groupId, g]) =>
+    g.tabs.map((t) => ({
+      group_id: Number(groupId),
+      tab_id: t.id,
+      name: termTabLabel(t),
+      panes: t.panes.length,
+      cwd: t.panes[0]?.cwd || undefined,
+    })),
+  );
+  // Fire-and-forget; outside Tauri (tests) or before the backend is up, ignore.
+  ipc.terminalRegistryReport(entries).catch(() => {});
+}
+
 // Persist the terminal layout whenever it changes (#155). The reference check
 // keeps this near-free on unrelated state updates — every terminal mutation
 // produces a fresh `terminals` object — and persisting per-mutation (rather than
-// only on clean quit) means a crash still leaves the layout restorable.
+// only on clean quit) means a crash still leaves the layout restorable. The same
+// change is mirrored to the backend so `gamut term-list` can report open tabs.
 useUiStore.subscribe((s, prev) => {
   if (s.terminals !== prev.terminals || s.nextTermId !== prev.nextTermId) {
     persistTerminals(s.terminals, s.nextTermId);
+    reportTerminals(s.terminals);
   }
 });

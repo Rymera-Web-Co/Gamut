@@ -23,6 +23,8 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::state::AppState;
+
 /// File under the app-data dir holding the active control-channel TCP port. A
 /// client reads this to connect (it recomputes this dir itself).
 const PORT_FILE: &str = "control.port";
@@ -70,12 +72,15 @@ pub struct ControlRequest {
     pub nav: UiNav,
 }
 
-/// The app's single-line reply.
+/// The app's single-line reply. `data` carries a payload for query actions
+/// (currently `term-list`); it's absent for the fire-and-forget nav commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlResponse {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// Start the control channel: bind a loopback port, publish the port + token
@@ -144,23 +149,35 @@ fn handle_conn(app: &AppHandle, token: &str, stream: TcpStream) {
     }
 
     let resp = match serde_json::from_str::<ControlRequest>(line.trim()) {
-        Ok(req) if req.token == token => match app.emit(UI_NAV_EVENT, &req.nav) {
-            Ok(()) => ControlResponse {
-                ok: true,
-                error: None,
-            },
-            Err(e) => ControlResponse {
-                ok: false,
-                error: Some(format!("emit failed: {e}")),
-            },
-        },
+        Ok(req) if req.token == token => {
+            // `term-list` is a *query*: answer it from the mirrored terminal
+            // registry rather than emitting a UI-navigation event.
+            if req.nav.action == "term-list" {
+                read_terminals(app)
+            } else {
+                match app.emit(UI_NAV_EVENT, &req.nav) {
+                    Ok(()) => ControlResponse {
+                        ok: true,
+                        error: None,
+                        data: None,
+                    },
+                    Err(e) => ControlResponse {
+                        ok: false,
+                        error: Some(format!("emit failed: {e}")),
+                        data: None,
+                    },
+                }
+            }
+        }
         Ok(_) => ControlResponse {
             ok: false,
             error: Some("unauthorized".into()),
+            data: None,
         },
         Err(e) => ControlResponse {
             ok: false,
             error: Some(format!("bad request: {e}")),
+            data: None,
         },
     };
 
@@ -168,6 +185,28 @@ fn handle_conn(app: &AppHandle, token: &str, stream: TcpStream) {
         let mut stream = reader.into_inner();
         let _ = writeln!(stream, "{body}");
         let _ = stream.flush();
+    }
+}
+
+/// Build the `term-list` reply from the mirrored terminal registry. Best-effort:
+/// a missing state or poisoned lock yields an empty list rather than an error.
+fn read_terminals(app: &AppHandle) -> ControlResponse {
+    let data = app
+        .try_state::<AppState>()
+        .and_then(|s| {
+            s.terminal_registry
+                .lock()
+                .ok()
+                .map(|r| serde_json::to_value(&*r))
+        })
+        .transpose()
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
+    ControlResponse {
+        ok: true,
+        error: None,
+        data: Some(data),
     }
 }
 
@@ -235,6 +274,7 @@ mod tests {
         let r = ControlResponse {
             ok: false,
             error: Some("unauthorized".into()),
+            data: None,
         };
         let wire = serde_json::to_string(&r).unwrap();
         let back: ControlResponse = serde_json::from_str(&wire).unwrap();

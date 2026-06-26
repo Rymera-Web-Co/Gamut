@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use tokio::sync::Semaphore;
 
 use crate::commands::diagnostics::OpTiming;
-use crate::commands::terminal::Session;
+use crate::commands::terminal::{Session, TerminalInfo};
 use crate::watch::RepoWatcher;
 
 /// Maximum number of git working-tree status/diff scans allowed to run at once.
@@ -37,6 +37,11 @@ pub struct AppState {
     /// (`repo:<id>` / `group:<id>`). Persist across tab switches so background
     /// processes keep running; see `commands::terminal`.
     pub terminals: Mutex<HashMap<String, Session>>,
+    /// Mirror of the webview's open terminal tabs (names, group, cwd), pushed by
+    /// the frontend on every layout change. The PTY registry above is keyed by
+    /// opaque pane id with no names, so the control channel's `term-list` query
+    /// reads this human-meaningful snapshot instead. See `terminal_registry_report`.
+    pub terminal_registry: Mutex<Vec<TerminalInfo>>,
     /// Limits concurrent git status/diff scans; see [`GIT_STATUS_CONCURRENCY`].
     pub git_gate: Semaphore,
     /// Cache of `repo_id → (owner, repo)` parsed from each repo's `origin`
