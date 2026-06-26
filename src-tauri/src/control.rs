@@ -177,10 +177,16 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Remove the port file and this instance's registry entry so a later client
-/// reports "app not running" instead of dialing a dead port. Called when the
-/// window closes. The shared port file is left for whichever app wrote it last;
-/// the per-instance file is keyed by pid, so we only ever drop our own.
+/// Remove the shared port file and this instance's registry entry so a later
+/// client reports "app not running" instead of dialing a dead port. Called when
+/// the window closes.
+///
+/// The shared port file is removed unconditionally, preserving the original
+/// single-app behavior. (With several apps running it's whatever the
+/// last-booted one wrote, so removing it can briefly hide a still-running app
+/// from clients that only read the shared files — newer clients use the
+/// per-instance registry and aren't affected.) The registry entry is keyed by
+/// pid, so we only ever drop our own; other instances' entries are untouched.
 pub fn cleanup(app: &AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {
         let _ = std::fs::remove_file(dir.join(PORT_FILE));
