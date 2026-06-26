@@ -17,6 +17,7 @@ use std::io::{Read, Write};
 use std::sync::MutexGuard;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -199,6 +200,39 @@ pub fn terminal_spawn(
         let _ = app.emit(TERMINAL_EXIT, &session_id);
     });
 
+    Ok(())
+}
+
+/// One open terminal tab, as the frontend mirrors it for the control channel's
+/// `term-list` query (see [`terminal_registry_report`]). The PTY registry itself
+/// (`AppState::terminals`) is keyed by opaque pane id and holds no names/cwd, so
+/// the human-meaningful layout has to come from the webview, which owns it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalInfo {
+    /// The group the tab lives under (terminals are per-group).
+    pub group_id: i64,
+    pub tab_id: String,
+    /// The tab's display label (custom name if set, else the default).
+    pub name: String,
+    /// Number of side-by-side panes in the tab.
+    pub panes: usize,
+    /// Working directory of the tab's first pane (lets a client map it to a repo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+/// Replace the mirrored terminal layout. The frontend calls this on every
+/// terminal-layout change so the control channel can answer `term-list` from
+/// fresh in-memory state without round-tripping to the webview.
+#[tauri::command]
+pub fn terminal_registry_report(
+    state: State<AppState>,
+    terminals: Vec<TerminalInfo>,
+) -> AppResult<()> {
+    *state
+        .terminal_registry
+        .lock()
+        .map_err(|e| AppError::Other(format!("terminal registry lock poisoned: {e}")))? = terminals;
     Ok(())
 }
 
