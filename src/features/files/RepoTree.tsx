@@ -269,6 +269,7 @@ export function RepoTree({
   onSelect,
   onDeleted,
   changes,
+  groupRelativePrefix,
 }: {
   repoId: number;
   selectedPath: string | null;
@@ -276,6 +277,14 @@ export function RepoTree({
   /** A path (file or directory) was deleted — lets the editor drop it if open. */
   onDeleted: (path: string) => void;
   changes: TreeChanges;
+  /**
+   * The repo's directory relative to its synced group's folder (e.g.
+   * `"foo/bar"`, or `""` when the repo is the folder root). When non-null, a
+   * "Copy Path (relative to group)" menu item is offered, joining this prefix
+   * with the file's repo-relative path. Null hides the item — the repo isn't
+   * in a folder-bound group, or doesn't live under that folder (#173).
+   */
+  groupRelativePrefix: string | null;
 }) {
   const queryClient = useQueryClient();
   // File Compare (#130), VSCode-style: "Select for Compare" stashes a file
@@ -440,6 +449,19 @@ export function RepoTree({
           <LinkIcon />
           Copy Relative Path
         </ContextMenuItem>
+        {groupRelativePrefix != null && (
+          <ContextMenuItem
+            className="text-xs"
+            onClick={() => {
+              const rel = groupRelativePrefix ? `${groupRelativePrefix}/${menu!.path}` : menu!.path;
+              void copy(rel, "Copied group-relative path");
+              setMenu(null);
+            }}
+          >
+            <LinkIcon />
+            Copy Path (relative to group)
+          </ContextMenuItem>
+        )}
         {menu?.kind === "file" && (
           <>
             <div className="my-1 border-t border-[var(--color-border)]" />
