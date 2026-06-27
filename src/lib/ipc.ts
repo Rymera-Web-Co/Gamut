@@ -699,6 +699,9 @@ export const ipc = {
       commitId: commitId ?? null,
       comments: comments ?? null,
     }),
+  /** Request (or re-request) reviews from one or more reviewers (#172). */
+  githubRequestReview: (repoId: number, number: number, reviewers: string[]) =>
+    invoke<void>("github_request_review", { repoId, number, reviewers }),
   githubPrComment: (repoId: number, number: number, commitId: string, comment: DraftComment) =>
     invoke<void>("github_pr_comment", { repoId, number, commitId, comment }),
   githubUpdateBody: (

@@ -391,6 +391,24 @@ export function useSubmitReview(repoId: number) {
   });
 }
 
+/**
+ * Request (or re-request) a review from one or more reviewers (#172). On success
+ * the PR detail + timeline queries are invalidated so the re-requested indicator
+ * and timeline reflect the new state.
+ */
+export function useRequestReview(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ number, reviewers }: { number: number; reviewers: string[] }) =>
+      ipc.githubRequestReview(repoId, number, reviewers),
+    onSuccess: (_data, { number }) => {
+      qc.invalidateQueries({ queryKey: ["github-pr-details", repoId, number] });
+      qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+      qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+    },
+  });
+}
+
 /** Post a single inline review comment immediately (the "Comment" action). */
 export function usePrComment(repoId: number) {
   const qc = useQueryClient();
