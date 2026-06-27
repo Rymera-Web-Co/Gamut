@@ -202,6 +202,9 @@ export function useTerminalSessions({
   const [tick, setTick] = useState(0);
   // All groups' terminal layout, watched so we can reap panes removed from it.
   const allTerminals = useUiStore((s) => s.terminals);
+  // Background ("silent") terminals awaiting an eager PTY spawn, watched so they
+  // start their shell even though they're not the visible/active pane.
+  const bgQueue = useUiStore((s) => s.terminalBgQueue);
 
   // Keep the latest group/tab around for the imperative click handlers.
   const ctxRef = useRef({ groupId: activeGroupId, tabId: activeTab?.id });
@@ -351,6 +354,46 @@ export function useTerminalSessions({
     return entry;
   }
 
+  // Spawn the backend PTY for a session and wire its output into the xterm. Safe
+  // to call whether or not the pane is currently visible (a background/"silent"
+  // terminal spawns the same way) — the only difference is whether its `el` is
+  // shown. No-op if already spawned. Drains any queued command once the PTY is up.
+  function spawnPane(pane: TermPane, e: SessionEntry) {
+    if (e.spawned) return;
+    e.spawned = true;
+    setDeadKeys((prev) => {
+      if (!prev.has(pane.id)) return prev;
+      const next = new Set(prev);
+      next.delete(pane.id);
+      return next;
+    });
+    // The spawn carries the initial grid size; seed the cache so the first
+    // resize IPC only fires once the grid actually changes (#142).
+    e.lastCols = e.term.cols;
+    e.lastRows = e.term.rows;
+    const handle = ipc.terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
+      // Drop bytes that arrive after the entry was torn down — the xterm
+      // is disposed and `e` is stale (#139).
+      if (e.disposed) return;
+      e.term.write(bytes);
+      // Output to a pane the user isn't viewing is unseen activity.
+      if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
+    });
+    e.disposeChannel = handle.dispose;
+    handle.ready
+      .then(() => {
+        if (e.disposed) return;
+        // Type any command queued for this pane now that the PTY exists
+        // (writing earlier would be dropped). Drains once.
+        const queued = takePendingCommand(pane.id);
+        if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
+      })
+      .catch((err) => {
+        if (e.disposed) return;
+        e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
+      });
+  }
+
   // Lay out the active tab's panes side by side; hide everything else. Spawn
   // each visible pane lazily once the pane is actually open.
   useEffect(() => {
@@ -379,42 +422,12 @@ export function useTerminalSessions({
           /* not laid out yet */
         }
         if (!e.spawned) {
-          e.spawned = true;
-          setDeadKeys((prev) => {
-            if (!prev.has(pane.id)) return prev;
-            const next = new Set(prev);
-            next.delete(pane.id);
-            return next;
-          });
-          // The spawn carries the initial grid size; seed the cache so the first
-          // resize IPC only fires once the grid actually changes (#142).
-          e.lastCols = e.term.cols;
-          e.lastRows = e.term.rows;
-          const handle = ipc.terminalSpawn(pane.id, pane.cwd, e.term.cols, e.term.rows, (bytes) => {
-            // Drop bytes that arrive after the entry was torn down — the xterm
-            // is disposed and `e` is stale (#139).
-            if (e.disposed) return;
-            e.term.write(bytes);
-            // Output to a pane the user isn't viewing is unseen activity.
-            if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
-          });
-          e.disposeChannel = handle.dispose;
-          handle.ready
-            .then(() => {
-              if (e.disposed) return;
-              // Type any command queued for this pane now that the PTY exists
-              // (writing earlier would be dropped). Drains once.
-              const queued = takePendingCommand(pane.id);
-              if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
-            })
-            .catch((err) => {
-              if (e.disposed) return;
-              e.term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
-            });
+          spawnPane(pane, e);
         } else {
           resizeIfChanged(pane.id, e);
           // The PTY is already live (e.g. a control-channel request reusing
-          // this terminal by name): type any freshly-queued command straight away.
+          // this terminal by name, or a background terminal now brought into
+          // view): type any freshly-queued command straight away.
           const queued = takePendingCommand(pane.id);
           if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
@@ -537,6 +550,38 @@ export function useTerminalSessions({
     // the layout so this runs when panes are added/removed, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allTerminals]);
+
+  // Eagerly spawn background ("silent") terminals so a control-channel
+  // `term --silent` runs its command without the user ever switching to it. For
+  // each queued pane we create its (hidden) session and spawn its PTY just like a
+  // visible one; the layout effect above will simply reveal it if/when the user
+  // navigates to its group. A pane not yet in the layout is left queued and
+  // retried when `allTerminals` next changes.
+  useEffect(() => {
+    if (!hostRef.current || bgQueue.length === 0) return;
+    const clear = useUiStore.getState().clearBackgroundTerminal;
+    for (const paneId of bgQueue) {
+      let pane: TermPane | undefined;
+      for (const g of Object.values(allTerminals)) {
+        for (const t of g.tabs) {
+          const p = t.panes.find((x) => x.id === paneId);
+          if (p) pane = p;
+        }
+      }
+      if (!pane) continue; // not in the layout yet — retry on the next change
+      const e = ensureEntry(pane);
+      if (!e.spawned) {
+        spawnPane(pane, e);
+      } else {
+        // Already live (e.g. a silent reuse of an existing tab) — type any
+        // freshly-queued command straight into it.
+        const queued = takePendingCommand(paneId);
+        if (queued) ipc.terminalWrite(paneId, encoder.encode(queued)).catch(() => {});
+      }
+      clear(paneId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTerminals, bgQueue]);
 
   return { deadKeys, killPane, restart };
 }

@@ -248,6 +248,12 @@ interface UiState {
   // — lets the command palette / notification click land keyboard focus inside
   // the terminal even when its tab/pane state didn't change.
   terminalFocusNonce: number;
+  // Pane ids of background ("silent") terminals awaiting an eager PTY spawn. The
+  // terminal session manager drains this: it spawns each pane's shell even though
+  // the pane isn't the visible/active one (so a queued command runs), then clears
+  // the id. Lets a control-channel `term --silent` start work without the UI
+  // jumping to it.
+  terminalBgQueue: string[];
   setView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null) => void;
@@ -273,9 +279,21 @@ interface UiState {
   toggleTerminal: () => void;
   setTerminalMaximized: (max: boolean) => void;
   toggleTerminalMaximized: () => void;
-  /** Open a new terminal tab in a group rooted at `cwd`, reveal the pane, and
-   * return the new pane's id (so callers can queue input for it). */
-  addTerminalTab: (groupId: number, cwd: string, title: string) => string;
+  /** Open a new terminal tab in a group rooted at `cwd` and return the new pane's
+   * id (so callers can queue input for it). Reveals the pane and makes the tab
+   * active, unless `opts.background` — a background tab is appended without
+   * switching the active tab or opening the panel (for silent control-channel
+   * terminals); pair it with `requestBackgroundTerminal` to spawn its shell. */
+  addTerminalTab: (
+    groupId: number,
+    cwd: string,
+    title: string,
+    opts?: { background?: boolean },
+  ) => string;
+  /** Queue a pane for an eager background PTY spawn (see `terminalBgQueue`). */
+  requestBackgroundTerminal: (paneId: string) => void;
+  /** Drop a pane id from the background-spawn queue once it's been spawned. */
+  clearBackgroundTerminal: (paneId: string) => void;
   /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
   splitTerminal: (groupId: number, cwd: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
@@ -336,6 +354,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   filesPanel: storedFilesPanel(),
   searchFocusNonce: 0,
   terminalFocusNonce: 0,
+  terminalBgQueue: [],
   setView: (view) => set({ view }),
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
@@ -403,7 +422,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ terminalMaximized: max });
   },
   toggleTerminalMaximized: () => get().setTerminalMaximized(!get().terminalMaximized),
-  addTerminalTab: (groupId, cwd, title) => {
+  addTerminalTab: (groupId, cwd, title, opts) => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;
     const tab: TermTab = {
@@ -412,19 +431,33 @@ export const useUiStore = create<UiState>((set, get) => ({
       panes: [{ id: paneId, cwd }],
       activePaneId: paneId,
     };
-    get().setTerminalOpen(true);
+    const background = opts?.background ?? false;
+    // A background tab must not steal the user's view: don't reveal the panel and
+    // don't switch the group's active tab (only adopt it if the group had none).
+    if (!background) get().setTerminalOpen(true);
     set((s) => {
       const g = s.terminals[groupId] ?? { tabs: [], activeTabId: null };
       return {
         nextTermId: n + 1,
         terminals: {
           ...s.terminals,
-          [groupId]: { tabs: [...g.tabs, tab], activeTabId: tab.id },
+          [groupId]: {
+            tabs: [...g.tabs, tab],
+            activeTabId: background ? (g.activeTabId ?? tab.id) : tab.id,
+          },
         },
       };
     });
     return paneId;
   },
+  requestBackgroundTerminal: (paneId) =>
+    set((s) =>
+      s.terminalBgQueue.includes(paneId)
+        ? {}
+        : { terminalBgQueue: [...s.terminalBgQueue, paneId] },
+    ),
+  clearBackgroundTerminal: (paneId) =>
+    set((s) => ({ terminalBgQueue: s.terminalBgQueue.filter((id) => id !== paneId) })),
   splitTerminal: (groupId, cwd) => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;

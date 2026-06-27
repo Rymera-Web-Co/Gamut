@@ -25,6 +25,9 @@ interface UiNav {
   run?: boolean;
   /** `term` only: reuse an existing terminal named `title` instead of opening a new one. */
   reuse?: boolean;
+  /** `term` only: open in the background — create + start the terminal without
+   * switching the active group/repo/view or revealing the terminal panel. */
+  silent?: boolean;
 }
 
 const VIEWS: readonly View[] = ["files", "history", "review", "pulls"];
@@ -43,6 +46,7 @@ function asView(v: string | undefined): View | null {
  */
 async function openTerm(nav: UiNav): Promise<void> {
   const ui = useUiStore.getState();
+  const silent = nav.silent === true;
   let groupId = ui.activeGroupId;
 
   try {
@@ -65,8 +69,14 @@ async function openTerm(nav: UiNav): Promise<void> {
   }
   if (groupId == null) return;
 
-  ui.setActiveGroup(groupId);
-  if (nav.repo_id != null) ui.setActiveRepo(nav.repo_id);
+  // Silent (`--silent`): create and start the terminal in the background — don't
+  // switch the active group/repo or reveal the panel. The session manager spawns
+  // its PTY eagerly (see `requestBackgroundTerminal`) so a queued command still
+  // runs; the user can navigate to it later. Otherwise, focus it as usual.
+  if (!silent) {
+    ui.setActiveGroup(groupId);
+    if (nav.repo_id != null) ui.setActiveRepo(nav.repo_id);
+  }
 
   const name = nav.title ?? "terminal";
 
@@ -84,13 +94,18 @@ async function openTerm(nav: UiNav): Promise<void> {
     const group = useUiStore.getState().terminals[groupId];
     const existing = group?.tabs.find((t) => (t.customTitle ?? t.title) === name);
     if (existing) {
-      ui.focusTerminal(groupId, existing.id, existing.activePaneId);
       queue(existing.activePaneId);
+      // Silent reuse drives the (possibly backgrounded) PTY without stealing
+      // focus; otherwise reveal + focus the existing tab as before.
+      if (silent) ui.requestBackgroundTerminal(existing.activePaneId);
+      else ui.focusTerminal(groupId, existing.id, existing.activePaneId);
       return;
     }
   }
 
-  queue(ui.addTerminalTab(groupId, nav.cwd ?? "", name));
+  const paneId = ui.addTerminalTab(groupId, nav.cwd ?? "", name, { background: silent });
+  queue(paneId);
+  if (silent) ui.requestBackgroundTerminal(paneId);
 }
 
 /**
