@@ -452,9 +452,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   requestBackgroundTerminal: (paneId) =>
     set((s) =>
-      s.terminalBgQueue.includes(paneId)
-        ? {}
-        : { terminalBgQueue: [...s.terminalBgQueue, paneId] },
+      s.terminalBgQueue.includes(paneId) ? {} : { terminalBgQueue: [...s.terminalBgQueue, paneId] },
     ),
   clearBackgroundTerminal: (paneId) =>
     set((s) => ({ terminalBgQueue: s.terminalBgQueue.filter((id) => id !== paneId) })),

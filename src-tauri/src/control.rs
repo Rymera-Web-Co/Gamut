@@ -45,7 +45,7 @@ const UI_NAV_EVENT: &str = "ui-nav";
 /// A UI-navigation command. Re-emitted verbatim to the webview as the `ui-nav`
 /// event payload; field names are snake_case to match the frontend's existing
 /// IPC types. `action` is one of `select-repo` | `view` | `open` | `goto` |
-/// `term` | `term-close`.
+/// `term` | `term-send` | `term-close`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiNav {
     pub action: String,
@@ -75,6 +75,11 @@ pub struct UiNav {
     // group/repo/view or revealing the terminal panel. Absent = focus as usual.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub silent: Option<bool>,
+    // `term-send` only: text to write into the existing terminal named `title`.
+    // The frontend types it into the live pane, then submits Enter as a separate
+    // keystroke (a text+Enter burst reads as a paste in a TUI and won't submit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// One line of request a client writes to the socket: the handshake token plus
@@ -331,6 +336,28 @@ mod tests {
         assert_eq!(back.nav.action, "open");
         assert_eq!(back.nav.repo_id, Some(7));
         assert_eq!(back.nav.path.as_deref(), Some("src/App.tsx"));
+    }
+
+    #[test]
+    fn term_send_carries_text() {
+        let req = ControlRequest {
+            token: "abc".into(),
+            nav: UiNav {
+                action: "term-send".into(),
+                repo_id: Some(3),
+                title: Some("issue-312".into()),
+                text: Some("use option B".into()),
+                ..UiNav::default()
+            },
+        };
+        let wire = serde_json::to_string(&req).unwrap();
+        assert!(wire.contains("\"action\":\"term-send\""));
+        assert!(wire.contains("\"text\":\"use option B\""));
+
+        let back: ControlRequest = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.nav.action, "term-send");
+        assert_eq!(back.nav.title.as_deref(), Some("issue-312"));
+        assert_eq!(back.nav.text.as_deref(), Some("use option B"));
     }
 
     #[test]
