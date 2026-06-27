@@ -70,6 +70,11 @@ pub struct UiNav {
     pub run: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reuse: Option<bool>,
+    // `term` only: open the terminal in the background — create it (and start its
+    // shell so any queued command still runs) without switching the active
+    // group/repo/view or revealing the terminal panel. Absent = focus as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent: Option<bool>,
 }
 
 /// One line of request a client writes to the socket: the handshake token plus
