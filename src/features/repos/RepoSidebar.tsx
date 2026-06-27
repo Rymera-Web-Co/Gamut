@@ -424,12 +424,13 @@ export function RepoSidebar() {
       <ContextMenu at={menu?.at ?? null} onClose={() => setMenu(null)}>
         {menu?.kind === "repo" ? (
           <>
-            {!menu.repo.missing && (
+            {/* A terminal opens in the active group; with no active group the
+                action would be a no-op, so hide the item rather than show a
+                dead entry. */}
+            {!menu.repo.missing && activeGroupId != null && (
               <ContextMenuItem
                 onClick={() => {
-                  if (activeGroupId != null) {
-                    addTerminalTab(activeGroupId, menu.repo.path, menu.repo.name);
-                  }
+                  addTerminalTab(activeGroupId, menu.repo.path, menu.repo.name);
                   setMenu(null);
                 }}
               >
