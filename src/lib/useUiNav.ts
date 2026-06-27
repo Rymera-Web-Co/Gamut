@@ -12,7 +12,7 @@ import { useUiStore, type View } from "@/store/ui";
  * the Rust payload.
  */
 interface UiNav {
-  /** "select-repo" | "view" | "open" | "goto" | "term" */
+  /** "select-repo" | "view" | "open" | "goto" | "term" | "term-send" */
   action: string;
   repo_id?: number;
   view?: string;
@@ -28,7 +28,17 @@ interface UiNav {
   /** `term` only: open in the background — create + start the terminal without
    * switching the active group/repo/view or revealing the terminal panel. */
   silent?: boolean;
+  /** `term-send` only: text to type into the existing terminal named `title`. */
+  text?: string;
 }
+
+/**
+ * Gap (ms) between typing `term-send` text and sending the submitting Enter.
+ * They must arrive as two separate PTY writes: a TUI like Claude Code treats a
+ * text+CR burst as a paste and buffers the newline instead of submitting, so we
+ * write the text, let it settle, then send a lone CR that registers as Enter.
+ */
+const TERM_SEND_SUBMIT_DELAY_MS = 150;
 
 const VIEWS: readonly View[] = ["files", "history", "review", "pulls"];
 
@@ -142,6 +152,48 @@ async function closeTerm(nav: UiNav): Promise<void> {
 }
 
 /**
+ * Type text into an existing terminal tab and submit it — the `term-send`
+ * control command. Finds the tab named `title` in the repo's group(s) (where
+ * `term` would have opened it), reveals it, writes the text to its live pane,
+ * then sends a lone CR after a short delay so it submits instead of reading as a
+ * paste (see {@link TERM_SEND_SUBMIT_DELAY_MS}). No-op if the tab doesn't exist.
+ */
+async function sendTerm(nav: UiNav): Promise<void> {
+  const name = nav.title;
+  if (!name || nav.repo_id == null || !nav.text) return;
+
+  let groupIds: number[] = [];
+  try {
+    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
+    const repo = repos.find((r) => r.id === nav.repo_id);
+    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
+    if (repo) {
+      groupIds =
+        repo.group_ids.length > 0 ? repo.group_ids : defaultGroupId != null ? [defaultGroupId] : [];
+    }
+  } catch {
+    return;
+  }
+
+  const ui = useUiStore.getState();
+  const encoder = new TextEncoder();
+  for (const gid of groupIds) {
+    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    if (tab) {
+      const paneId = tab.activePaneId;
+      // Reveal the tab so the human watches the session pick the answer up.
+      ui.focusTerminal(gid, tab.id, paneId);
+      ipc.terminalWrite(paneId, encoder.encode(nav.text)).catch(() => {});
+      // Submit with a separate CR after the text settles (paste-vs-keystroke).
+      setTimeout(() => {
+        void ipc.terminalWrite(paneId, encoder.encode("\r")).catch(() => {});
+      }, TERM_SEND_SUBMIT_DELAY_MS);
+      return;
+    }
+  }
+}
+
+/**
  * Apply UI-navigation commands from the local control channel to the running
  * window. Each command is routed through the existing one-shot deep-link store hooks
  * (`setActiveRepo` / `setView` / `setFilesPath` / `setHistorySha`); the Files
@@ -175,6 +227,9 @@ export function useUiNav() {
           break;
         case "term":
           void openTerm(ev.payload);
+          break;
+        case "term-send":
+          void sendTerm(ev.payload);
           break;
         case "term-close":
           void closeTerm(ev.payload);
