@@ -43,10 +43,12 @@ export interface TreeChanges {
   dirs: Set<string>;
 }
 
-/** What the user right-clicked, plus where to anchor the menu. */
+/** What the user right-clicked, plus where to anchor the menu. `"root"` is the
+ * blank space below the tree — it only offers create actions, scoped to the repo
+ * root (path = ""). */
 interface MenuTarget {
   path: string;
-  kind: "dir" | "file";
+  kind: "dir" | "file" | "root";
   pos: ContextMenuPosition;
 }
 
@@ -316,8 +318,9 @@ export function RepoTree({
     });
   }, []);
 
-  // Where a create on the menu target should land.
-  const targetDir = menu ? (menu.kind === "dir" ? menu.path : parentDir(menu.path)) : "";
+  // Where a create on the menu target should land. A directory (or the blank
+  // root) targets itself; a file targets its parent.
+  const targetDir = menu ? (menu.kind === "file" ? parentDir(menu.path) : menu.path) : "";
 
   function startCreate(mode: "file" | "folder") {
     // Force the target dir open so its inline input row is visible.
@@ -399,21 +402,33 @@ export function RepoTree({
 
   return (
     <>
-      <Children
-        repoId={repoId}
-        parentPath=""
-        depth={0}
-        selectedPath={selectedPath}
-        onSelect={onSelect}
-        changes={changes}
-        openPaths={openPaths}
-        onToggle={onToggle}
-        onContextMenu={setMenu}
-        pending={pending}
-        creating={busy}
-        onCreate={submitCreate}
-        onCancelCreate={() => setPending(null)}
-      />
+      {/* The wrapper fills the scroll area so right-clicking the blank space
+          below the tree opens a root-scoped create menu. Entry rows stop
+          propagation in their own handler, so only genuinely empty space (and
+          the empty/loading hints) bubbles up to here. */}
+      <div
+        className="min-h-full"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ path: "", kind: "root", pos: { x: e.clientX, y: e.clientY } });
+        }}
+      >
+        <Children
+          repoId={repoId}
+          parentPath=""
+          depth={0}
+          selectedPath={selectedPath}
+          onSelect={onSelect}
+          changes={changes}
+          openPaths={openPaths}
+          onToggle={onToggle}
+          onContextMenu={setMenu}
+          pending={pending}
+          creating={busy}
+          onCreate={submitCreate}
+          onCancelCreate={() => setPending(null)}
+        />
+      </div>
 
       <ContextMenu at={menu?.pos ?? null} onClose={() => setMenu(null)}>
         <ContextMenuItem className="text-xs" onClick={() => startCreate("file")}>
@@ -424,81 +439,89 @@ export function RepoTree({
           <FolderPlus />
           New Folder…
         </ContextMenuItem>
-        <div className="my-1 border-t border-[var(--color-border)]" />
-        <ContextMenuItem
-          className="text-xs"
-          onClick={() => {
-            const path = menu!.path;
-            setMenu(null);
-            ipc
-              .resolvePath(repoId, path)
-              .then((abs) => copy(abs, "Copied path"))
-              .catch((e) => toast.error(String(e)));
-          }}
-        >
-          <LinkIcon />
-          Copy Path
-        </ContextMenuItem>
-        <ContextMenuItem
-          className="text-xs"
-          onClick={() => {
-            void copy(menu!.path, "Copied relative path");
-            setMenu(null);
-          }}
-        >
-          <LinkIcon />
-          Copy Relative Path
-        </ContextMenuItem>
-        {groupRelativePrefix != null && (
-          <ContextMenuItem
-            className="text-xs"
-            onClick={() => {
-              const rel = groupRelativePrefix ? `${groupRelativePrefix}/${menu!.path}` : menu!.path;
-              void copy(rel, "Copied group-relative path");
-              setMenu(null);
-            }}
-          >
-            <LinkIcon />
-            Copy Path (relative to group)
-          </ContextMenuItem>
-        )}
-        {menu?.kind === "file" && (
+        {/* The remaining actions act on a specific entry; they're hidden for the
+            blank-space (root) menu, which only creates. */}
+        {menu && menu.kind !== "root" && (
           <>
             <div className="my-1 border-t border-[var(--color-border)]" />
             <ContextMenuItem
               className="text-xs"
               onClick={() => {
-                setCompareSelection({ repoId, path: menu!.path });
+                const path = menu.path;
+                setMenu(null);
+                ipc
+                  .resolvePath(repoId, path)
+                  .then((abs) => copy(abs, "Copied path"))
+                  .catch((e) => toast.error(String(e)));
+              }}
+            >
+              <LinkIcon />
+              Copy Path
+            </ContextMenuItem>
+            <ContextMenuItem
+              className="text-xs"
+              onClick={() => {
+                void copy(menu.path, "Copied relative path");
                 setMenu(null);
               }}
             >
-              <Columns2 />
-              Select for Compare
+              <LinkIcon />
+              Copy Relative Path
             </ContextMenuItem>
-            {compareSelection &&
-              !(compareSelection.repoId === repoId && compareSelection.path === menu.path) && (
+            {groupRelativePrefix != null && (
+              <ContextMenuItem
+                className="text-xs"
+                onClick={() => {
+                  const rel = groupRelativePrefix
+                    ? `${groupRelativePrefix}/${menu.path}`
+                    : menu.path;
+                  void copy(rel, "Copied group-relative path");
+                  setMenu(null);
+                }}
+              >
+                <LinkIcon />
+                Copy Path (relative to group)
+              </ContextMenuItem>
+            )}
+            {menu.kind === "file" && (
+              <>
+                <div className="my-1 border-t border-[var(--color-border)]" />
                 <ContextMenuItem
                   className="text-xs"
-                  onClick={() => void compareWithSelected(menu!)}
+                  onClick={() => {
+                    setCompareSelection({ repoId, path: menu.path });
+                    setMenu(null);
+                  }}
                 >
                   <Columns2 />
-                  Compare with Selected
+                  Select for Compare
                 </ContextMenuItem>
-              )}
+                {compareSelection &&
+                  !(compareSelection.repoId === repoId && compareSelection.path === menu.path) && (
+                    <ContextMenuItem
+                      className="text-xs"
+                      onClick={() => void compareWithSelected(menu)}
+                    >
+                      <Columns2 />
+                      Compare with Selected
+                    </ContextMenuItem>
+                  )}
+              </>
+            )}
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+              onClick={() => {
+                const target = menu;
+                setMenu(null);
+                void deleteTarget(target);
+              }}
+            >
+              <Trash2 />
+              Delete
+            </ContextMenuItem>
           </>
         )}
-        <div className="my-1 border-t border-[var(--color-border)]" />
-        <ContextMenuItem
-          className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
-          onClick={() => {
-            const target = menu!;
-            setMenu(null);
-            void deleteTarget(target);
-          }}
-        >
-          <Trash2 />
-          Delete
-        </ContextMenuItem>
       </ContextMenu>
     </>
   );
