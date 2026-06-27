@@ -637,6 +637,39 @@ pub async fn github_submit_review(
     Ok(())
 }
 
+/// Request (or re-request) reviews from one or more reviewers on a pull request.
+/// Mirrors GitHub's "re-request review" button. GitHub rejects re-requesting a
+/// reviewer who hasn't yet submitted a review, so the UI only offers this for
+/// reviewers who have already reviewed.
+#[tauri::command]
+pub async fn github_request_review(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    reviewers: Vec<String>,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    let token = require_token(&state)?;
+    let api = api_base(&state);
+    let client = http()?;
+
+    let payload = serde_json::json!({ "reviewers": reviewers });
+
+    let resp = client
+        .post(format!(
+            "{api}/repos/{owner}/{repo}/pulls/{number}/requested_reviewers"
+        ))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&payload)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error("requesting a re-review", resp).await);
+    }
+    Ok(())
+}
+
 /// Post a single inline review comment immediately (the "Comment" action),
 /// anchored to a line/range of `commit_id`'s diff.
 #[tauri::command]
