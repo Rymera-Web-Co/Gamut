@@ -99,7 +99,9 @@ function RepoRow({
         ipc.touchRepo(repo.id);
       }}
       onContextMenu={(e) => {
-        // Keep the row's menu from also firing the sidebar blank-space menu.
+        // Suppress the native webview menu, and keep the row's menu from also
+        // firing the sidebar blank-space menu.
+        e.preventDefault();
         e.stopPropagation();
         onContextMenu(e);
       }}
