@@ -4,6 +4,7 @@ import {
   Folder,
   FolderGit2,
   GripVertical,
+  Link as LinkIcon,
   Loader2,
   Pencil,
   Plus,
@@ -14,7 +15,13 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  type ContextMenuPosition,
+} from "@/components/ui/context-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { copy } from "@/lib/clipboard";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
@@ -40,11 +47,13 @@ function RepoRow({
   status,
   onRemove,
   onReorder,
+  onContextMenu,
 }: {
   repo: Repo;
   status?: RepoStatus;
   onRemove: (repo: Repo) => void;
   onReorder: (srcId: number, targetId: number) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
@@ -88,6 +97,11 @@ function RepoRow({
       onClick={() => {
         setActiveRepo(repo.id);
         ipc.touchRepo(repo.id);
+      }}
+      onContextMenu={(e) => {
+        // Keep the row's menu from also firing the sidebar blank-space menu.
+        e.stopPropagation();
+        onContextMenu(e);
       }}
       className={cn(
         "group flex cursor-pointer items-start gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
@@ -234,6 +248,12 @@ export function RepoSidebar() {
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [editGroupOpen, setEditGroupOpen] = useState(false);
+  // Right-click menus: on a repo row, or on the sidebar's blank space.
+  const [menu, setMenu] = useState<
+    | { at: ContextMenuPosition; kind: "repo"; repo: Repo }
+    | { at: ContextMenuPosition; kind: "blank" }
+    | null
+  >(null);
 
   const allRepos = repos.data ?? [];
   const allGroups = groups.data ?? [];
@@ -337,7 +357,14 @@ export function RepoSidebar() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto p-2">
+      <div
+        className="min-h-0 flex-1 overflow-auto p-2"
+        onContextMenu={(e) => {
+          // Repo rows stop propagation, so only the blank area reaches here.
+          e.preventDefault();
+          setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "blank" });
+        }}
+      >
         {visible.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-[var(--color-muted-foreground)]">
             {allRepos.length === 0
@@ -353,6 +380,9 @@ export function RepoSidebar() {
                 status={statusById.get(r.id)}
                 onRemove={(repo) => removeRepo.mutate(repo.id)}
                 onReorder={reorder}
+                onContextMenu={(e) =>
+                  setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "repo", repo: r })
+                }
               />
             ))}
             {nonGitRepos.length > 0 && (
@@ -369,6 +399,9 @@ export function RepoSidebar() {
                     status={statusById.get(r.id)}
                     onRemove={(repo) => removeRepo.mutate(repo.id)}
                     onReorder={reorder}
+                    onContextMenu={(e) =>
+                      setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "repo", repo: r })
+                    }
                   />
                 ))}
               </>
@@ -385,6 +418,74 @@ export function RepoSidebar() {
         onOpenChange={setEditGroupOpen}
         onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
       />
+
+      <ContextMenu at={menu?.at ?? null} onClose={() => setMenu(null)}>
+        {menu?.kind === "repo" ? (
+          <>
+            {!menu.repo.missing && (
+              <ContextMenuItem
+                onClick={() => {
+                  if (activeGroupId != null) {
+                    addTerminalTab(activeGroupId, menu.repo.path, menu.repo.name);
+                  }
+                  setMenu(null);
+                }}
+              >
+                <SquareTerminal />
+                Open terminal here
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem
+              onClick={() => {
+                void copy(menu.repo.path, "Copied path");
+                setMenu(null);
+              }}
+            >
+              <LinkIcon />
+              Copy path
+            </ContextMenuItem>
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+              onClick={() => {
+                const repo = menu.repo;
+                setMenu(null);
+                if (
+                  window.confirm(
+                    `Remove "${repo.name}" from Gamut? This only removes it from the list — your files on disk are not touched.`,
+                  )
+                ) {
+                  removeRepo.mutate(repo.id);
+                }
+              }}
+            >
+              <Trash2 />
+              Remove repo
+            </ContextMenuItem>
+          </>
+        ) : menu?.kind === "blank" ? (
+          <>
+            <ContextMenuItem
+              onClick={() => {
+                setMenu(null);
+                void addRepo();
+              }}
+            >
+              <Plus />
+              Add repo
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setMenu(null);
+                setDiscoverOpen(true);
+              }}
+            >
+              <FolderSearch />
+              Discover repos
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
     </aside>
   );
 }
