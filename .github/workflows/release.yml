@@ -50,6 +50,7 @@ jobs:
             libsoup-3.0-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev \
+            libasound2-dev \
             patchelf
 
       - uses: pnpm/action-setup@v4
