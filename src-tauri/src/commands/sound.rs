@@ -66,18 +66,66 @@ struct Tone {
 fn recipe(name: &str) -> Option<Vec<Tone>> {
     Some(match name {
         "chime" => vec![
-            Tone { freq: 880.0, at: 0.0, dur: 0.18, wave: Wave::Sine, gain: 0.25 },
-            Tone { freq: 1318.5, at: 0.12, dur: 0.28, wave: Wave::Sine, gain: 0.25 },
+            Tone {
+                freq: 880.0,
+                at: 0.0,
+                dur: 0.18,
+                wave: Wave::Sine,
+                gain: 0.25,
+            },
+            Tone {
+                freq: 1318.5,
+                at: 0.12,
+                dur: 0.28,
+                wave: Wave::Sine,
+                gain: 0.25,
+            },
         ],
-        "ping" => vec![Tone { freq: 1568.0, at: 0.0, dur: 0.16, wave: Wave::Sine, gain: 0.25 }],
-        "blip" => vec![Tone { freq: 660.0, at: 0.0, dur: 0.09, wave: Wave::Square, gain: 0.18 }],
+        "ping" => vec![Tone {
+            freq: 1568.0,
+            at: 0.0,
+            dur: 0.16,
+            wave: Wave::Sine,
+            gain: 0.25,
+        }],
+        "blip" => vec![Tone {
+            freq: 660.0,
+            at: 0.0,
+            dur: 0.09,
+            wave: Wave::Square,
+            gain: 0.18,
+        }],
         "knock" => vec![
-            Tone { freq: 180.0, at: 0.0, dur: 0.12, wave: Wave::Triangle, gain: 0.4 },
-            Tone { freq: 150.0, at: 0.14, dur: 0.14, wave: Wave::Triangle, gain: 0.4 },
+            Tone {
+                freq: 180.0,
+                at: 0.0,
+                dur: 0.12,
+                wave: Wave::Triangle,
+                gain: 0.4,
+            },
+            Tone {
+                freq: 150.0,
+                at: 0.14,
+                dur: 0.14,
+                wave: Wave::Triangle,
+                gain: 0.4,
+            },
         ],
         "alert" => vec![
-            Tone { freq: 988.0, at: 0.0, dur: 0.12, wave: Wave::Triangle, gain: 0.25 },
-            Tone { freq: 988.0, at: 0.18, dur: 0.12, wave: Wave::Triangle, gain: 0.25 },
+            Tone {
+                freq: 988.0,
+                at: 0.0,
+                dur: 0.12,
+                wave: Wave::Triangle,
+                gain: 0.25,
+            },
+            Tone {
+                freq: 988.0,
+                at: 0.18,
+                dur: 0.12,
+                wave: Wave::Triangle,
+                gain: 0.25,
+            },
         ],
         _ => return None,
     })
@@ -120,11 +168,7 @@ fn envelope(t: f32, peak: f32, dur: f32) -> f32 {
 
 /// Render a recipe to a mono f32 PCM buffer at [`SAMPLE_RATE`], summing tones.
 fn render(tones: &[Tone]) -> Vec<f32> {
-    let total = tones
-        .iter()
-        .map(|t| t.at + t.dur)
-        .fold(0.0_f32, f32::max)
-        + 0.03; // brief tail so the last tone isn't clipped
+    let total = tones.iter().map(|t| t.at + t.dur).fold(0.0_f32, f32::max) + 0.03; // brief tail so the last tone isn't clipped
     let n = (total * SAMPLE_RATE as f32).ceil() as usize;
     let mut buf = vec![0.0_f32; n];
     for tone in tones {
