@@ -59,3 +59,9 @@ portable-pty = "0.8"
 # backs the case-sensitive / whole-word / regex toggles.
 ignore = "0.4"
 regex = "1"
+# Native playback of terminal notification cues. Done in the host process rather
+# than the webview's Web Audio API: WebKit idle-suspends an AudioContext when the
+# app is backgrounded/idle, and a background event (the cue's only trigger) isn't
+# a user gesture, so the context can't revive and the cue is silent (#119, #167).
+# `symphonia-all` adds the codecs (aac/m4a/etc.) on top of the default decoders.
+rodio = { version = "0.20", features = ["symphonia-all"] }

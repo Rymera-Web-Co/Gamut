@@ -774,9 +774,14 @@ export const ipc = {
    * `term-list` query can report active terminals. Fire-and-forget on layout change. */
   terminalRegistryReport: (terminals: TerminalInfo[]) =>
     invoke<void>("terminal_registry_report", { terminals }),
-  /** Read a custom notification sound file's raw bytes by path (#28). The
-   * backend rejects non-audio extensions, so this isn't a general file read. */
-  readAudioFile: (path: string) => invoke<ArrayBuffer>("read_audio_file", { path }),
+  /** Play a terminal notification cue natively in the host process (#28). `name`
+   * is a built-in tone id or "custom" (which plays `customPath`). Playing in
+   * Rust rather than the webview's Web Audio API keeps cues audible after the
+   * machine's been idle, where WebKit would idle-suspend the AudioContext
+   * (#119, #167). Rejects only a missing/invalid custom path; decode/playback
+   * failures fall back to a built-in tone on the backend. */
+  playSound: (name: string, customPath?: string) =>
+    invoke<void>("play_notification_sound", { name, customPath }),
 
   // diagnostics (#90)
   diagnostics: () => invoke<Diagnostics>("diagnostics_snapshot"),
