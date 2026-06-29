@@ -208,12 +208,19 @@ export function usePrTimeline(repoId: number | null, number: number | null) {
   });
 }
 
-/** Read-only PR sidebar metadata (reviewers, assignees, labels, milestone, links). */
+/** Read-only PR sidebar metadata (reviewers, assignees, labels, milestone, links,
+ * and the roll-up merge requirements). GitHub computes `mergeable` /
+ * `mergeStateStatus` asynchronously, so while either is still UNKNOWN we poll a
+ * few seconds apart until it settles, then stop (#185). */
 export function usePrDetails(repoId: number, number: number | null) {
   return useQuery({
     queryKey: ["github-pr-details", repoId, number],
     queryFn: () => ipc.githubPrDetails(repoId, number!),
     enabled: number != null,
+    refetchInterval: (query) => {
+      const m = query.state.data?.merge;
+      return m && (m.mergeable === "UNKNOWN" || m.merge_state_status === "UNKNOWN") ? 3000 : false;
+    },
   });
 }
 
