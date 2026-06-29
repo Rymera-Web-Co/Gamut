@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { MergeInfo } from "@/lib/ipc";
-import { mergeVerdict } from "./MergeRequirements";
+import { mergeStatusSummary, mergeVerdict } from "./MergeRequirements";
 
 /** A clean, mergeable PR; override fields per case. */
 function info(overrides: Partial<MergeInfo> = {}): MergeInfo {
@@ -88,5 +88,40 @@ describe("mergeVerdict", () => {
     expect(v.canMerge).toBe(false);
     expect(v.reason).toMatch(/conflicts/i);
     expect(v.reason).toMatch(/changes were requested/i);
+  });
+});
+
+describe("mergeStatusSummary", () => {
+  it("reads as ready to merge when the PR is clean and approved", () => {
+    expect(mergeStatusSummary(info()).label).toMatch(/ready to merge/i);
+  });
+
+  it("flags a draft", () => {
+    expect(mergeStatusSummary(info({ is_draft: true, merge_state_status: "DRAFT" })).label).toMatch(
+      /draft/i,
+    );
+  });
+
+  it("surfaces failing checks as not-met", () => {
+    const s = mergeStatusSummary(
+      info({
+        check_rollup: "FAILURE",
+        checks: [{ name: "build", state: "FAILURE", url: null }],
+        merge_state_status: "BLOCKED",
+      }),
+    );
+    expect(s.label).toMatch(/not met/i);
+  });
+
+  it("reads as checking while GitHub is still computing", () => {
+    const s = mergeStatusSummary(info({ mergeable: "UNKNOWN", merge_state_status: "UNKNOWN" }));
+    expect(s.label).toMatch(/checking/i);
+  });
+
+  it("needs attention when a clean checklist is still blocked by the verdict", () => {
+    // Rows are all green (approved, no conflicts, checks passed) but GitHub
+    // reports BLOCKED — the summary should still warn rather than read ready.
+    const s = mergeStatusSummary(info({ merge_state_status: "BLOCKED" }));
+    expect(s.label).toMatch(/attention/i);
   });
 });

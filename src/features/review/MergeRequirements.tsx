@@ -1,6 +1,9 @@
-// The merge-requirements status block shown above the merge button in the PR
-// tab (#185): a compact checklist of CI checks, review decision, and the
-// branch's mergeable state, plus the verdict that gates the merge button.
+// The merge-requirements status block for the PR tab (#185): a compact
+// checklist of CI checks, review decision, and the branch's mergeable state,
+// plus the verdict that gates the merge button. The checklist is shown in a
+// popover opened from a status icon in the merge bar (rather than stacked above
+// it) so it doesn't eat fixed, non-scrollable space; `mergeStatusSummary`
+// drives that icon.
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CheckCircle2, XCircle, AlertTriangle, Clock, type LucideIcon } from "lucide-react";
 
@@ -83,6 +86,43 @@ const ROW_ICON: Record<RowTone, { Icon: LucideIcon; color: string }> = {
   pending: { Icon: Clock, color: "var(--color-muted-foreground)" },
 };
 
+/** Severity order for collapsing several rows into one summary tone. */
+const TONE_RANK: Record<RowTone, number> = { failure: 0, warning: 1, pending: 2, success: 3 };
+
+const SUMMARY_LABEL: Record<RowTone, string> = {
+  success: "Ready to merge",
+  failure: "Merge requirements not met",
+  warning: "Merge requirements need attention",
+  pending: "Checking merge requirements…",
+};
+
+export interface MergeStatusSummary {
+  Icon: LucideIcon;
+  color: string;
+  /** Tooltip / aria-label for the merge-bar status icon. */
+  label: string;
+}
+
+/**
+ * Collapse the merge box into a single icon + label for the merge-bar trigger:
+ * the most severe row wins, computing shows a clock, and a button-blocking
+ * verdict with otherwise-clean rows still reads as "needs attention".
+ */
+export function mergeStatusSummary(m: MergeInfo): MergeStatusSummary {
+  if (m.is_draft || m.merge_state_status === "DRAFT")
+    return { ...ROW_ICON.warning, label: "This pull request is still a draft" };
+
+  const rows = [checksRow(m), reviewRow(m), conflictRow(m)].filter(Boolean) as { tone: RowTone }[];
+  let tone: RowTone = "success";
+  for (const r of rows) if (TONE_RANK[r.tone] < TONE_RANK[tone]) tone = r.tone;
+
+  const verdict = mergeVerdict(m);
+  if (verdict.computing) tone = "pending";
+  else if (!verdict.canMerge && tone === "success") tone = "warning";
+
+  return { ...ROW_ICON[tone], label: SUMMARY_LABEL[tone] };
+}
+
 function Row({ tone, title, detail }: { tone: RowTone; title: string; detail?: string }) {
   const { Icon, color } = ROW_ICON[tone];
   return (
@@ -155,10 +195,10 @@ function conflictRow(m: MergeInfo): { tone: RowTone; title: string } | null {
 }
 
 /** Compact "ready / not ready" checklist mirroring GitHub's merge box. */
-export function MergeStatusBlock({ merge }: { merge: MergeInfo }) {
+export function MergeStatusBlock({ merge, className }: { merge: MergeInfo; className?: string }) {
   if (merge.is_draft || merge.merge_state_status === "DRAFT") {
     return (
-      <div className="border-t px-3 py-2">
+      <div className={cn("px-3 py-2", className)}>
         <Row tone="warning" title="This pull request is still a draft" />
       </div>
     );
@@ -170,7 +210,7 @@ export function MergeStatusBlock({ merge }: { merge: MergeInfo }) {
   const computing = merge.mergeable === "UNKNOWN" || merge.merge_state_status === "UNKNOWN";
 
   return (
-    <div className="space-y-1.5 border-t px-3 py-2">
+    <div className={cn("space-y-1.5 px-3 py-2", className)}>
       {checks && (
         <button
           type="button"

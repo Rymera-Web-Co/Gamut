@@ -34,7 +34,7 @@ import {
   useSubmitReview,
 } from "./api";
 import { Conversation } from "./Conversation";
-import { MergeStatusBlock, mergeVerdict } from "./MergeRequirements";
+import { MergeStatusBlock, mergeStatusSummary, mergeVerdict } from "./MergeRequirements";
 import { Avatar } from "./reviewShared";
 
 function TokenGate() {
@@ -233,10 +233,10 @@ function MergeBar({
   const mergeInfo = details.data?.merge;
   const verdict = mergeVerdict(mergeInfo);
   const blocked = !verdict.canMerge;
+  const summary = mergeInfo ? mergeStatusSummary(mergeInfo) : null;
 
   return (
     <div className="shrink-0">
-      {mergeInfo && <MergeStatusBlock merge={mergeInfo} />}
       <div className="flex items-center gap-2 border-t px-3 py-2">
         <Popover
           open={open}
@@ -289,9 +289,28 @@ function MergeBar({
             </Button>
           </PopoverContent>
         </Popover>
-        <span className="text-xs text-[var(--color-muted-foreground)]">
+        <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-muted-foreground)]">
           {blocked && verdict.reason ? verdict.reason : "Merges into the base branch on GitHub."}
         </span>
+        {mergeInfo && summary && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0"
+                title={summary.label}
+                aria-label={`Merge requirements: ${summary.label}`}
+              >
+                <summary.Icon style={{ color: summary.color }} />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-0">
+              <div className="border-b px-3 py-2 text-sm font-semibold">Merge requirements</div>
+              <MergeStatusBlock merge={mergeInfo} />
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
     </div>
   );
