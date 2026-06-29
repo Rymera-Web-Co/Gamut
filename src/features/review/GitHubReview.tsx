@@ -29,10 +29,12 @@ import {
   useGithubPrs,
   useMentionables,
   useMergePr,
+  usePrDetails,
   usePrThread,
   useSubmitReview,
 } from "./api";
 import { Conversation } from "./Conversation";
+import { MergeStatusBlock, mergeStatusSummary, mergeVerdict } from "./MergeRequirements";
 import { Avatar } from "./reviewShared";
 
 function TokenGate() {
@@ -209,6 +211,7 @@ function MergeBar({
   headRef?: string;
 }) {
   const merge = useMergePr(repoId);
+  const details = usePrDetails(repoId, number);
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState<MergeMethod>(useSettings.getState().values.mergeStrategy);
 
@@ -227,53 +230,88 @@ function MergeBar({
     );
   }
 
+  const mergeInfo = details.data?.merge;
+  const verdict = mergeVerdict(mergeInfo);
+  const blocked = !verdict.canMerge;
+  const summary = mergeInfo ? mergeStatusSummary(mergeInfo) : null;
+
   return (
-    <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button size="sm">
-            <GitMerge /> Merge pull request
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-72 space-y-3 p-3">
-          <div className="text-sm font-semibold">Merge pull request</div>
-          <div className="space-y-1.5">
-            {MERGE_METHODS.map((m) => (
-              <label key={m.method} className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="merge-method"
-                  checked={method === m.method}
-                  onChange={() => setMethod(m.method)}
-                />
-                {m.label}
-              </label>
-            ))}
-          </div>
-          <Button
-            size="sm"
-            className="w-full"
-            disabled={merge.isPending}
-            onClick={() =>
-              merge.mutate(
-                { number, method, baseRef, headRef },
-                {
-                  onSuccess: () => {
-                    setOpen(false);
-                    toast.success("Pull request merged");
+    <div className="shrink-0">
+      <div className="flex items-center gap-2 border-t px-3 py-2">
+        <Popover
+          open={open}
+          onOpenChange={(o) => {
+            // Always allow closing; only suppress opening while blocked, so a
+            // popover that's already open can still be dismissed if the PR
+            // becomes blocked (e.g. via polling) while it's showing.
+            if (o && blocked) return;
+            setOpen(o);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button size="sm" disabled={blocked} title={verdict.reason ?? undefined}>
+              <GitMerge /> Merge pull request
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72 space-y-3 p-3">
+            <div className="text-sm font-semibold">Merge pull request</div>
+            <div className="space-y-1.5">
+              {MERGE_METHODS.map((m) => (
+                <label key={m.method} className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="merge-method"
+                    checked={method === m.method}
+                    onChange={() => setMethod(m.method)}
+                  />
+                  {m.label}
+                </label>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              className="w-full"
+              disabled={merge.isPending || blocked}
+              onClick={() =>
+                merge.mutate(
+                  { number, method, baseRef, headRef },
+                  {
+                    onSuccess: () => {
+                      setOpen(false);
+                      toast.success("Pull request merged");
+                    },
                   },
-                },
-              )
-            }
-          >
-            {merge.isPending && <Loader2 className="animate-spin" />}
-            Confirm merge
-          </Button>
-        </PopoverContent>
-      </Popover>
-      <span className="text-xs text-[var(--color-muted-foreground)]">
-        Merges into the base branch on GitHub.
-      </span>
+                )
+              }
+            >
+              {merge.isPending && <Loader2 className="animate-spin" />}
+              Confirm merge
+            </Button>
+          </PopoverContent>
+        </Popover>
+        <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-muted-foreground)]">
+          {blocked && verdict.reason ? verdict.reason : "Merges into the base branch on GitHub."}
+        </span>
+        {mergeInfo && summary && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0"
+                title={summary.label}
+                aria-label={`Merge requirements: ${summary.label}`}
+              >
+                <summary.Icon style={{ color: summary.color }} />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-0">
+              <div className="border-b px-3 py-2 text-sm font-semibold">Merge requirements</div>
+              <MergeStatusBlock merge={mergeInfo} />
+            </PopoverContent>
+          </Popover>
+        )}
+      </div>
     </div>
   );
 }

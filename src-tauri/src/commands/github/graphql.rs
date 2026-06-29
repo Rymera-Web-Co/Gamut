@@ -160,8 +160,13 @@ async fn graphql<T: serde::de::DeserializeOwned>(
 ) -> AppResult<T> {
     let resp = client
         .post(url)
+        // The merge-info preview media type unlocks `mergeStateStatus` on the PR
+        // type; harmless for the other GraphQL queries, which return JSON either way.
         .bearer_auth(token)
-        .header("Accept", "application/vnd.github+json")
+        .header(
+            "Accept",
+            "application/vnd.github+json, application/vnd.github.merge-info-preview+json",
+        )
         .json(&serde_json::json!({ "query": query, "variables": variables }))
         .send()
         .await?;
@@ -335,6 +340,32 @@ pub struct LinkedIssue {
     pub url: String,
     pub state: String,
 }
+/// A single CI / status check on the PR's head commit, normalized from either a
+/// GraphQL `CheckRun` or a legacy `StatusContext`.
+#[derive(Serialize)]
+pub struct StatusCheck {
+    pub name: String,
+    /// One of SUCCESS | FAILURE | PENDING | NEUTRAL | ERROR.
+    pub state: String,
+    pub url: Option<String>,
+}
+
+/// The PR's roll-up merge requirements: review decision, mergeable / merge-state
+/// status, draft flag, and the head commit's CI checks (#185).
+#[derive(Serialize)]
+pub struct MergeInfo {
+    /// GraphQL reviewDecision: APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null.
+    pub review_decision: Option<String>,
+    /// MERGEABLE | CONFLICTING | UNKNOWN (UNKNOWN while GitHub is still computing).
+    pub mergeable: String,
+    /// CLEAN | UNSTABLE | BLOCKED | BEHIND | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN.
+    pub merge_state_status: String,
+    pub is_draft: bool,
+    /// Rolled-up check state: SUCCESS | FAILURE | PENDING | ERROR | EXPECTED | null.
+    pub check_rollup: Option<String>,
+    pub checks: Vec<StatusCheck>,
+}
+
 #[derive(Serialize)]
 pub struct PrDetails {
     pub reviewers: Vec<Reviewer>,
@@ -342,18 +373,31 @@ pub struct PrDetails {
     pub labels: Vec<PrLabel>,
     pub milestone: Option<String>,
     pub linked_issues: Vec<LinkedIssue>,
+    pub merge: MergeInfo,
 }
 
 const DETAILS_QUERY: &str = r#"
 query($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
+      isDraft
+      reviewDecision
+      mergeable
+      mergeStateStatus
       reviewRequests(first:50){ nodes{ requestedReviewer{ __typename ... on User{ login avatarUrl } ... on Team{ name } } } }
       latestReviews(first:50){ nodes{ author{ login avatarUrl } state } }
       assignees(first:20){ nodes{ login avatarUrl } }
       labels(first:50){ nodes{ name color } }
       milestone{ title }
       closingIssuesReferences(first:20){ nodes{ number title url state } }
+      commits(last:1){ nodes{ commit{ statusCheckRollup{
+        state
+        contexts(first:100){ nodes{
+          __typename
+          ... on CheckRun{ name status conclusion detailsUrl }
+          ... on StatusContext{ context state targetUrl }
+        } }
+      } } } }
     }
   }
 }"#;
@@ -369,6 +413,13 @@ struct GqlDetailsRepo {
 }
 #[derive(Deserialize)]
 struct GqlDetailsPr {
+    #[serde(rename = "isDraft", default)]
+    is_draft: bool,
+    #[serde(rename = "reviewDecision")]
+    review_decision: Option<String>,
+    mergeable: Option<String>,
+    #[serde(rename = "mergeStateStatus")]
+    merge_state_status: Option<String>,
     #[serde(rename = "reviewRequests")]
     review_requests: GqlConn<GqlReviewRequest>,
     #[serde(rename = "latestReviews")]
@@ -378,6 +429,40 @@ struct GqlDetailsPr {
     milestone: Option<GqlMilestone>,
     #[serde(rename = "closingIssuesReferences")]
     closing: GqlConn<GqlIssueRef>,
+    commits: GqlConn<GqlCommitNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlCommitNode {
+    commit: GqlCommit,
+}
+#[derive(Deserialize)]
+struct GqlCommit {
+    #[serde(rename = "statusCheckRollup")]
+    status_check_rollup: Option<GqlRollup>,
+}
+#[derive(Deserialize)]
+struct GqlRollup {
+    state: String,
+    contexts: GqlConn<GqlContext>,
+}
+/// A status-check context — either a `CheckRun` (GitHub Actions / apps) or a
+/// legacy commit-status `StatusContext`, distinguished by `__typename`.
+#[derive(Deserialize)]
+struct GqlContext {
+    #[serde(rename = "__typename")]
+    typename: String,
+    // CheckRun
+    name: Option<String>,
+    status: Option<String>,
+    conclusion: Option<String>,
+    #[serde(rename = "detailsUrl")]
+    details_url: Option<String>,
+    // StatusContext
+    context: Option<String>,
+    state: Option<String>,
+    #[serde(rename = "targetUrl")]
+    target_url: Option<String>,
 }
 #[derive(Deserialize)]
 struct GqlReviewRequest {
@@ -413,8 +498,51 @@ struct GqlIssueRef {
     state: String,
 }
 
+/// Normalize one status-check context into a `StatusCheck`. A `CheckRun` carries
+/// a two-part state (`status` + `conclusion`); a legacy `StatusContext` carries a
+/// single `state`. Both collapse to SUCCESS | FAILURE | PENDING | NEUTRAL | ERROR.
+fn normalize_check(c: GqlContext) -> StatusCheck {
+    if c.typename == "CheckRun" {
+        let state = match c.status.as_deref() {
+            // Not COMPLETED yet → still running, regardless of conclusion.
+            Some("COMPLETED") => match c.conclusion.as_deref() {
+                Some("SUCCESS") => "SUCCESS",
+                Some("NEUTRAL") | Some("SKIPPED") => "NEUTRAL",
+                Some("FAILURE")
+                | Some("TIMED_OUT")
+                | Some("CANCELLED")
+                | Some("STARTUP_FAILURE")
+                | Some("STALE")
+                | Some("ACTION_REQUIRED") => "FAILURE",
+                _ => "PENDING",
+            },
+            _ => "PENDING",
+        };
+        StatusCheck {
+            name: c.name.unwrap_or_else(|| "check".into()),
+            state: state.into(),
+            url: c.details_url,
+        }
+    } else {
+        // StatusContext: state is a StatusState (EXPECTED | ERROR | FAILURE | PENDING | SUCCESS).
+        let state = match c.state.as_deref() {
+            Some("SUCCESS") => "SUCCESS",
+            Some("FAILURE") => "FAILURE",
+            Some("ERROR") => "ERROR",
+            Some("EXPECTED") => "PENDING",
+            _ => "PENDING",
+        };
+        StatusCheck {
+            name: c.context.unwrap_or_else(|| "status".into()),
+            state: state.into(),
+            url: c.target_url,
+        }
+    }
+}
+
 /// Read-only PR sidebar metadata (reviewers + states, assignees, labels,
-/// milestone, and linked "closing" issues), fetched in one GraphQL call.
+/// milestone, linked "closing" issues, and the roll-up merge requirements),
+/// fetched in one GraphQL call.
 #[tauri::command]
 pub async fn github_pr_details(
     state: State<'_, AppState>,
@@ -443,6 +571,14 @@ pub async fn github_pr_details(
                 labels: vec![],
                 milestone: None,
                 linked_issues: vec![],
+                merge: MergeInfo {
+                    review_decision: None,
+                    mergeable: "UNKNOWN".into(),
+                    merge_state_status: "UNKNOWN".into(),
+                    is_draft: false,
+                    check_rollup: None,
+                    checks: vec![],
+                },
             })
         }
     };
@@ -499,8 +635,34 @@ pub async fn github_pr_details(
         }
     }
 
+    // Head-commit CI checks, normalized from the status-check rollup. A PR with
+    // no commits/checks simply yields an empty list and a null rollup.
+    let rollup = pr
+        .commits
+        .nodes
+        .into_iter()
+        .next()
+        .and_then(|n| n.commit.status_check_rollup);
+    let (check_rollup, checks) = match rollup {
+        Some(r) => {
+            let checks = r.contexts.nodes.into_iter().map(normalize_check).collect();
+            (Some(r.state), checks)
+        }
+        None => (None, vec![]),
+    };
+
+    let merge = MergeInfo {
+        review_decision: pr.review_decision,
+        mergeable: pr.mergeable.unwrap_or_else(|| "UNKNOWN".into()),
+        merge_state_status: pr.merge_state_status.unwrap_or_else(|| "UNKNOWN".into()),
+        is_draft: pr.is_draft,
+        check_rollup,
+        checks,
+    };
+
     Ok(PrDetails {
         reviewers,
+        merge,
         assignees: pr
             .assignees
             .nodes

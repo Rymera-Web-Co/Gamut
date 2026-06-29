@@ -374,12 +374,36 @@ export interface LinkedIssue {
   url: string;
   state: string;
 }
+/** A single CI / status check on the PR's head commit. */
+export interface StatusCheck {
+  name: string;
+  /** SUCCESS | FAILURE | PENDING | NEUTRAL | ERROR. */
+  state: string;
+  url?: string | null;
+}
+
+/** The PR's rolled-up merge requirements (review decision, mergeable state,
+ * draft flag, and head-commit CI checks) — used to gate the merge button (#185). */
+export interface MergeInfo {
+  /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null. */
+  review_decision?: string | null;
+  /** MERGEABLE | CONFLICTING | UNKNOWN (UNKNOWN while GitHub is still computing). */
+  mergeable: string;
+  /** CLEAN | UNSTABLE | BLOCKED | BEHIND | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN. */
+  merge_state_status: string;
+  is_draft: boolean;
+  /** SUCCESS | FAILURE | PENDING | ERROR | EXPECTED | null. */
+  check_rollup?: string | null;
+  checks: StatusCheck[];
+}
+
 export interface PrDetails {
   reviewers: Reviewer[];
   assignees: Person[];
   labels: PrLabel[];
   milestone?: string | null;
   linked_issues: LinkedIssue[];
+  merge: MergeInfo;
 }
 
 export interface SyncStatus {
