@@ -238,7 +238,16 @@ function MergeBar({
     <div className="shrink-0">
       {mergeInfo && <MergeStatusBlock merge={mergeInfo} />}
       <div className="flex items-center gap-2 border-t px-3 py-2">
-        <Popover open={open} onOpenChange={(o) => !blocked && setOpen(o)}>
+        <Popover
+          open={open}
+          onOpenChange={(o) => {
+            // Always allow closing; only suppress opening while blocked, so a
+            // popover that's already open can still be dismissed if the PR
+            // becomes blocked (e.g. via polling) while it's showing.
+            if (o && blocked) return;
+            setOpen(o);
+          }}
+        >
           <PopoverTrigger asChild>
             <Button size="sm" disabled={blocked} title={verdict.reason ?? undefined}>
               <GitMerge /> Merge pull request
