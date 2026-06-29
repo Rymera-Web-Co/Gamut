@@ -12,7 +12,7 @@ import { useUiStore, type View } from "@/store/ui";
  * the Rust payload.
  */
 interface UiNav {
-  /** "select-repo" | "view" | "open" | "goto" | "term" | "term-send" */
+  /** "select-repo" | "view" | "open" | "goto" | "term" | "term-send" | "term-close" | "term-rename" */
   action: string;
   repo_id?: number;
   view?: string;
@@ -30,6 +30,8 @@ interface UiNav {
   silent?: boolean;
   /** `term-send` only: text to type into the existing terminal named `title`. */
   text?: string;
+  /** `term-rename` only: the new name for the existing terminal named `title`. */
+  rename_to?: string;
 }
 
 /**
@@ -119,6 +121,28 @@ async function openTerm(nav: UiNav): Promise<void> {
 }
 
 /**
+ * The terminal group(s) a repo's tabs live in — the repo's own groups, or the
+ * default group when it's ungrouped. Empty on any lookup failure. Shared by the
+ * `term-close` / `term-send` / `term-rename` handlers, which each resolve a tab
+ * by name within these groups (mirroring where `term` would have opened it).
+ */
+async function resolveRepoGroupIds(repoId: number): Promise<number[]> {
+  try {
+    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
+    const repo = repos.find((r) => r.id === repoId);
+    if (!repo) return [];
+    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
+    return repo.group_ids.length > 0
+      ? repo.group_ids
+      : defaultGroupId != null
+        ? [defaultGroupId]
+        : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Close a terminal tab by name — the `term-close` control command. Searches the
  * groups the repo belongs to (where `term` would have opened it) and closes the
  * first tab whose name matches; the session manager reaps its PTY. No-op if
@@ -128,24 +152,35 @@ async function closeTerm(nav: UiNav): Promise<void> {
   const name = nav.title;
   if (!name || nav.repo_id == null) return;
 
-  let groupIds: number[] = [];
-  try {
-    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
-    const repo = repos.find((r) => r.id === nav.repo_id);
-    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
-    if (repo) {
-      groupIds =
-        repo.group_ids.length > 0 ? repo.group_ids : defaultGroupId != null ? [defaultGroupId] : [];
-    }
-  } catch {
-    return;
-  }
-
+  const groupIds = await resolveRepoGroupIds(nav.repo_id);
   const ui = useUiStore.getState();
   for (const gid of groupIds) {
     const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
     if (tab) {
       ui.closeTerminalTab(gid, tab.id);
+      return;
+    }
+  }
+}
+
+/**
+ * Rename an existing terminal tab — the `term-rename` control command. Finds the
+ * tab named `title` in the repo's group(s) (where `term` would have opened it)
+ * and gives it `rename_to` as its new name; subsequent `term-send`/`term-close`/
+ * reuse lookups then match the new name. No-op if the tab doesn't exist or the
+ * new name is empty, and it never disturbs the active group/view.
+ */
+async function renameTerm(nav: UiNav): Promise<void> {
+  const name = nav.title;
+  const next = nav.rename_to?.trim();
+  if (!name || !next || nav.repo_id == null) return;
+
+  const groupIds = await resolveRepoGroupIds(nav.repo_id);
+  const ui = useUiStore.getState();
+  for (const gid of groupIds) {
+    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    if (tab) {
+      ui.renameTerminalTab(gid, tab.id, next);
       return;
     }
   }
@@ -162,19 +197,7 @@ async function sendTerm(nav: UiNav): Promise<void> {
   const name = nav.title;
   if (!name || nav.repo_id == null || !nav.text) return;
 
-  let groupIds: number[] = [];
-  try {
-    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
-    const repo = repos.find((r) => r.id === nav.repo_id);
-    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
-    if (repo) {
-      groupIds =
-        repo.group_ids.length > 0 ? repo.group_ids : defaultGroupId != null ? [defaultGroupId] : [];
-    }
-  } catch {
-    return;
-  }
-
+  const groupIds = await resolveRepoGroupIds(nav.repo_id);
   const ui = useUiStore.getState();
   const encoder = new TextEncoder();
   for (const gid of groupIds) {
@@ -233,6 +256,9 @@ export function useUiNav() {
           break;
         case "term-close":
           void closeTerm(ev.payload);
+          break;
+        case "term-rename":
+          void renameTerm(ev.payload);
           break;
       }
     });
