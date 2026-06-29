@@ -12,7 +12,7 @@ import { useUiStore, type View } from "@/store/ui";
  * the Rust payload.
  */
 interface UiNav {
-  /** "select-repo" | "view" | "open" | "goto" | "term" | "term-send" */
+  /** "select-repo" | "view" | "open" | "goto" | "term" | "term-send" | "term-close" | "term-rename" */
   action: string;
   repo_id?: number;
   view?: string;
@@ -30,6 +30,8 @@ interface UiNav {
   silent?: boolean;
   /** `term-send` only: text to type into the existing terminal named `title`. */
   text?: string;
+  /** `term-rename` only: the new name for the existing terminal named `title`. */
+  rename_to?: string;
 }
 
 /**
@@ -152,6 +154,41 @@ async function closeTerm(nav: UiNav): Promise<void> {
 }
 
 /**
+ * Rename an existing terminal tab — the `term-rename` control command. Finds the
+ * tab named `title` in the repo's group(s) (where `term` would have opened it)
+ * and gives it `rename_to` as its new name; subsequent `term-send`/`term-close`/
+ * reuse lookups then match the new name. No-op if the tab doesn't exist or the
+ * new name is empty, and it never disturbs the active group/view.
+ */
+async function renameTerm(nav: UiNav): Promise<void> {
+  const name = nav.title;
+  const next = nav.rename_to?.trim();
+  if (!name || !next || nav.repo_id == null) return;
+
+  let groupIds: number[] = [];
+  try {
+    const [repos, groups] = await Promise.all([ipc.listRepos(), ipc.listGroups()]);
+    const repo = repos.find((r) => r.id === nav.repo_id);
+    const defaultGroupId = (groups.find((g) => g.is_default) ?? groups[0])?.id;
+    if (repo) {
+      groupIds =
+        repo.group_ids.length > 0 ? repo.group_ids : defaultGroupId != null ? [defaultGroupId] : [];
+    }
+  } catch {
+    return;
+  }
+
+  const ui = useUiStore.getState();
+  for (const gid of groupIds) {
+    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    if (tab) {
+      ui.renameTerminalTab(gid, tab.id, next);
+      return;
+    }
+  }
+}
+
+/**
  * Type text into an existing terminal tab and submit it — the `term-send`
  * control command. Finds the tab named `title` in the repo's group(s) (where
  * `term` would have opened it), reveals it, writes the text to its live pane,
@@ -233,6 +270,9 @@ export function useUiNav() {
           break;
         case "term-close":
           void closeTerm(ev.payload);
+          break;
+        case "term-rename":
+          void renameTerm(ev.payload);
           break;
       }
     });

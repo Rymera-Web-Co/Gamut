@@ -45,7 +45,7 @@ const UI_NAV_EVENT: &str = "ui-nav";
 /// A UI-navigation command. Re-emitted verbatim to the webview as the `ui-nav`
 /// event payload; field names are snake_case to match the frontend's existing
 /// IPC types. `action` is one of `select-repo` | `view` | `open` | `goto` |
-/// `term` | `term-send` | `term-close`.
+/// `term` | `term-send` | `term-close` | `term-rename`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiNav {
     pub action: String,
@@ -80,6 +80,9 @@ pub struct UiNav {
     // keystroke (a text+Enter burst reads as a paste in a TUI and won't submit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    // `term-rename` only: the new name for the existing terminal named `title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<String>,
 }
 
 /// One line of request a client writes to the socket: the handshake token plus
@@ -358,6 +361,28 @@ mod tests {
         assert_eq!(back.nav.action, "term-send");
         assert_eq!(back.nav.title.as_deref(), Some("issue-312"));
         assert_eq!(back.nav.text.as_deref(), Some("use option B"));
+    }
+
+    #[test]
+    fn term_rename_carries_new_name() {
+        let req = ControlRequest {
+            token: "abc".into(),
+            nav: UiNav {
+                action: "term-rename".into(),
+                repo_id: Some(3),
+                title: Some("issue-312".into()),
+                rename_to: Some("pr-318".into()),
+                ..UiNav::default()
+            },
+        };
+        let wire = serde_json::to_string(&req).unwrap();
+        assert!(wire.contains("\"action\":\"term-rename\""));
+        assert!(wire.contains("\"rename_to\":\"pr-318\""));
+
+        let back: ControlRequest = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.nav.action, "term-rename");
+        assert_eq!(back.nav.title.as_deref(), Some("issue-312"));
+        assert_eq!(back.nav.rename_to.as_deref(), Some("pr-318"));
     }
 
     #[test]
