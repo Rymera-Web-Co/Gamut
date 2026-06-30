@@ -109,6 +109,19 @@ pub fn discover(root: &Path, max_depth: usize, prune: &[String]) -> Vec<Discover
     out
 }
 
+/// Whether `dir` directly contains a non-hidden regular file (shallow, no
+/// recursion). Used to decide if a folder at the scan-depth limit, which we
+/// can't descend into, still has something worth browsing.
+fn dir_has_immediate_file(dir: &Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| !e.file_name().to_string_lossy().starts_with('.') && !e.path().is_dir())
+        })
+        .unwrap_or(false)
+}
+
 fn walk(
     dir: &Path,
     depth: usize,
@@ -133,8 +146,10 @@ fn walk(
     }
 
     if depth >= max_depth {
-        // Can't look deeper — treat as a repo-free leaf.
-        return Walk::RepoFree { has_files: false };
+        // Can't descend further, but a folder sitting right at the scan limit may
+        // still hold files worth browsing — do a shallow scan for immediate ones.
+        let has_files = dir_has_immediate_file(dir);
+        return Walk::RepoFree { has_files };
     }
 
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -240,6 +255,36 @@ mod tests {
             "an empty folder has nothing to browse and is skipped"
         );
         assert!(!by_name.contains_key("c"), "node_modules should be pruned");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn surfaces_folder_with_files_at_the_depth_limit() {
+        let root = std::env::temp_dir().join("gamut_discover_depth_test");
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A repo so the root is a container that emits its repo-free children.
+        Repository::init(root.join("a")).unwrap();
+        // Folders that sit right at the scan limit (depth 1 with max_depth = 1):
+        // we can't descend, but a shallow scan should still surface the one with
+        // a file and skip the empty one.
+        std::fs::create_dir_all(root.join("leaf")).unwrap();
+        std::fs::write(root.join("leaf/note.txt"), "x").unwrap();
+        std::fs::create_dir_all(root.join("bare")).unwrap();
+
+        let found = discover(&root, 1, &default_prune_dirs());
+        let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
+
+        assert!(names.contains(&"a"));
+        assert!(
+            names.contains(&"leaf"),
+            "a folder with files at the depth limit should still be surfaced"
+        );
+        assert!(
+            !names.contains(&"bare"),
+            "an empty folder at the depth limit stays hidden"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

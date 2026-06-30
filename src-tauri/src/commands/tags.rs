@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
@@ -31,18 +33,37 @@ pub struct Group {
     pub root_repo_id: Option<i64>,
 }
 
-/// The repos-row id of a bound folder's own entry (the synced root), if it has
-/// been registered. Canonicalizes `folder_path` the same way `register_path`
-/// stores repo paths, so the lookup matches regardless of symlinks.
-fn group_root_repo_id(conn: &Connection, folder_path: &str) -> Option<i64> {
-    let canonical = std::path::Path::new(folder_path)
+/// Canonicalize a bound folder path the same way `register_path` stores repo
+/// paths, so synced-root lookups match regardless of symlinks.
+fn canonicalize_folder(folder_path: &str) -> String {
+    std::path::Path::new(folder_path)
         .canonicalize()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| folder_path.to_string());
-    conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
-        r.get(0)
-    })
-    .ok()
+        .unwrap_or_else(|_| folder_path.to_string())
+}
+
+/// Resolve the repos-row id of the synced-root entry for each given canonical
+/// folder path, in a single query (avoids an N+1 across bound groups). Paths
+/// with no registered entry are simply absent from the map.
+fn root_repo_ids_by_path(conn: &Connection, canonical_paths: &[String]) -> HashMap<String, i64> {
+    let mut out = HashMap::new();
+    if canonical_paths.is_empty() {
+        return out;
+    }
+    let placeholders = vec!["?"; canonical_paths.len()].join(",");
+    let sql = format!("SELECT path, id FROM repos WHERE path IN ({placeholders})");
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return out;
+    };
+    let rows = stmt.query_map(rusqlite::params_from_iter(canonical_paths), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    });
+    if let Ok(rows) = rows {
+        for row in rows.flatten() {
+            out.insert(row.0, row.1);
+        }
+    }
+    out
 }
 
 fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -135,11 +156,16 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
-    // Resolve each bound group's synced-root entry so the UI can tag it.
-    for g in &mut groups {
-        if let Some(folder) = g.folder_path.clone() {
-            g.root_repo_id = group_root_repo_id(&conn, &folder);
-        }
+    // Resolve every bound group's synced-root entry in one query so the UI can
+    // tag it (canonical path → repos id), keyed back to each group by path.
+    let canon: Vec<Option<String>> = groups
+        .iter()
+        .map(|g| g.folder_path.as_deref().map(canonicalize_folder))
+        .collect();
+    let lookup: Vec<String> = canon.iter().flatten().cloned().collect();
+    let ids = root_repo_ids_by_path(&conn, &lookup);
+    for (g, path) in groups.iter_mut().zip(&canon) {
+        g.root_repo_id = path.as_deref().and_then(|p| ids.get(p).copied());
     }
     Ok(groups)
 }
@@ -312,9 +338,11 @@ mod tests {
         )
         .unwrap();
 
-        // A real temp dir, registered under its canonical path the way folder
-        // sync stores repo paths.
-        let raw = std::env::temp_dir().join("gamut_root_repo_id_test");
+        // A real temp dir (uniquely named per process to avoid cross-run
+        // collisions), registered under its canonical path the way folder sync
+        // stores repo paths.
+        let raw =
+            std::env::temp_dir().join(format!("gamut_root_repo_id_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&raw);
         std::fs::create_dir_all(&raw).unwrap();
         let canonical = raw.canonicalize().unwrap().display().to_string();
@@ -329,14 +357,17 @@ mod tests {
             })
             .unwrap();
 
-        // Looking up by the raw (possibly symlinked, e.g. /var) folder_path still
-        // resolves to the canonical entry.
+        // Canonicalizing the raw (possibly symlinked, e.g. /var) folder_path and
+        // resolving in one batch still maps back to the canonical entry, while an
+        // unknown path is simply absent.
         let raw_str = raw.display().to_string();
-        assert_eq!(group_root_repo_id(&conn, &raw_str), Some(id));
-
-        // An unbound/unknown path resolves to nothing.
+        let canon = canonicalize_folder(&raw_str);
+        assert_eq!(canon, canonical);
+        let ids =
+            root_repo_ids_by_path(&conn, &[canon.clone(), "/nope/not/registered".to_string()]);
+        assert_eq!(ids.get(&canon).copied(), Some(id));
         assert_eq!(
-            group_root_repo_id(&conn, "/nope/not/registered"),
+            ids.get("/nope/not/registered"),
             None,
             "unregistered folder has no root entry"
         );
