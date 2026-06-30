@@ -1,0 +1,11 @@
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec=/usr/bin/{{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+TryExec=/usr/bin/{{exec}}
+Type=Application
