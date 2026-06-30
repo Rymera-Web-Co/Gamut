@@ -42,28 +42,34 @@ fn canonicalize_folder(folder_path: &str) -> String {
         .unwrap_or_else(|_| folder_path.to_string())
 }
 
+/// Max host parameters per query, kept well under SQLite's
+/// `SQLITE_MAX_VARIABLE_NUMBER` (historically 999) so a `WHERE path IN (…)` over
+/// many bound groups can't overflow it.
+const MAX_SQL_VARS: usize = 900;
+
 /// Resolve the repos-row id of the synced-root entry for each given canonical
-/// folder path, in a single query (avoids an N+1 across bound groups). Paths
-/// with no registered entry are simply absent from the map.
-fn root_repo_ids_by_path(conn: &Connection, canonical_paths: &[String]) -> HashMap<String, i64> {
+/// folder path, batched into as few queries as possible (avoids an N+1 across
+/// bound groups). Paths with no registered entry are simply absent from the map.
+/// Errors are propagated rather than swallowed, so a genuine DB failure surfaces
+/// instead of silently dropping every group's `root_repo_id`.
+fn root_repo_ids_by_path(
+    conn: &Connection,
+    canonical_paths: &[String],
+) -> AppResult<HashMap<String, i64>> {
     let mut out = HashMap::new();
-    if canonical_paths.is_empty() {
-        return out;
-    }
-    let placeholders = vec!["?"; canonical_paths.len()].join(",");
-    let sql = format!("SELECT path, id FROM repos WHERE path IN ({placeholders})");
-    let Ok(mut stmt) = conn.prepare(&sql) else {
-        return out;
-    };
-    let rows = stmt.query_map(rusqlite::params_from_iter(canonical_paths), |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-    });
-    if let Ok(rows) = rows {
-        for row in rows.flatten() {
-            out.insert(row.0, row.1);
+    for chunk in canonical_paths.chunks(MAX_SQL_VARS) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT path, id FROM repos WHERE path IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (path, id) = row?;
+            out.insert(path, id);
         }
     }
-    out
+    Ok(out)
 }
 
 fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -163,7 +169,7 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
         .map(|g| g.folder_path.as_deref().map(canonicalize_folder))
         .collect();
     let lookup: Vec<String> = canon.iter().flatten().cloned().collect();
-    let ids = root_repo_ids_by_path(&conn, &lookup);
+    let ids = root_repo_ids_by_path(&conn, &lookup)?;
     for (g, path) in groups.iter_mut().zip(&canon) {
         g.root_repo_id = path.as_deref().and_then(|p| ids.get(p).copied());
     }
@@ -364,7 +370,8 @@ mod tests {
         let canon = canonicalize_folder(&raw_str);
         assert_eq!(canon, canonical);
         let ids =
-            root_repo_ids_by_path(&conn, &[canon.clone(), "/nope/not/registered".to_string()]);
+            root_repo_ids_by_path(&conn, &[canon.clone(), "/nope/not/registered".to_string()])
+                .unwrap();
         assert_eq!(ids.get(&canon).copied(), Some(id));
         assert_eq!(
             ids.get("/nope/not/registered"),
