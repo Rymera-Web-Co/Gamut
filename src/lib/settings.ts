@@ -41,6 +41,10 @@ export interface Settings {
   autoCleanupAfterMerge: boolean;
   autoFetch: boolean; // periodically fetch repos in the background
   autoFetchIntervalMinutes: number; // minutes between background fetches
+  // Show the synced-root folder entry for folder-bound groups in the sidebar.
+  // Off → hide it (its discovered subfolders/repos still show); the root stays
+  // registered so it can reappear when re-enabled.
+  showSyncedRoot: boolean;
 
   // Terminal
   terminalShell: string; // "" → system login shell
@@ -139,6 +143,7 @@ export const DEFAULTS: Settings = {
   autoCleanupAfterMerge: true,
   autoFetch: true,
   autoFetchIntervalMinutes: 5,
+  showSyncedRoot: true,
 
   terminalShell: "",
   terminalScrollback: 5000,

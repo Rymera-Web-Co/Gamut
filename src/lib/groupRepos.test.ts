@@ -27,6 +27,7 @@ function makeGroup(id: number, is_default: boolean): Group {
     is_default,
     folder_path: null,
     last_scan_at: null,
+    root_repo_id: null,
   };
 }
 

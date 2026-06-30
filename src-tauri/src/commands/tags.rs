@@ -25,6 +25,24 @@ pub struct Group {
     pub folder_path: Option<String>,
     /// UTC timestamp of the last folder scan (NULL until first scan).
     pub last_scan_at: Option<String>,
+    /// The repos-row id of the bound folder itself (the synced root), once it has
+    /// been registered by a scan. `None` for manual groups or before the first
+    /// scan. Lets the UI tag the root entry apart from discovered subfolders.
+    pub root_repo_id: Option<i64>,
+}
+
+/// The repos-row id of a bound folder's own entry (the synced root), if it has
+/// been registered. Canonicalizes `folder_path` the same way `register_path`
+/// stores repo paths, so the lookup matches regardless of symlinks.
+fn group_root_repo_id(conn: &Connection, folder_path: &str) -> Option<i64> {
+    let canonical = std::path::Path::new(folder_path)
+        .canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| folder_path.to_string());
+    conn.query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
+        r.get(0)
+    })
+    .ok()
 }
 
 fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -101,7 +119,7 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
         "SELECT id, name, parent_id, sort, icon, is_default, folder_path, last_scan_at
          FROM groups ORDER BY sort, name COLLATE NOCASE",
     )?;
-    let groups = stmt
+    let mut groups = stmt
         .query_map([], |row| {
             Ok(Group {
                 id: row.get(0)?,
@@ -112,9 +130,17 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
                 is_default: row.get::<_, i64>(5)? != 0,
                 folder_path: row.get(6)?,
                 last_scan_at: row.get(7)?,
+                root_repo_id: None,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    // Resolve each bound group's synced-root entry so the UI can tag it.
+    for g in &mut groups {
+        if let Some(folder) = g.folder_path.clone() {
+            g.root_repo_id = group_root_repo_id(&conn, &folder);
+        }
+    }
     Ok(groups)
 }
 
@@ -149,7 +175,10 @@ pub fn create_group(
         icon,
         is_default: false,
         folder_path,
+        // No scan has run yet, so the root entry isn't registered; the next
+        // list_groups (after the initial sync) resolves it.
         last_scan_at: None,
+        root_repo_id: None,
     })
 }
 
@@ -265,4 +294,53 @@ pub fn set_repo_groups(state: State<AppState>, repo_id: i64, group_ids: Vec<i64>
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_repo_id_matches_a_bound_folder_by_canonical_path() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repos (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 name TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+
+        // A real temp dir, registered under its canonical path the way folder
+        // sync stores repo paths.
+        let raw = std::env::temp_dir().join("gamut_root_repo_id_test");
+        let _ = std::fs::remove_dir_all(&raw);
+        std::fs::create_dir_all(&raw).unwrap();
+        let canonical = raw.canonicalize().unwrap().display().to_string();
+        conn.execute(
+            "INSERT INTO repos (path, name) VALUES (?1, 'root')",
+            [&canonical],
+        )
+        .unwrap();
+        let id: i64 = conn
+            .query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
+                r.get(0)
+            })
+            .unwrap();
+
+        // Looking up by the raw (possibly symlinked, e.g. /var) folder_path still
+        // resolves to the canonical entry.
+        let raw_str = raw.display().to_string();
+        assert_eq!(group_root_repo_id(&conn, &raw_str), Some(id));
+
+        // An unbound/unknown path resolves to nothing.
+        assert_eq!(
+            group_root_repo_id(&conn, "/nope/not/registered"),
+            None,
+            "unregistered folder has no root entry"
+        );
+
+        std::fs::remove_dir_all(&raw).unwrap();
+    }
 }
