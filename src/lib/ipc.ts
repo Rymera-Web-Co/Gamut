@@ -95,6 +95,12 @@ export interface Group {
   folder_path: string | null;
   /** UTC SQLite timestamp of the last folder scan, or null if never scanned. */
   last_scan_at: string | null;
+  /**
+   * Repos-row id of the bound folder itself (the synced root), once a scan has
+   * registered it. Null for manual groups or before the first scan. Used to tag
+   * and optionally hide the root entry, apart from discovered subfolders.
+   */
+  root_repo_id: number | null;
 }
 
 export interface RefLabel {

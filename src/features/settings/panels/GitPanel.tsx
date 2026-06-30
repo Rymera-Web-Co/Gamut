@@ -19,6 +19,7 @@ export function GitPanel() {
   const [autoCleanupAfterMerge, setAutoCleanup] = useSetting("autoCleanupAfterMerge");
   const [autoFetch, setAutoFetch] = useSetting("autoFetch");
   const [autoFetchInterval, setAutoFetchInterval] = useSetting("autoFetchIntervalMinutes");
+  const [showSyncedRoot, setShowSyncedRoot] = useSetting("showSyncedRoot");
 
   return (
     <div>
@@ -38,6 +39,12 @@ export function GitPanel() {
       </Field>
       <Field label="Discovery prune list" hint="Directory names skipped while scanning for repos.">
         <TextField value={pruneDirs} onChange={setPruneDirs} wide />
+      </Field>
+      <Field
+        label="Show synced folder root"
+        hint="For groups synced to a folder, show that folder itself as a browsable entry (tagged “root”), alongside the repos and subfolders discovered inside it."
+      >
+        <Toggle checked={showSyncedRoot} onChange={setShowSyncedRoot} />
       </Field>
       <Divider />
       <Field label="File watcher debounce" hint="Applied at startup — restart to take effect.">

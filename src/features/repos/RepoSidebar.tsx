@@ -27,6 +27,7 @@ import { SyncControls } from "@/features/sync/SyncControls";
 import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
 import { visibleRepos } from "@/lib/groupRepos";
 import { ipc, pickDirectory, type Repo, type RepoStatus } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/store/ui";
 import {
@@ -45,12 +46,14 @@ import { GroupDialog } from "./GroupDialog";
 function RepoRow({
   repo,
   status,
+  isSyncedRoot = false,
   onRemove,
   onReorder,
   onContextMenu,
 }: {
   repo: Repo;
   status?: RepoStatus;
+  isSyncedRoot?: boolean;
   onRemove: (repo: Repo) => void;
   onReorder: (srcId: number, targetId: number) => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -151,6 +154,14 @@ function RepoRow({
           >
             {repo.name}
           </span>
+          {isSyncedRoot && (
+            <span
+              title="This group’s synced folder (root)"
+              className="shrink-0 rounded bg-[var(--color-primary)]/15 px-1 py-px text-[9px] font-semibold uppercase leading-tight tracking-wide text-[var(--color-primary)]"
+            >
+              root
+            </span>
+          )}
           {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
             <span
               aria-label="Uncommitted changes"
@@ -245,6 +256,7 @@ export function RepoSidebar() {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const showSyncedRoot = useSettings((s) => s.values.showSyncedRoot);
 
   const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
 
@@ -265,7 +277,16 @@ export function RepoSidebar() {
   // for operating across all the repos under that folder at once.
   const groupFolder = activeGroup?.folder_path ?? null;
 
-  const visible = visibleRepos(allRepos, activeGroup);
+  // Repos that are the synced root of a folder-bound group. Tagged with a "root"
+  // badge to set them apart from discovered subfolders, and hidden entirely when
+  // the user turns the setting off (they stay registered, just not listed).
+  const rootRepoIds = new Set(
+    allGroups.map((g) => g.root_repo_id).filter((id): id is number => id != null),
+  );
+
+  const visible = visibleRepos(allRepos, activeGroup).filter(
+    (r) => showSyncedRoot || !rootRepoIds.has(r.id),
+  );
   // Non-git folders are shown in their own section at the bottom, kept apart
   // from real repos (they have no branch/sync and only a Files tab).
   const gitRepos = visible.filter((r) => r.is_git_repo);
@@ -380,6 +401,7 @@ export function RepoSidebar() {
                 key={r.id}
                 repo={r}
                 status={statusById.get(r.id)}
+                isSyncedRoot={rootRepoIds.has(r.id)}
                 onRemove={(repo) => removeRepo.mutate(repo.id)}
                 onReorder={reorder}
                 onContextMenu={(e) =>
@@ -399,6 +421,7 @@ export function RepoSidebar() {
                     key={r.id}
                     repo={r}
                     status={statusById.get(r.id)}
+                    isSyncedRoot={rootRepoIds.has(r.id)}
                     onRemove={(repo) => removeRepo.mutate(repo.id)}
                     onReorder={reorder}
                     onContextMenu={(e) =>

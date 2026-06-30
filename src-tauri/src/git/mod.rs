@@ -29,11 +29,14 @@ pub fn current_branch(repo: &Repository) -> Option<String> {
     }
 }
 
-/// A repository discovered while scanning a directory tree.
+/// An entry discovered while scanning a directory tree: either a git repo or a
+/// repo-free leaf folder (a directory with no git repos at or beneath it).
 pub struct Discovered {
     pub path: PathBuf,
     pub name: String,
     pub default_branch: Option<String>,
+    /// `true` for a git repo, `false` for a plain (non-git) folder.
+    pub is_git_repo: bool,
 }
 
 const PRUNE: &[&str] = &[
@@ -77,53 +80,133 @@ fn is_macos_bundle(name: &str) -> bool {
     BUNDLE_SUFFIXES.iter().any(|suffix| lower.ends_with(suffix))
 }
 
-/// Recursively scan `root` (up to `max_depth`) for git working repositories.
-/// A directory containing a `.git` entry is treated as a repo and is not
-/// descended into; directories named in `prune` (plus any dotfile dirs) are
-/// skipped for speed.
+/// Outcome of walking a directory subtree, used to decide which non-git folders
+/// to surface.
+enum Walk {
+    /// This directory, or some descendant within the scan depth, is a git repo.
+    HasRepo,
+    /// No git repo at or beneath this directory within the scan depth.
+    /// `has_files` is whether the subtree holds any non-hidden regular file: an
+    /// empty (or `.DS_Store`-only) folder, e.g. a stray "untitled folder", has
+    /// nothing to browse and isn't worth surfacing.
+    RepoFree { has_files: bool },
+}
+
+/// Recursively scan `root` (up to `max_depth`) for git working repositories and
+/// repo-free leaf folders. A directory containing a `.git` entry is treated as a
+/// repo and is not descended into. A non-git directory is surfaced as a folder
+/// entry only when no git repo lives at or beneath it AND its subtree actually
+/// contains files — so a pure container of repos (e.g. `repos/`) is omitted while
+/// its repos surface individually, a repo-free subtree (e.g. `docs/`) collapses
+/// to a single top-level folder entry rather than listing every nested subfolder,
+/// and empty/file-less folders (a stray "untitled folder") are skipped entirely.
+/// Directories named in `prune` (plus dotfile dirs and macOS bundles) are skipped
+/// for speed.
 pub fn discover(root: &Path, max_depth: usize, prune: &[String]) -> Vec<Discovered> {
     let mut out = Vec::new();
-    let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+    walk(root, 0, max_depth, prune, &mut out);
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
 
-    while let Some((dir, depth)) = stack.pop() {
-        if dir.join(".git").exists() {
-            // It's a repo — record it and don't descend further.
-            if let Ok(repo) = open(&dir) {
-                out.push(Discovered {
-                    name: repo_name(&dir),
-                    default_branch: current_branch(&repo),
-                    path: dir,
-                });
-            }
-            continue;
+/// Whether `dir` directly contains a non-hidden regular file (shallow, no
+/// recursion). Used to decide if a folder at the scan-depth limit, which we
+/// can't descend into, still has something worth browsing.
+fn dir_has_immediate_file(dir: &Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| !e.file_name().to_string_lossy().starts_with('.') && !e.path().is_dir())
+        })
+        .unwrap_or(false)
+}
+
+fn walk(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    prune: &[String],
+    out: &mut Vec<Discovered>,
+) -> Walk {
+    if dir.join(".git").exists() {
+        // It's a repo — record it and don't descend further.
+        if let Ok(repo) = open(dir) {
+            out.push(Discovered {
+                name: repo_name(dir),
+                default_branch: current_branch(&repo),
+                path: dir.to_path_buf(),
+                is_git_repo: true,
+            });
+            return Walk::HasRepo;
         }
+        // A `.git` that won't open isn't a usable repo; treat it as a repo-free
+        // leaf and don't descend into it.
+        return Walk::RepoFree { has_files: false };
+    }
 
-        if depth >= max_depth {
-            continue;
-        }
+    if depth >= max_depth {
+        // Can't descend further, but a folder sitting right at the scan limit may
+        // still hold files worth browsing — do a shallow scan for immediate ones.
+        let has_files = dir_has_immediate_file(dir);
+        return Walk::RepoFree { has_files };
+    }
 
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Walk::RepoFree { has_files: false };
+    };
+
+    let mut child_has_repo = false;
+    // A non-hidden regular file directly in this dir makes it worth browsing.
+    let mut dir_has_file = false;
+    // (path, has_files) for each repo-free child subtree.
+    let mut repo_free_children: Vec<(PathBuf, bool)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            // Ignore hidden files (e.g. .DS_Store) so a folder holding only those
+            // still counts as empty.
             let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with('.')
-                || is_macos_bundle(&name)
-                || prune.iter().any(|p| p == name.as_ref())
-            {
-                continue;
+            if !name.to_string_lossy().starts_with('.') {
+                dir_has_file = true;
             }
-            stack.push((path, depth + 1));
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.')
+            || is_macos_bundle(&name)
+            || prune.iter().any(|p| p == name.as_ref())
+        {
+            continue;
+        }
+        match walk(&path, depth + 1, max_depth, prune, out) {
+            Walk::HasRepo => child_has_repo = true,
+            Walk::RepoFree { has_files } => repo_free_children.push((path, has_files)),
         }
     }
 
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    out
+    if child_has_repo {
+        // A container that holds repos: surface each repo-free subfolder that has
+        // something to browse (the top of each non-empty repo-free subtree).
+        for (path, has_files) in repo_free_children {
+            if has_files {
+                out.push(Discovered {
+                    name: repo_name(&path),
+                    default_branch: None,
+                    path,
+                    is_git_repo: false,
+                });
+            }
+        }
+        Walk::HasRepo
+    } else {
+        // Whole subtree is repo-free: bubble up so the parent emits this dir as a
+        // single folder entry (or, at the root, the caller registers it). It's
+        // worth surfacing only if it (or a descendant) actually holds files.
+        let has_files = dir_has_file || repo_free_children.iter().any(|(_, f)| *f);
+        Walk::RepoFree { has_files }
+    }
 }
 
 #[cfg(test)]
@@ -139,16 +222,69 @@ mod tests {
         Repository::init(root.join("a")).unwrap();
         Repository::init(root.join("sub/b")).unwrap();
         Repository::init(root.join("node_modules/c")).unwrap();
-        // A plain directory with no repo.
-        std::fs::create_dir_all(root.join("plain")).unwrap();
+        // A repo-free folder (with a file) and a nested repo-free subfolder: it
+        // should collapse to a single `plain` entry (not also `plain/inner`).
+        std::fs::create_dir_all(root.join("plain/inner")).unwrap();
+        std::fs::write(root.join("plain/note.txt"), "x").unwrap();
+        // A truly empty folder (a stray "untitled folder") has nothing to browse.
+        std::fs::create_dir_all(root.join("empty")).unwrap();
 
         let found = discover(&root, 6, &default_prune_dirs());
+        let by_name: std::collections::HashMap<&str, &Discovered> =
+            found.iter().map(|d| (d.name.as_str(), d)).collect();
+
+        // a + b (git) and plain (non-git folder); sub is a pure container so it is
+        // omitted, node_modules is pruned, and empty/inner carry no files.
+        assert_eq!(found.len(), 3, "should find a, b, and plain");
+        assert!(by_name["a"].is_git_repo);
+        assert!(by_name["b"].is_git_repo);
+        assert!(
+            !by_name["plain"].is_git_repo,
+            "repo-free folder should surface as a non-git entry"
+        );
+        assert!(
+            !by_name.contains_key("sub"),
+            "pure repo container is omitted"
+        );
+        assert!(
+            !by_name.contains_key("inner"),
+            "repo-free subtree collapses to its top"
+        );
+        assert!(
+            !by_name.contains_key("empty"),
+            "an empty folder has nothing to browse and is skipped"
+        );
+        assert!(!by_name.contains_key("c"), "node_modules should be pruned");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn surfaces_folder_with_files_at_the_depth_limit() {
+        let root = std::env::temp_dir().join("gamut_discover_depth_test");
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A repo so the root is a container that emits its repo-free children.
+        Repository::init(root.join("a")).unwrap();
+        // Folders that sit right at the scan limit (depth 1 with max_depth = 1):
+        // we can't descend, but a shallow scan should still surface the one with
+        // a file and skip the empty one.
+        std::fs::create_dir_all(root.join("leaf")).unwrap();
+        std::fs::write(root.join("leaf/note.txt"), "x").unwrap();
+        std::fs::create_dir_all(root.join("bare")).unwrap();
+
+        let found = discover(&root, 1, &default_prune_dirs());
         let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
 
-        assert_eq!(found.len(), 2, "should find exactly a and b");
         assert!(names.contains(&"a"));
-        assert!(names.contains(&"b"));
-        assert!(!names.contains(&"c"), "node_modules should be pruned");
+        assert!(
+            names.contains(&"leaf"),
+            "a folder with files at the depth limit should still be surfaced"
+        );
+        assert!(
+            !names.contains(&"bare"),
+            "an empty folder at the depth limit stays hidden"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

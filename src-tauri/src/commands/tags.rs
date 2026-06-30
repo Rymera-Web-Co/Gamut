@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
@@ -25,6 +27,49 @@ pub struct Group {
     pub folder_path: Option<String>,
     /// UTC timestamp of the last folder scan (NULL until first scan).
     pub last_scan_at: Option<String>,
+    /// The repos-row id of the bound folder itself (the synced root), once it has
+    /// been registered by a scan. `None` for manual groups or before the first
+    /// scan. Lets the UI tag the root entry apart from discovered subfolders.
+    pub root_repo_id: Option<i64>,
+}
+
+/// Canonicalize a bound folder path the same way `register_path` stores repo
+/// paths, so synced-root lookups match regardless of symlinks.
+fn canonicalize_folder(folder_path: &str) -> String {
+    std::path::Path::new(folder_path)
+        .canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| folder_path.to_string())
+}
+
+/// Max host parameters per query, kept well under SQLite's
+/// `SQLITE_MAX_VARIABLE_NUMBER` (historically 999) so a `WHERE path IN (…)` over
+/// many bound groups can't overflow it.
+const MAX_SQL_VARS: usize = 900;
+
+/// Resolve the repos-row id of the synced-root entry for each given canonical
+/// folder path, batched into as few queries as possible (avoids an N+1 across
+/// bound groups). Paths with no registered entry are simply absent from the map.
+/// Errors are propagated rather than swallowed, so a genuine DB failure surfaces
+/// instead of silently dropping every group's `root_repo_id`.
+fn root_repo_ids_by_path(
+    conn: &Connection,
+    canonical_paths: &[String],
+) -> AppResult<HashMap<String, i64>> {
+    let mut out = HashMap::new();
+    for chunk in canonical_paths.chunks(MAX_SQL_VARS) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT path, id FROM repos WHERE path IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (path, id) = row?;
+            out.insert(path, id);
+        }
+    }
+    Ok(out)
 }
 
 fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -101,7 +146,7 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
         "SELECT id, name, parent_id, sort, icon, is_default, folder_path, last_scan_at
          FROM groups ORDER BY sort, name COLLATE NOCASE",
     )?;
-    let groups = stmt
+    let mut groups = stmt
         .query_map([], |row| {
             Ok(Group {
                 id: row.get(0)?,
@@ -112,9 +157,22 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
                 is_default: row.get::<_, i64>(5)? != 0,
                 folder_path: row.get(6)?,
                 last_scan_at: row.get(7)?,
+                root_repo_id: None,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    // Resolve every bound group's synced-root entry in one query so the UI can
+    // tag it (canonical path → repos id), keyed back to each group by path.
+    let canon: Vec<Option<String>> = groups
+        .iter()
+        .map(|g| g.folder_path.as_deref().map(canonicalize_folder))
+        .collect();
+    let lookup: Vec<String> = canon.iter().flatten().cloned().collect();
+    let ids = root_repo_ids_by_path(&conn, &lookup)?;
+    for (g, path) in groups.iter_mut().zip(&canon) {
+        g.root_repo_id = path.as_deref().and_then(|p| ids.get(p).copied());
+    }
     Ok(groups)
 }
 
@@ -149,7 +207,10 @@ pub fn create_group(
         icon,
         is_default: false,
         folder_path,
+        // No scan has run yet, so the root entry isn't registered; the next
+        // list_groups (after the initial sync) resolves it.
         last_scan_at: None,
+        root_repo_id: None,
     })
 }
 
@@ -265,4 +326,59 @@ pub fn set_repo_groups(state: State<AppState>, repo_id: i64, group_ids: Vec<i64>
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_repo_id_matches_a_bound_folder_by_canonical_path() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repos (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 name TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+
+        // A real temp dir (uniquely named per process to avoid cross-run
+        // collisions), registered under its canonical path the way folder sync
+        // stores repo paths.
+        let raw =
+            std::env::temp_dir().join(format!("gamut_root_repo_id_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&raw);
+        std::fs::create_dir_all(&raw).unwrap();
+        let canonical = raw.canonicalize().unwrap().display().to_string();
+        conn.execute(
+            "INSERT INTO repos (path, name) VALUES (?1, 'root')",
+            [&canonical],
+        )
+        .unwrap();
+        let id: i64 = conn
+            .query_row("SELECT id FROM repos WHERE path = ?1", [&canonical], |r| {
+                r.get(0)
+            })
+            .unwrap();
+
+        // Canonicalizing the raw (possibly symlinked, e.g. /var) folder_path and
+        // resolving in one batch still maps back to the canonical entry, while an
+        // unknown path is simply absent.
+        let raw_str = raw.display().to_string();
+        let canon = canonicalize_folder(&raw_str);
+        assert_eq!(canon, canonical);
+        let ids =
+            root_repo_ids_by_path(&conn, &[canon.clone(), "/nope/not/registered".to_string()])
+                .unwrap();
+        assert_eq!(ids.get(&canon).copied(), Some(id));
+        assert_eq!(
+            ids.get("/nope/not/registered"),
+            None,
+            "unregistered folder has no root entry"
+        );
+
+        std::fs::remove_dir_all(&raw).unwrap();
+    }
 }
