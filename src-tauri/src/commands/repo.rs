@@ -153,9 +153,10 @@ fn discovery_opts(conn: &Connection) -> (usize, Vec<String>) {
     (depth, prune)
 }
 
-/// Scan a bound group's folder and add (never remove) every discovered repo to
-/// the group. Add-only and idempotent: repos already registered/assigned are
-/// untouched. Honors the scanner's prune list. Stamps `last_scan_at`.
+/// Scan a bound group's folder and add (never remove) the folder itself plus
+/// every discovered git repo and repo-free leaf folder to the group. Add-only
+/// and idempotent: entries already registered/assigned are untouched. Honors the
+/// scanner's prune list. Stamps `last_scan_at`.
 ///
 /// The default group is special: it surfaces *ungrouped* repos (no explicit
 /// membership), so binding it auto-registers discovered repos without creating
@@ -175,9 +176,20 @@ pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppR
         .unwrap_or(false);
 
     let (depth, prune) = discovery_opts(conn);
+
+    // Register the bound folder itself (so its Files tab browses the whole synced
+    // tree) plus everything discovered inside it — git repos and repo-free leaf
+    // folders alike. `register_path` classifies each as git/non-git on its own.
+    let mut paths: Vec<PathBuf> = vec![PathBuf::from(folder)];
+    paths.extend(
+        git::discover(&PathBuf::from(folder), depth, &prune)
+            .into_iter()
+            .map(|d| d.path),
+    );
+
     let mut added = 0usize;
-    for d in git::discover(&PathBuf::from(folder), depth, &prune) {
-        let Ok((repo_id, inserted)) = register_path(conn, &d.path) else {
+    for path in paths {
+        let Ok((repo_id, inserted)) = register_path(conn, &path) else {
             continue;
         };
         if is_default {
@@ -649,6 +661,9 @@ pub fn discover_repos(
 
     found
         .into_iter()
+        // The manual picker offers git repos only; folder auto-inclusion is a
+        // folder-sync feature, not part of this one-off scan.
+        .filter(|d| d.is_git_repo)
         .map(|d| {
             let canonical = d
                 .path
@@ -796,7 +811,24 @@ mod tests {
 
         let folder = root.to_string_lossy().to_string();
         let added = sync_folder_group(&conn, 1, &folder).unwrap();
-        assert_eq!(added, 2, "a and b added; node_modules pruned");
+        assert_eq!(
+            added, 3,
+            "the synced root, a, and b added; sub is a container, node_modules pruned"
+        );
+
+        // The bound root is registered as a browsable non-git folder entry (the
+        // only non-git entry here, since a and b are repos and sub is omitted).
+        let non_git: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repos WHERE is_git_repo = 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            non_git, 1,
+            "synced root is registered as a non-git folder entry"
+        );
 
         // Re-running is add-only: nothing new, no duplicates.
         let again = sync_folder_group(&conn, 1, &folder).unwrap();
@@ -808,7 +840,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(members, 2);
+        assert_eq!(members, 3);
 
         // last_scan_at is stamped.
         let stamped: Option<String> = conn
@@ -870,13 +902,13 @@ mod tests {
 
         let folder = root.to_string_lossy().to_string();
         let added = sync_folder_group(&conn, 1, &folder).unwrap();
-        assert_eq!(added, 2, "both repos newly registered");
+        assert_eq!(added, 3, "both repos plus the synced root newly registered");
 
-        // Repos are registered...
+        // Repos (and the synced root folder) are registered...
         let repos: i64 = conn
             .query_row("SELECT COUNT(*) FROM repos", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(repos, 2);
+        assert_eq!(repos, 3);
         // ...but the default group never gets explicit memberships (they show
         // as ungrouped instead).
         let members: i64 = conn
