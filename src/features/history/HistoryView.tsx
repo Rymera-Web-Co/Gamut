@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { useRepos } from "@/features/repos/api";
 import { Avatar } from "@/features/review/reviewShared";
 import { useUiStore } from "@/store/ui";
-import { useCommitDetail, useLog } from "./api";
+import { useCommitAvatar, useCommitDetail, useLog } from "./api";
 import { CommitGraph, ROW_HEIGHT } from "./CommitGraph";
 import { DiffModal } from "./DiffModal";
 
@@ -93,6 +93,7 @@ function CommitListRow({
 
 export function CommitDetailPanel({ repoId, sha }: { repoId: number; sha: string }) {
   const detail = useCommitDetail(repoId, sha);
+  const avatar = useCommitAvatar(repoId, sha, detail.data?.author_email ?? null);
   const [openFile, setOpenFile] = useState<FileChange | null>(null);
 
   if (!detail.data) {
@@ -105,10 +106,11 @@ export function CommitDetailPanel({ repoId, sha }: { repoId: number; sha: string
       <div className="max-h-[50%] shrink-0 overflow-auto border-b p-4">
         <Markdown>{d.message.trim()}</Markdown>
         <div className="mt-3 flex items-center gap-2">
-          {/* Local commits carry only name + email (no avatar), so the Avatar's
-              initials fallback is what renders here; an avatar-image source can
-              be added later without touching this markup. */}
-          <Avatar name={d.author_name} size={20} />
+          {/* A local commit carries only name + email, so the GitHub avatar is
+              resolved (and cached) separately; until it loads — or when the
+              repo isn't on GitHub / the email maps to no account — the Avatar's
+              initials fallback renders. */}
+          <Avatar src={avatar.data} name={d.author_name} size={20} />
           <p className="min-w-0 text-xs">
             <span className="font-medium text-[var(--color-foreground)]">{d.author_name}</span>
             <span className="text-[var(--color-muted-foreground)]">

@@ -707,6 +707,14 @@ export const ipc = {
   githubResolvePrUrl: (url: string) => invoke<PrRef | null>("github_resolve_pr_url", { url }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
+  /**
+   * The GitHub avatar URL for a commit's author, resolved from the repo's GitHub
+   * remote and cached (by author email) so history browsing doesn't refetch the
+   * same authors (issue #195). Null when the repo isn't on GitHub, we're
+   * unauthenticated, or the email maps to no GitHub account.
+   */
+  githubCommitAvatar: (repoId: number, sha: string, email: string) =>
+    invoke<string | null>("github_commit_avatar", { repoId, sha, email }),
   /** Fetch a GitHub-hosted attachment image as a `data:` URL (issue #36). */
   githubFetchImage: (url: string) => invoke<string>("github_fetch_image", { url }),
   githubPrThread: (repoId: number, number: number) =>

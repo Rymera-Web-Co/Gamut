@@ -225,6 +225,62 @@ pub async fn github_pr_diff(
     Ok(resp.text().await?)
 }
 
+/// The single-commit REST payload, trimmed to the top-level GitHub `author` —
+/// GitHub resolves the commit's author email to an account itself, so this is
+/// the actual avatar of the person, not a Gravatar. `author` is null when the
+/// email maps to no GitHub account.
+#[derive(Deserialize)]
+struct GhCommitAuthor {
+    author: Option<GhUser>,
+}
+
+/// The GitHub avatar URL for a commit's author, keyed and cached by author email
+/// so browsing history costs one lookup per distinct author, not per commit, and
+/// survives restarts (#195). Returns `None` — so the UI falls back to initials —
+/// when the repo isn't on GitHub, we're unauthenticated, or the author's email
+/// maps to no GitHub account. Only stable outcomes are cached: a repo/auth/API
+/// failure returns `None` without caching so a later selection retries.
+#[tauri::command]
+pub async fn github_commit_avatar(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    sha: String,
+    email: String,
+) -> AppResult<Option<String>> {
+    // Cache hit (positive or negative) short-circuits before any network call.
+    if let Some(cached) = super::cached_avatar(&state, &email)? {
+        return Ok(cached);
+    }
+    // A repo with no GitHub remote or no token has no avatar to resolve. Don't
+    // error the panel and don't cache — it may gain a remote/token later.
+    let Ok((owner, repo)) = owner_repo(&state, repo_id) else {
+        return Ok(None);
+    };
+    let Ok(token) = require_token(&state) else {
+        return Ok(None);
+    };
+    let api = api_base(&state);
+    let client = http()?;
+    let resp = client
+        .get(format!("{api}/repos/{owner}/{repo}/commits/{sha}"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    // A transient API failure is not a stable "no account" answer — surface no
+    // avatar for now and let a later selection retry rather than caching it.
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let commit: GhCommitAuthor = resp.json().await?;
+    let (login, avatar) = match commit.author {
+        Some(u) => (Some(u.login), u.avatar_url),
+        None => (None, None),
+    };
+    super::store_avatar(&state, &email, login.as_deref(), avatar.as_deref())?;
+    Ok(avatar)
+}
+
 /// Cap on a proxied image's size. GitHub rejects attachment uploads over 10 MB
 /// for images, so this is comfortably above any legitimate inline image while
 /// bounding the base64 payload we hold in memory and hand to the webview.

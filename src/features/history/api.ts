@@ -19,6 +19,19 @@ export function useCommitDetail(repoId: number | null, sha: string | null) {
   });
 }
 
+// Resolve a commit author's GitHub avatar. Keyed by email (not sha) so every
+// commit by the same author shares one query in-session, matching the backend's
+// email-keyed persistent cache (#195); the backend result is already durable, so
+// there's no reason to ever consider it stale within a session.
+export function useCommitAvatar(repoId: number | null, sha: string | null, email: string | null) {
+  return useQuery({
+    queryKey: ["commit-avatar", email],
+    queryFn: () => ipc.githubCommitAvatar(repoId!, sha!, email!),
+    enabled: repoId != null && sha != null && !!email,
+    staleTime: Infinity,
+  });
+}
+
 export function useFileDiff(
   repoId: number | null,
   sha: string | null,
