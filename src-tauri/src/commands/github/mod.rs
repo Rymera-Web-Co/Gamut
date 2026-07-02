@@ -10,6 +10,7 @@
 //! `origin` owner/repo resolution) and re-exports every `#[tauri::command]` so
 //! the `commands::github::*` paths used by the invoke handler stay stable.
 
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -98,6 +99,69 @@ fn set_setting(state: &AppState, key: &str, value: &str) -> AppResult<()> {
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         rusqlite::params![key, value],
+    )?;
+    Ok(())
+}
+
+/// A cached GitHub avatar for a commit-author email (#195). Distinguishes three
+/// states so callers can avoid both re-fetching and mis-caching:
+/// - `None` — no cache row: the email hasn't been resolved yet, so fetch it.
+/// - `Some(None)` — cached negative: the email maps to no GitHub account; a
+///   real, stable result worth caching so history browsing stops retrying it.
+/// - `Some(Some(url))` — cached avatar URL.
+pub(super) fn cached_avatar(state: &AppState, email: &str) -> AppResult<Option<Option<String>>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    cached_avatar_conn(&conn, email)
+}
+
+/// Record the GitHub identity resolved for a commit-author email (#195).
+/// `avatar` may be `None` — a cached negative (see [`cached_avatar`]).
+pub(super) fn store_avatar(
+    state: &AppState,
+    email: &str,
+    login: Option<&str>,
+    avatar: Option<&str>,
+) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    store_avatar_conn(&conn, email, login, avatar)
+}
+
+/// SQL body of [`cached_avatar`], split out so it can be exercised against a bare
+/// connection in tests without constructing an [`AppState`].
+fn cached_avatar_conn(
+    conn: &rusqlite::Connection,
+    email: &str,
+) -> AppResult<Option<Option<String>>> {
+    Ok(conn
+        .query_row(
+            "SELECT avatar_url FROM gh_user_cache WHERE email = ?1",
+            [email],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?)
+}
+
+/// SQL body of [`store_avatar`] (see [`cached_avatar_conn`]).
+fn store_avatar_conn(
+    conn: &rusqlite::Connection,
+    email: &str,
+    login: Option<&str>,
+    avatar: Option<&str>,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO gh_user_cache (email, login, avatar_url, fetched_at)
+         VALUES (?1, ?2, ?3, strftime('%s', 'now'))
+         ON CONFLICT(email) DO UPDATE SET
+             login = excluded.login,
+             avatar_url = excluded.avatar_url,
+             fetched_at = excluded.fetched_at",
+        rusqlite::params![email, login, avatar],
     )?;
     Ok(())
 }
@@ -289,7 +353,60 @@ struct GhUser {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_base, DEFAULT_API};
+    use super::{cached_avatar_conn, normalize_base, store_avatar_conn, DEFAULT_API};
+
+    /// An in-memory DB with the `gh_user_cache` schema (via the real migration).
+    fn cache_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../db/migrations/0006_gh_user_cache.sql"))
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn avatar_cache_distinguishes_miss_hit_and_negative() {
+        let conn = cache_db();
+
+        // Miss: no row yet → the caller must fetch.
+        assert_eq!(cached_avatar_conn(&conn, "ada@example.com").unwrap(), None);
+
+        // Positive: a resolved avatar round-trips.
+        store_avatar_conn(
+            &conn,
+            "ada@example.com",
+            Some("ada"),
+            Some("https://avatars.example/ada.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            cached_avatar_conn(&conn, "ada@example.com").unwrap(),
+            Some(Some("https://avatars.example/ada.png".into()))
+        );
+
+        // Negative: an email with no GitHub account caches as a present row with
+        // a NULL avatar — distinct from a miss, so it isn't retried forever.
+        store_avatar_conn(&conn, "nobody@example.com", None, None).unwrap();
+        assert_eq!(
+            cached_avatar_conn(&conn, "nobody@example.com").unwrap(),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn avatar_cache_upserts_on_repeat() {
+        let conn = cache_db();
+        store_avatar_conn(&conn, "ada@example.com", Some("ada"), Some("old.png")).unwrap();
+        store_avatar_conn(&conn, "ada@example.com", Some("ada"), Some("new.png")).unwrap();
+        assert_eq!(
+            cached_avatar_conn(&conn, "ada@example.com").unwrap(),
+            Some(Some("new.png".into()))
+        );
+        // The upsert replaces, it doesn't duplicate the primary key.
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gh_user_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
 
     #[test]
     fn normalizes_configured_base() {
