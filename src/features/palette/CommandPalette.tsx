@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Folder, FolderGit2, GitCompare, SquareTerminal, type LucideIcon } from "lucide-react";
+import {
+  Folder,
+  FolderGit2,
+  GitCompare,
+  SquareTerminal,
+  WrapText,
+  type LucideIcon,
+} from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -299,6 +306,19 @@ export function CommandPalette() {
           useUiStore
             .getState()
             .openCompare(activeRepoId != null ? { repoId: activeRepoId } : undefined);
+          close();
+        },
+      });
+    }
+    if (q && rank(q, "Toggle editor word wrap", "wrap") !== null) {
+      out.push({
+        key: "cmd:word-wrap",
+        category: "Commands",
+        icon: WrapText,
+        label: "Toggle editor word wrap",
+        run: () => {
+          const s = useSettings.getState();
+          s.set("editorWordWrap", !s.values.editorWordWrap);
           close();
         },
       });
