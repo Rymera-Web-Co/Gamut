@@ -17,6 +17,7 @@ export function AppearancePanel() {
   const setPreference = useTheme((s) => s.setPreference);
   const [editorFontSize, setEditorFontSize] = useSetting("editorFontSize");
   const [editorFontFamily, setEditorFontFamily] = useSetting("editorFontFamily");
+  const [editorWordWrap, setEditorWordWrap] = useSetting("editorWordWrap");
   const [markdownPreviewByDefault, setMarkdownPreviewByDefault] = useSetting(
     "markdownPreviewByDefault",
   );
@@ -56,6 +57,12 @@ export function AppearancePanel() {
           onChange={setEditorFontFamily}
           placeholder="e.g. JetBrains Mono"
         />
+      </Field>
+      <Field
+        label="Editor word wrap"
+        hint="Wrap long lines in the file editor, diff views, and blame instead of scrolling horizontally."
+      >
+        <Toggle checked={editorWordWrap} onChange={setEditorWordWrap} />
       </Field>
       <Field
         label="Open markdown in preview"

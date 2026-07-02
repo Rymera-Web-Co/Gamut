@@ -7,7 +7,8 @@ import { Drawer, DrawerClose, DrawerContent, DrawerTitle } from "@/components/ui
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monacoTheme";
-import { useDiffEditorPrefs } from "@/lib/settings";
+import { useDiffEditorPrefs, useSettings } from "@/lib/settings";
+import { cn } from "@/lib/utils";
 import { useBlame, useFileDiff } from "./api";
 
 /** Build a per-line lookup of which blame hunk owns each (1-based) line. */
@@ -21,7 +22,7 @@ function blameByLine(hunks: BlameHunk[]): Map<number, { hunk: BlameHunk; first: 
   return map;
 }
 
-function BlameView({ text, hunks }: { text: string; hunks: BlameHunk[] }) {
+function BlameView({ text, hunks, wrap }: { text: string; hunks: BlameHunk[]; wrap: boolean }) {
   const byLine = useMemo(() => blameByLine(hunks), [hunks]);
   const lines = useMemo(() => text.split("\n"), [text]);
 
@@ -44,7 +45,14 @@ function BlameView({ text, hunks }: { text: string; hunks: BlameHunk[] }) {
                 <td className="w-10 select-none px-2 py-0.5 text-right text-[var(--color-muted-foreground)]">
                   {lineNo}
                 </td>
-                <td className="whitespace-pre px-2 py-0.5">{line || " "}</td>
+                <td
+                  className={cn(
+                    "px-2 py-0.5",
+                    wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre",
+                  )}
+                >
+                  {line || " "}
+                </td>
               </tr>
             );
           })}
@@ -71,6 +79,7 @@ export function DiffModal({
   const diff = useFileDiff(repoId, sha, path, oldPath);
   const blame = useBlame(repoId, sha, path, mode === "blame");
   const diffPrefs = useDiffEditorPrefs();
+  const wordWrap = useSettings((s) => s.values.editorWordWrap);
 
   const isDark = isDarkTheme();
 
@@ -127,7 +136,7 @@ export function DiffModal({
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
             </div>
           ) : (
-            <BlameView text={diff.data?.new_text ?? ""} hunks={blame.data} />
+            <BlameView text={diff.data?.new_text ?? ""} hunks={blame.data} wrap={wordWrap} />
           )}
         </div>
       </DrawerContent>

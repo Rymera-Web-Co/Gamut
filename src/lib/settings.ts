@@ -19,6 +19,7 @@ export interface Settings {
   // Appearance
   editorFontSize: number;
   editorFontFamily: string; // "" → Monaco default
+  editorWordWrap: boolean; // wrap long lines in the file editor, diff editors, and blame view
   terminalFontSize: number;
   terminalFontFamily: string; // "" → built-in mono stack
   terminalCursorBlink: boolean;
@@ -123,6 +124,9 @@ export function parsePaletteOrder(raw: string): PaletteCategory[] {
 export const DEFAULTS: Settings = {
   editorFontSize: 12,
   editorFontFamily: "",
+  // Off → long lines scroll horizontally (historical behaviour). On → Monaco
+  // wraps at the viewport edge, and the blame view wraps too.
+  editorWordWrap: false,
   terminalFontSize: 13,
   terminalFontFamily: "",
   terminalCursorBlink: true,
@@ -302,16 +306,21 @@ export const useSettings = create<SettingsState>((set, get) => ({
 /** Read the current toast timeout from outside React (toast store helper). */
 export const toastTimeout = () => useSettings.getState().values.toastTimeout;
 
-/** Monaco option fragment for a plain code editor (font size + family). */
+/** Monaco option fragment for a plain code editor (font size + family + word wrap). */
 export function useEditorPrefs() {
   const fontSize = useSettings((s) => s.values.editorFontSize);
   const fontFamily = useSettings((s) => s.values.editorFontFamily);
-  return { fontSize, fontFamily: fontFamily || undefined };
+  const wordWrap = useSettings((s) => s.values.editorWordWrap);
+  return {
+    fontSize,
+    fontFamily: fontFamily || undefined,
+    wordWrap: (wordWrap ? "on" : "off") as "on" | "off",
+  };
 }
 
-/** Monaco option fragment for a diff editor (layout + font size + family). */
+/** Monaco option fragment for a diff editor (layout + font size + family + word wrap). */
 export function useDiffEditorPrefs() {
   const layout = useSettings((s) => s.values.diffLayout);
-  const { fontSize, fontFamily } = useEditorPrefs();
-  return { renderSideBySide: layout === "side-by-side", fontSize, fontFamily };
+  const { fontSize, fontFamily, wordWrap } = useEditorPrefs();
+  return { renderSideBySide: layout === "side-by-side", fontSize, fontFamily, wordWrap };
 }
