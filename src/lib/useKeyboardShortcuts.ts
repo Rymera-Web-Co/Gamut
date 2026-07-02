@@ -23,7 +23,8 @@ import { useUiStore } from "@/store/ui";
  *   ⌃1–4 → Files / History / Review / Pull Requests
  *   ⌘/Ctrl+B repo sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
  *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal   ⌘/Ctrl+⇧+` maximize terminal
- *   ⌘/Ctrl+, settings   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
+ *   ⌘/Ctrl+, settings   ⌥Z toggle editor word wrap
+ *   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
  *   ⌘/Ctrl+⌥+F fetch group   ⌘/Ctrl+↑/↓ cycle groups in the rail
  *   ⌃Tab / ⌃⇧Tab cycle repos in the active group
  *
@@ -159,6 +160,12 @@ export function useKeyboardShortcuts() {
       toggleTerminal: () => ref.current.toggleTerminal(),
       maximizeTerminal: () => ref.current.toggleTerminalMaximized(),
       openSettings: () => ref.current.toggleSettings(),
+      toggleWordWrap: () => {
+        // Flip the persisted setting; every editor/diff/blame surface reads it
+        // reactively, so the change takes effect immediately and survives reopen.
+        const s = useSettings.getState();
+        s.set("editorWordWrap", !s.values.editorWordWrap);
+      },
       push: () => {
         const s = ref.current;
         if (s.activeRepoId != null && !s.busy) s.push.mutate();

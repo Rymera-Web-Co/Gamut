@@ -49,6 +49,7 @@ export type ShortcutId =
   | "toggleTerminal"
   | "maximizeTerminal"
   | "openSettings"
+  | "toggleWordWrap"
   | "push"
   | "pull"
   | "fetchGroup"
@@ -232,6 +233,16 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Open settings",
     category: "Layout",
     defaultBinding: { mod: true, code: "Comma" },
+    whenTyping: true,
+  },
+  {
+    id: "toggleWordWrap",
+    label: "Toggle editor word wrap",
+    category: "Layout",
+    // ⌥Z matches the common editor convention (VS Code). Fires while typing so
+    // it works with the file editor or a diff focused. Matched on `code`, so the
+    // Alt-mangled `key` ("Ω" on macOS) is irrelevant.
+    defaultBinding: { alt: true, code: "KeyZ" },
     whenTyping: true,
   },
   {
