@@ -3,6 +3,7 @@ mod control;
 mod db;
 mod error;
 mod git;
+mod process;
 mod state;
 mod watch;
 
