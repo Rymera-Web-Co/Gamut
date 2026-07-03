@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FolderPlus,
   Link as LinkIcon,
+  TerminalSquare,
   Trash2,
 } from "lucide-react";
 
@@ -17,6 +18,7 @@ import {
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
 import { copy } from "@/lib/clipboard";
+import { fileReference, sendToActiveTerminal } from "@/features/terminal/sendToTerminal";
 import { fileIcon } from "@/lib/fileIcons";
 import { ipc, type DirEntry } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -483,6 +485,19 @@ export function RepoTree({
                 Copy Path (relative to group)
               </ContextMenuItem>
             )}
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-xs"
+              onClick={() => {
+                // File tree carries no selection, so the reference is the
+                // repo-relative path only — no line range (#199).
+                sendToActiveTerminal(fileReference(menu.path));
+                setMenu(null);
+              }}
+            >
+              <TerminalSquare />
+              Send to Terminal
+            </ContextMenuItem>
             {menu.kind === "file" && (
               <>
                 <div className="my-1 border-t border-[var(--color-border)]" />
