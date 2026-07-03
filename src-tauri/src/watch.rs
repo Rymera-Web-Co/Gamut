@@ -11,7 +11,7 @@
 //! needless refreshes — only working-tree files and the refs/HEAD/index that
 //! reflect repo state count.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -159,15 +159,23 @@ impl RepoWatcher {
 /// watched, still present as directories, and not pruned (`.git` included).
 /// Recurses into each newly-found directory to pick up any subdirectories
 /// already present, so `mkdir -p a/b/c` yields `a`, `b`, and `c` in one pass.
+/// Uses `symlink_metadata` (never follows symlinks) so a symlink cycle inside
+/// the tree (e.g. `ln -s .. sub/link`) can't send this walk into unbounded
+/// recursion the way the previous `RecursiveMode::Recursive` OS watch, whose
+/// cycle handling this replaced, did not need to worry about.
 fn new_watchable_dirs(
     candidates: &[PathBuf],
     already_watched: &HashMap<PathBuf, RecursiveMode>,
     prune: &[String],
 ) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = Vec::new();
+    let mut found: HashSet<PathBuf> = HashSet::new();
     let mut queue: Vec<PathBuf> = candidates.to_vec();
     while let Some(dir) = queue.pop() {
-        if already_watched.contains_key(&dir) || found.contains(&dir) || !dir.is_dir() {
+        if already_watched.contains_key(&dir) || found.contains(&dir) {
+            continue;
+        }
+        let is_dir = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir());
+        if !is_dir {
             continue;
         }
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
@@ -175,18 +183,19 @@ fn new_watchable_dirs(
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&dir) {
-            queue.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+            queue.extend(entries.flatten().map(|e| e.path()));
         }
-        found.push(dir);
+        found.insert(dir);
     }
-    found
+    found.into_iter().collect()
 }
 
 /// Directories to watch non-recursively within a non-bare repo's working tree:
 /// the tree root plus every subdirectory, skipping `.git` (watched separately
 /// via git-state paths, like a bare repo) and heavy/ignored directories from
 /// `prune` — so build/install churn inside e.g. `node_modules` never reaches
-/// the OS watch layer.
+/// the OS watch layer. Uses `symlink_metadata` (never follows symlinks) so a
+/// symlink cycle inside the tree can't send this walk into unbounded recursion.
 fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
     let mut dirs = vec![work.to_path_buf()];
     let mut queue = vec![work.to_path_buf()];
@@ -196,7 +205,8 @@ fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() {
+            let is_dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+            if !is_dir {
                 continue;
             }
             let name = entry.file_name();
@@ -356,5 +366,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&missing);
         let found = new_watchable_dirs(&[missing], &HashMap::new(), &[]);
         assert!(found.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workdir_watch_dirs_does_not_follow_symlink_cycle() {
+        let work = temp_root("gamut_watch_symlink_cycle_test");
+        touch_dir(&work.join("sub"));
+        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
+
+        let dirs = workdir_watch_dirs(&work, &[]);
+
+        assert!(dirs.contains(&work));
+        assert!(dirs.contains(&work.join("sub")));
+        assert!(!dirs.iter().any(|d| d.starts_with(work.join("sub/link"))));
+
+        std::fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_watchable_dirs_does_not_follow_symlink_cycle() {
+        let work = temp_root("gamut_watch_new_dirs_symlink_cycle_test");
+        touch_dir(&work.join("sub"));
+        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
+
+        let found = new_watchable_dirs(&[work.clone()], &HashMap::new(), &[]);
+
+        assert!(found.contains(&work));
+        assert!(found.contains(&work.join("sub")));
+        assert!(!found.iter().any(|d| d.starts_with(work.join("sub/link"))));
+
+        std::fs::remove_dir_all(&work).unwrap();
     }
 }
