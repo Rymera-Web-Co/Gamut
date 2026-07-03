@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Github, Loader2, LogOut, ExternalLink, Copy } from "lucide-react";
@@ -121,11 +121,16 @@ export function GitHubConnect() {
   const connected = auth.data?.logged_in ?? false;
   const login = auth.data?.login;
 
+  // A broken avatar for one account shouldn't stick around after switching accounts.
+  useEffect(() => {
+    setAvatarBroken(false);
+  }, [login]);
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          title={connected ? `GitHub: ${login}` : "Connect to GitHub"}
+          title={connected ? `GitHub: ${login ?? "Connected"}` : "Connect to GitHub"}
           className="relative mt-1 flex size-10 items-center justify-center rounded-lg text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
         >
           <Github className="size-5" />
