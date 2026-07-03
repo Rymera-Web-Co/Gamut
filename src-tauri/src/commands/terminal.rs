@@ -130,7 +130,9 @@ const COALESCE_WINDOW: Duration = Duration::from_millis(8);
 
 /// Cap on bytes buffered before a forced flush, so a sustained firehose (e.g.
 /// `yes` or a huge log dump) can't grow the pending buffer unbounded while
-/// waiting out the coalescing window.
+/// waiting out the coalescing window. Soft cap: a batch can overshoot it by
+/// up to one PTY read (currently 8 KiB), since we only check after a full
+/// chunk has been appended, not mid-chunk.
 const COALESCE_MAX_BYTES: usize = 256 * 1024;
 
 /// Blocks for the next chunk, then greedily drains whatever else arrives
@@ -140,7 +142,10 @@ const COALESCE_MAX_BYTES: usize = 256 * 1024;
 fn next_coalesced_batch(rx: &mpsc::Receiver<Vec<u8>>) -> Option<Vec<u8>> {
     let mut pending = rx.recv().ok()?;
     let deadline = Instant::now() + COALESCE_WINDOW;
-    while pending.len() < COALESCE_MAX_BYTES {
+    loop {
+        if pending.len() >= COALESCE_MAX_BYTES {
+            break;
+        }
         let now = Instant::now();
         if now >= deadline {
             break;
