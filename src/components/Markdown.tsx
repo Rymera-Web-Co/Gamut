@@ -184,6 +184,19 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
   return <img src={resolved} alt={alt} {...props} />;
 }
 
+/**
+ * Split off a leading YAML frontmatter block (`---\n…\n---`) from a markdown
+ * source. Skill/agent files start with such a block; react-markdown would
+ * otherwise render it as a `<hr>` plus a paragraph of mashed-together
+ * `key: value` lines. Returns the frontmatter text (without the fences) and the
+ * remaining body so the block can be styled on its own.
+ */
+function splitFrontmatter(source: string): { frontmatter: string | null; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(source);
+  if (!m) return { frontmatter: null, body: source };
+  return { frontmatter: m[1], body: source.slice(m[0].length) };
+}
+
 export function Markdown({
   children,
   onToggleTask,
@@ -206,6 +219,8 @@ export function Markdown({
     issueBaseUrl ? [remarkGfm, [remarkIssueRefs, issueBaseUrl]] : [remarkGfm]
   ) as ComponentProps<typeof ReactMarkdown>["remarkPlugins"];
 
+  const { frontmatter, body } = splitFrontmatter(children);
+
   return (
     <div
       className={cn(
@@ -213,6 +228,11 @@ export function Markdown({
         className,
       )}
     >
+      {frontmatter != null && (
+        <div className="mb-4 border-b border-[var(--color-border)] pb-3 text-xs whitespace-pre-wrap text-[var(--color-muted-foreground)]">
+          {frontmatter}
+        </div>
+      )}
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         // Sanitize AFTER rehype-raw parses the raw HTML, so injected markup in
@@ -255,7 +275,7 @@ export function Markdown({
           },
         }}
       >
-        {children || "_No description provided._"}
+        {(frontmatter != null ? body : children) || "_No description provided._"}
       </ReactMarkdown>
     </div>
   );

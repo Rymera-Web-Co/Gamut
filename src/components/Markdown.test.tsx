@@ -30,3 +30,25 @@ describe("Markdown sanitization", () => {
     expect(boxes[1].checked).toBe(false);
   });
 });
+
+// Skill/agent files start with a YAML frontmatter block fenced by `---`. Without
+// special handling react-markdown renders it as an <hr> plus a mashed-together
+// paragraph, so we peel it off and render it as its own plain-text block.
+describe("Markdown frontmatter", () => {
+  it("renders a leading frontmatter block as plain text, not an <hr>", () => {
+    const src = `---\nname: gamut:implement\nuser-invocable: true\n---\n\n# Heading\n\nBody text.`;
+    const { container } = render(<Markdown>{src}</Markdown>);
+    // No thematic break from the frontmatter fences.
+    expect(container.querySelector("hr")).toBeNull();
+    // Raw key/value lines preserved verbatim in a single block.
+    expect(container.textContent).toContain("name: gamut:implement");
+    expect(container.textContent).toContain("user-invocable: true");
+    // Body still renders as markdown.
+    expect(container.querySelector("h1")?.textContent).toBe("Heading");
+  });
+
+  it("leaves a mid-document thematic break alone", () => {
+    const { container } = render(<Markdown>{`before\n\n---\n\nafter`}</Markdown>);
+    expect(container.querySelector("hr")).not.toBeNull();
+  });
+});
