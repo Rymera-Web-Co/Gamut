@@ -33,6 +33,12 @@ pub struct AppState {
     /// landed under a bound folder (and thus warrants an auto-sync) without
     /// hitting the DB on every event.
     pub bound_folders: Mutex<Vec<PathBuf>>,
+    /// Watched repo root directory → repo id, refreshed on each watcher resync.
+    /// Lets the debounced watch callback resolve a changed path back to the
+    /// specific repo(s) it belongs to, so `repos-changed` can carry only the
+    /// affected repo ids instead of forcing every repo's queries to refetch
+    /// (#206).
+    pub watched_repo_dirs: Mutex<HashMap<PathBuf, i64>>,
     /// Live PTY-backed terminal sessions, keyed by an opaque scope id
     /// (`repo:<id>` / `group:<id>`). Persist across tab switches so background
     /// processes keep running; see `commands::terminal`.
