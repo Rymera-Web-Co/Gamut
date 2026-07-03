@@ -83,3 +83,38 @@ jobs:
       - name: Test
         working-directory: src-tauri
         run: cargo test
+
+  # Windows-only code (`#[cfg(windows)]`) is never linted, compiled, or tested
+  # by the ubuntu `backend` job — `cargo clippy`/`check` cfg-prune those blocks
+  # before they're seen when targeting Linux — and `nightly.yml`'s windows build
+  # only runs `tauri-action`, never `cargo clippy`/`test`. This job gives PR-time
+  # coverage for the Windows paths: `cargo clippy` lints them (the ubuntu job
+  # structurally can't — cfg pruning happens before the lint pass), `cargo check`
+  # compiles them, and `cargo test` runs any `#[cfg(windows)]` assertions.
+  # rustfmt is NOT repeated: it's syntactic (ignores cfg), so the ubuntu fmt
+  # step already formats these blocks. See #221.
+  backend-windows:
+    name: Backend (windows clippy + check + test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
