@@ -184,6 +184,56 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
   return <img src={resolved} alt={alt} {...props} />;
 }
 
+/**
+ * Split off a leading YAML frontmatter block (`---\n…\n---`) from a markdown
+ * source. Skill/agent files start with such a block; react-markdown would
+ * otherwise render it as a `<hr>` plus a paragraph of mashed-together
+ * `key: value` lines. Returns the frontmatter text (without the fences) and the
+ * remaining body so the block can be styled on its own.
+ */
+function splitFrontmatter(source: string): { frontmatter: string | null; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(source);
+  if (!m) return { frontmatter: null, body: source };
+  // Treat a whitespace-only block as absent so it doesn't render an empty
+  // styled block; the fences are still consumed from the body.
+  return { frontmatter: m[1].trim() || null, body: source.slice(m[0].length) };
+}
+
+/** Strip a single pair of matching surrounding quotes from a scalar value. */
+function unquote(value: string): string {
+  const v = value.trim();
+  if (v.length >= 2 && ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'")))) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
+
+/**
+ * Parse a YAML frontmatter block into ordered key/value rows for tabular
+ * display. This is intentionally shallow — it handles the flat `key: value`
+ * shape frontmatter uses in practice (skill/agent metadata), folding indented
+ * continuation lines into the preceding value. Anything it can't parse as a
+ * `key: value` row is returned as `null` so the caller can fall back to
+ * plain-text rendering.
+ */
+function parseFrontmatterRows(frontmatter: string): { key: string; value: string }[] | null {
+  const rows: { key: string; value: string }[] = [];
+  for (const raw of frontmatter.split(/\r?\n/)) {
+    if (raw.trim() === "") continue;
+    // Indented / list continuation of the previous key's value.
+    if (/^\s/.test(raw) && rows.length > 0) {
+      const cont = raw.trim();
+      const last = rows[rows.length - 1];
+      last.value = last.value ? `${last.value} ${cont}` : cont;
+      continue;
+    }
+    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(raw);
+    if (!m) return null;
+    rows.push({ key: m[1], value: unquote(m[2]) });
+  }
+  return rows.length > 0 ? rows : null;
+}
+
 export function Markdown({
   children,
   onToggleTask,
@@ -206,6 +256,9 @@ export function Markdown({
     issueBaseUrl ? [remarkGfm, [remarkIssueRefs, issueBaseUrl]] : [remarkGfm]
   ) as ComponentProps<typeof ReactMarkdown>["remarkPlugins"];
 
+  const { frontmatter, body } = splitFrontmatter(children);
+  const frontmatterRows = frontmatter != null ? parseFrontmatterRows(frontmatter) : null;
+
   return (
     <div
       className={cn(
@@ -213,6 +266,27 @@ export function Markdown({
         className,
       )}
     >
+      {frontmatter != null &&
+        (frontmatterRows ? (
+          <div className="mb-4 border-b border-[var(--color-border)] pb-3">
+            <table className="!my-0 w-auto text-xs text-[var(--color-muted-foreground)]">
+              <tbody>
+                {frontmatterRows.map((row, index) => (
+                  <tr key={`${row.key}-${index}`} className="!border-0 align-top">
+                    <td className="!border-0 !py-0.5 !pr-3 !pl-0 font-medium whitespace-nowrap">
+                      {row.key}
+                    </td>
+                    <td className="!border-0 !px-0 !py-0.5 break-words">{row.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="mb-4 border-b border-[var(--color-border)] pb-3 text-xs whitespace-pre-wrap text-[var(--color-muted-foreground)]">
+            {frontmatter}
+          </div>
+        ))}
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         // Sanitize AFTER rehype-raw parses the raw HTML, so injected markup in
@@ -255,7 +329,7 @@ export function Markdown({
           },
         }}
       >
-        {children || "_No description provided._"}
+        {body || "_No description provided._"}
       </ReactMarkdown>
     </div>
   );
