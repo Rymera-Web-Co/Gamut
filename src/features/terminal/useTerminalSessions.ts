@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { ipc } from "@/lib/ipc";
@@ -35,9 +36,31 @@ interface SessionEntry {
   disposed: boolean;
   /** Detaches the spawn output channel, if a spawn has happened. */
   disposeChannel?: () => void;
+  /** GPU renderer, when WebGL is available; falls back to the DOM renderer otherwise. */
+  webgl?: WebglAddon;
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
   lastCols?: number;
   lastRows?: number;
+}
+
+/**
+ * Load the WebGL renderer, which is far cheaper per repaint than xterm's
+ * default DOM renderer (#204). Falls back to the DOM renderer when WebGL is
+ * unavailable, and again on `onContextLoss` (e.g. GPU driver reset), since a
+ * lost context can't be recovered in place.
+ */
+function loadWebglAddon(entry: SessionEntry) {
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      if (entry.webgl === webgl) entry.webgl = undefined;
+    });
+    entry.term.loadAddon(webgl);
+    entry.webgl = webgl;
+  } catch {
+    // WebGL unavailable (e.g. no GPU context) — xterm keeps using the DOM renderer.
+  }
 }
 
 /**
@@ -350,6 +373,7 @@ export function useTerminalSessions({
       if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
     });
     const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false, disposed: false };
+    loadWebglAddon(entry);
     sessionsRef.current.set(pane.id, entry);
     return entry;
   }
