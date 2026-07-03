@@ -100,14 +100,41 @@ fn apply_login_shell(cmd: &mut CommandBuilder, shell: &str) {
 #[cfg(windows)]
 fn apply_login_shell(_cmd: &mut CommandBuilder, _shell: &str) {}
 
+/// Strip the Windows verbatim / extended-length prefix (`\\?\`) that
+/// `Path::canonicalize` adds to every path. Repo paths are stored canonicalized
+/// (see `commands::repo::register_path`), so they carry it. An interactive
+/// `cmd.exe` rejects a `\\?\C:\…` working directory — it prints "UNC paths are
+/// not supported. Defaulting to Windows directory." and opens in `C:\Windows`
+/// instead of the repo — so the path has to be simplified before it's handed to
+/// the shell as its cwd. No-op on non-Windows and for paths without the prefix.
+fn strip_verbatim_prefix(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        // `\\?\UNC\server\share` -> `\\server\share`
+        if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        // `\\?\C:\...` -> `C:\...`, but only for a real drive path (`X:`); a
+        // `\\?\Volume{GUID}\...` path has no drive-letter form, so leave it.
+        if let Some(rest) = path.strip_prefix(r"\\?\") {
+            let b = rest.as_bytes();
+            if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+                return rest.to_string();
+            }
+        }
+    }
+    path.to_string()
+}
+
 /// A usable working directory for a new shell: the requested `cwd` if it still
 /// exists, else the user's home directory, else the filesystem root. A restored
 /// terminal layout (#155) can reference a repo path that has since moved or been
 /// deleted; falling back keeps the respawned shell usable instead of failing the
 /// spawn outright.
 fn resolve_cwd(cwd: &str) -> String {
-    if std::path::Path::new(cwd).is_dir() {
-        return cwd.to_string();
+    let cwd = strip_verbatim_prefix(cwd);
+    if std::path::Path::new(&cwd).is_dir() {
+        return cwd;
     }
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         if std::path::Path::new(&home).is_dir() {
@@ -424,5 +451,30 @@ mod tests {
         // The chunk that arrived after the cap was hit stays in the next batch.
         let next = next_coalesced_batch(&rx).expect("next batch");
         assert_eq!(next, b"tail");
+    }
+
+    /// The Windows verbatim prefix that `canonicalize` adds is stripped so the
+    /// shell gets a cwd `cmd.exe` accepts; plain paths pass through untouched.
+    #[test]
+    fn strips_windows_verbatim_prefix() {
+        // Pass-through cases hold on every platform.
+        assert_eq!(strip_verbatim_prefix("/home/user/repo"), "/home/user/repo");
+        assert_eq!(strip_verbatim_prefix(r"C:\tools\Gamut"), r"C:\tools\Gamut");
+
+        // The stripping itself only happens on Windows.
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                strip_verbatim_prefix(r"\\?\C:\tools\Gamut"),
+                r"C:\tools\Gamut"
+            );
+            assert_eq!(
+                strip_verbatim_prefix(r"\\?\UNC\server\share\x"),
+                r"\\server\share\x"
+            );
+            // A volume-GUID verbatim path has no drive-letter form; leave it.
+            let vol = r"\\?\Volume{12345678-0000-0000-0000-000000000000}\x";
+            assert_eq!(strip_verbatim_prefix(vol), vol);
+        }
     }
 }
