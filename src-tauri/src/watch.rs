@@ -229,7 +229,12 @@ fn new_watchable_dirs(
             continue;
         }
         if let Ok(entries) = std::fs::read_dir(&dir) {
-            queue.extend(entries.flatten().map(|e| e.path()));
+            queue.extend(
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())),
+            );
         }
         found.insert(dir);
     }
