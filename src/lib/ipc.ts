@@ -787,7 +787,11 @@ export const ipc = {
     rows: number,
     onOutput: (bytes: Uint8Array) => void,
   ): { ready: Promise<void>; dispose: () => void } => {
-    const channel = new Channel<number[]>();
+    // Backend sends raw bytes via `tauri::ipc::Response`, which arrive here as
+    // an ArrayBuffer (ArrayBuffer over IPC, not a JSON `number[]` — avoids a
+    // 3-4x size expansion and a JSON.parse pass for every chunk under heavy
+    // output, see #203).
+    const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (msg) => onOutput(new Uint8Array(msg));
     const ready = invoke<void>("terminal_spawn", {
       sessionId,

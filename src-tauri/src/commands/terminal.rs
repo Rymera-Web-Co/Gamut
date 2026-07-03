@@ -8,17 +8,24 @@
 //! visibility on the frontend; the PTY is never torn down until it's explicitly
 //! killed (tab closed, repo removed, app closed) or its shell exits.
 //!
-//! Output streams to the frontend over a Tauri [`Channel`] of raw bytes; xterm's
-//! decoder reassembles UTF-8 across chunk boundaries, so we never split on a
-//! character. Shell exit is signalled out-of-band via a `terminal-exit` event.
+//! Output streams to the frontend over a Tauri [`Channel`] of raw bytes (via
+//! [`tauri::ipc::Response`], so it crosses IPC as an `ArrayBuffer` instead of a
+//! JSON number array); xterm's decoder reassembles UTF-8 across chunk
+//! boundaries, so we never split on a character. Reads are coalesced over a
+//! short window (see [`COALESCE_WINDOW`]) before being emitted, so heavy
+//! output (builds, `tail -f`, progress bars) doesn't ship one IPC message per
+//! 8 KB PTY read. Shell exit is signalled out-of-band via a `terminal-exit`
+//! event.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::mpsc;
 use std::sync::MutexGuard;
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::settings;
@@ -114,6 +121,38 @@ fn resolve_cwd(cwd: &str) -> String {
     }
 }
 
+/// How long to accumulate PTY reads before emitting them as one IPC message.
+/// Bursty output (a build, `tail -f`, a progress bar) arrives across many 8 KB
+/// reads within a few milliseconds of each other; batching them cuts the
+/// per-chunk IPC/JS overhead roughly in proportion to burst size while staying
+/// well under human perception for interactive typing echo.
+const COALESCE_WINDOW: Duration = Duration::from_millis(8);
+
+/// Cap on bytes buffered before a forced flush, so a sustained firehose (e.g.
+/// `yes` or a huge log dump) can't grow the pending buffer unbounded while
+/// waiting out the coalescing window.
+const COALESCE_MAX_BYTES: usize = 256 * 1024;
+
+/// Blocks for the next chunk, then greedily drains whatever else arrives
+/// within `COALESCE_WINDOW` of it (or until `COALESCE_MAX_BYTES` is hit),
+/// returning the concatenation as one batch. Returns `None` once the sender
+/// is dropped and no chunk is pending, signalling the PTY reader has exited.
+fn next_coalesced_batch(rx: &mpsc::Receiver<Vec<u8>>) -> Option<Vec<u8>> {
+    let mut pending = rx.recv().ok()?;
+    let deadline = Instant::now() + COALESCE_WINDOW;
+    while pending.len() < COALESCE_MAX_BYTES {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok(more) => pending.extend_from_slice(&more),
+            Err(_) => break, // timed out or sender gone; flush what we have
+        }
+    }
+    Some(pending)
+}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows: rows.max(1),
@@ -136,7 +175,7 @@ pub fn terminal_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
-    on_output: Channel<Vec<u8>>,
+    on_output: Channel<Response>,
 ) -> AppResult<()> {
     if lock(&state)?.contains_key(&session_id) {
         return Ok(()); // already running — reuse the existing session
@@ -179,17 +218,34 @@ pub fn terminal_spawn(
         },
     );
 
-    // PTY reads block, so they live on a dedicated OS thread (not the tokio pool).
+    // PTY reads block, so they live on a dedicated OS thread (not the tokio
+    // pool). It hands raw chunks off to a forwarder thread over an mpsc
+    // channel rather than emitting directly, so it can keep reading (and thus
+    // keep coalescing) without waiting on IPC.
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if on_output.send(buf[..n].to_vec()).is_err() {
-                        break; // frontend dropped the channel
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break; // forwarder thread gone
                     }
                 }
+            }
+        }
+        // Dropping `tx` here closes the channel, which unblocks the forwarder
+        // thread's `recv()` so it can run teardown below.
+    });
+
+    // Forwarder: coalesces chunks arriving within `COALESCE_WINDOW` of the
+    // first one in a batch into a single IPC message, rather than emitting
+    // per 8 KB PTY read.
+    std::thread::spawn(move || {
+        while let Some(batch) = next_coalesced_batch(&rx) {
+            if on_output.send(Response::new(batch)).is_err() {
+                break; // frontend dropped the channel
             }
         }
         if let Some(state) = app.try_state::<AppState>() {
@@ -284,5 +340,84 @@ pub fn kill_all(state: &AppState) {
         for (_, mut s) in sessions.drain() {
             let _ = s.child.kill();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A burst of chunks sent back-to-back (well within `COALESCE_WINDOW`)
+    /// should come back as a single batch, not one per chunk.
+    #[test]
+    fn coalesces_a_fast_burst() {
+        let (tx, rx) = mpsc::channel();
+        for chunk in [b"hello ".to_vec(), b"world".to_vec(), b"!".to_vec()] {
+            tx.send(chunk).unwrap();
+        }
+        drop(tx);
+
+        let batch = next_coalesced_batch(&rx).expect("first batch");
+        assert_eq!(batch, b"hello world!");
+        // Sender is gone and the channel is drained, so the next call sees a
+        // closed channel with nothing pending.
+        assert!(next_coalesced_batch(&rx).is_none());
+    }
+
+    /// A lone chunk with no follow-up must still flush once the coalescing
+    /// window elapses, rather than waiting forever for more data that never
+    /// arrives (e.g. a shell prompt printed once, then idle for input).
+    #[test]
+    fn flushes_a_lone_chunk_after_the_window() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(b"prompt$ ".to_vec()).unwrap();
+
+        let start = Instant::now();
+        let batch = next_coalesced_batch(&rx).expect("batch");
+        assert_eq!(batch, b"prompt$ ");
+        // Flushed once the window elapsed, not held indefinitely.
+        assert!(start.elapsed() >= COALESCE_WINDOW);
+        assert!(start.elapsed() < COALESCE_WINDOW * 5);
+    }
+
+    /// Chunks that arrive spaced further apart than `COALESCE_WINDOW` must
+    /// stay in separate batches — coalescing must not merge unrelated bursts
+    /// into one giant delayed emission.
+    #[test]
+    fn keeps_slow_chunks_separate() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(b"first".to_vec()).unwrap();
+        let tx2 = tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(COALESCE_WINDOW * 3);
+            tx2.send(b"second".to_vec()).unwrap();
+        });
+
+        let first = next_coalesced_batch(&rx).expect("first batch");
+        assert_eq!(first, b"first");
+        let second = next_coalesced_batch(&rx).expect("second batch");
+        assert_eq!(second, b"second");
+    }
+
+    /// Once `COALESCE_MAX_BYTES` is reached the batch flushes immediately
+    /// instead of waiting out the rest of the window, bounding memory/latency
+    /// under a sustained firehose.
+    #[test]
+    fn flushes_early_once_max_bytes_reached() {
+        let (tx, rx) = mpsc::channel();
+        let big = vec![b'x'; COALESCE_MAX_BYTES];
+        tx.send(big.clone()).unwrap();
+        tx.send(b"tail".to_vec()).unwrap();
+        drop(tx);
+
+        let start = Instant::now();
+        let batch = next_coalesced_batch(&rx).expect("batch");
+        assert_eq!(batch.len(), COALESCE_MAX_BYTES);
+        // Should not have waited out the full coalescing window to flush.
+        assert!(start.elapsed() < COALESCE_WINDOW);
+
+        // The chunk that arrived after the cap was hit stays in the next batch.
+        let next = next_coalesced_batch(&rx).expect("next batch");
+        assert_eq!(next, b"tail");
     }
 }
