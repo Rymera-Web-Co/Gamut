@@ -18,6 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useGroups, useRepos } from "@/features/repos/api";
 import { repoPathRelativeToGroupFolder } from "@/lib/groupRepos";
 import { isImagePath } from "@/lib/images";
+import { fileReference, sendToActiveTerminal } from "@/features/terminal/sendToTerminal";
 import { useFileContent, useWorktreeStatus } from "./api";
 import { ImageView } from "./ImageView";
 import { RepoTree, type TreeChanges } from "./RepoTree";
@@ -111,6 +112,10 @@ export function FilesView() {
   const queryClient = useQueryClient();
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Mirror the open path in a ref so the editor's context-menu action (bound
+  // once at mount) always reads the file that's currently loaded (#199).
+  const selectedPathRef = useRef<string | null>(null);
+  selectedPathRef.current = selectedPath;
   const [value, setValue] = useState("");
   const [baseline, setBaseline] = useState("");
   // Which file the editor buffer currently belongs to — guards against the
@@ -511,6 +516,34 @@ export function FilesView() {
               onMount={(editor) => {
                 editorRef.current = editor;
                 setEditorReady(true);
+                // Right-click → "Send to Terminal": stage a GitHub-style
+                // `path#Lstart-Lend` reference for the current selection in the
+                // active terminal (#199). No selection → path with no lines.
+                editor.addAction({
+                  id: "gamut.sendToTerminal",
+                  label: "Send to Terminal",
+                  contextMenuGroupId: "9_cutcopypaste",
+                  contextMenuOrder: 3,
+                  run: (ed) => {
+                    const path = selectedPathRef.current;
+                    if (!path) return;
+                    const sel = ed.getSelection();
+                    let startLine: number | undefined;
+                    let endLine: number | undefined;
+                    if (sel && !sel.isEmpty()) {
+                      startLine = sel.startLineNumber;
+                      endLine = sel.endLineNumber;
+                      // A full-line drag ends at column 1 of the next line; that
+                      // trailing line isn't really part of the selection, so
+                      // don't let it inflate the range.
+                      if (sel.endColumn === 1 && endLine > startLine) endLine -= 1;
+                    } else if (sel) {
+                      // Collapsed caret → reference just the line it sits on.
+                      startLine = sel.startLineNumber;
+                    }
+                    sendToActiveTerminal(fileReference(path, startLine, endLine));
+                  },
+                });
               }}
               options={{
                 minimap: { enabled: false },
