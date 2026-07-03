@@ -129,7 +129,9 @@ export const DEFAULTS: Settings = {
   editorWordWrap: false,
   terminalFontSize: 13,
   terminalFontFamily: "",
-  terminalCursorBlink: true,
+  // Off by default: a blinking cursor repaints every pane ~2x/sec even when
+  // fully idle, which adds up across many open terminals. See #208.
+  terminalCursorBlink: false,
   toastTimeout: 6000,
   // Off → markdown opens in the editable source; the Files view's Edit/Preview
   // toggle still works per-file regardless.
