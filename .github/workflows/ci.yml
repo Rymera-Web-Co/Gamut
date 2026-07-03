@@ -83,3 +83,29 @@ jobs:
       - name: Test
         working-directory: src-tauri
         run: cargo test
+
+  # Windows-only code (`#[cfg(windows)]`) is never compiled or tested by the
+  # ubuntu `backend` job, and `nightly.yml`'s windows build only runs
+  # `tauri-action`, never `cargo test`. This job gives PR-time coverage for the
+  # Windows paths: `cargo check` compiles the `#[cfg(windows)]` blocks and
+  # `cargo test` runs their assertions. fmt/clippy already run cross-platform on
+  # the ubuntu job, so they aren't repeated here. See #221.
+  backend-windows:
+    name: Backend (windows check + test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
