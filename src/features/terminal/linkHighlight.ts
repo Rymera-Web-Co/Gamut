@@ -98,9 +98,10 @@ export interface LinkHighlighter {
  * Give clickable URLs a persistent, hover-independent treatment: the addon only
  * underlines on hover, and xterm has no link color in its theme, so we overlay
  * one decoration per URL row segment — tinted to the link accent and underlined
- * via the decoration's DOM element. Rescans are coalesced into an animation
- * frame and triggered by output (`onWriteParsed`) and scrolling (`onScroll`);
- * creating decorations triggers a render, not those events, so there's no loop.
+ * via the decoration's DOM element. Rescans are throttled (see
+ * `RESCAN_INTERVAL_MS`) and triggered by output (`onWriteParsed`) and scrolling
+ * (`onScroll`); creating decorations triggers a render, not those events, so
+ * there's no loop.
  *
  * Decorations are anchored to absolute buffer rows, so a link already on screen
  * stays correctly positioned as the buffer scrolls. Each rescan therefore
@@ -108,9 +109,19 @@ export interface LinkHighlighter {
  * and dropping ones that scrolled away — rather than tearing everything down and
  * rebuilding it, which made the links blink under continuous output.
  */
+
+/**
+ * Floor on time between rescans. Busy output fires `onWriteParsed` roughly
+ * once per animation frame (~60Hz); a full rescan re-walks the viewport,
+ * rebuilds wrapped lines and re-runs the URL regex, which is wasted work at
+ * that rate. ~8Hz is fast enough that new links still feel immediate.
+ */
+const RESCAN_INTERVAL_MS = 120;
+
 export function attachLinkHighlighter(term: Terminal, getColor: () => string): LinkHighlighter {
   const active = new Map<string, { decoration: IDisposable; marker: IDisposable }>();
-  let frame = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastRun = 0;
   let disposed = false;
 
   const clear = () => {
@@ -122,7 +133,8 @@ export function attachLinkHighlighter(term: Terminal, getColor: () => string): L
   };
 
   const rescan = () => {
-    frame = 0;
+    timer = undefined;
+    lastRun = performance.now();
     if (disposed) return;
     const buf = term.buffer.active;
     // Full-screen/TUI apps (vim, htop, …) repaint constantly and their links
@@ -172,8 +184,9 @@ export function attachLinkHighlighter(term: Terminal, getColor: () => string): L
   };
 
   const schedule = () => {
-    if (frame || disposed) return;
-    frame = requestAnimationFrame(rescan);
+    if (timer || disposed) return;
+    const delay = Math.max(0, RESCAN_INTERVAL_MS - (performance.now() - lastRun));
+    timer = setTimeout(rescan, delay);
   };
 
   const listeners = [term.onWriteParsed(schedule), term.onScroll(schedule)];
@@ -186,7 +199,7 @@ export function attachLinkHighlighter(term: Terminal, getColor: () => string): L
     },
     dispose() {
       disposed = true;
-      if (frame) cancelAnimationFrame(frame);
+      if (timer) clearTimeout(timer);
       for (const l of listeners) l.dispose();
       clear();
     },
