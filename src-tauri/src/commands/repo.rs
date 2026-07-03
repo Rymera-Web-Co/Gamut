@@ -153,6 +153,16 @@ fn discovery_opts(conn: &Connection) -> (usize, Vec<String>) {
     (depth, prune)
 }
 
+/// The prune list the filesystem watcher uses to skip heavy/ignored
+/// directories (e.g. `node_modules`) inside a repo's working tree, mirroring
+/// the folder-scan discovery options so the two stay consistent.
+pub fn watch_prune_dirs(state: &AppState) -> Vec<String> {
+    let Ok(conn) = state.db.lock() else {
+        return git::default_prune_dirs();
+    };
+    discovery_opts(&conn).1
+}
+
 /// Scan a bound group's folder and add (never remove) the folder itself plus
 /// every discovered git repo and repo-free leaf folder to the group. Add-only
 /// and idempotent: entries already registered/assigned are untouched. Honors the
