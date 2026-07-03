@@ -34,6 +34,7 @@ pub fn run() {
                 gh_token: Mutex::new(None),
                 watcher: Mutex::new(None),
                 bound_folders: Mutex::new(Vec::new()),
+                watched_repo_dirs: Mutex::new(HashMap::new()),
                 terminals: Mutex::new(HashMap::new()),
                 terminal_registry: Mutex::new(Vec::new()),
                 git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),

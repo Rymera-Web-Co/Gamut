@@ -15,38 +15,62 @@ import { queryClient } from "@/lib/queryClient";
 const COALESCE_MS = 250;
 
 /**
+ * Query keys that carry a repo id as their second element (`[key, repoId]`),
+ * so invalidation can be scoped to just the repos the watcher says changed
+ * instead of every repo (#206).
+ */
+const REPO_SCOPED_KEYS = [
+  "branches",
+  "git-tags",
+  "log",
+  "review-files",
+  "worktree-status",
+  "worktree-file-diff",
+  "stash-list",
+  "sync-status",
+  // Files tab: directory listings and open-file contents.
+  "dir",
+  "file",
+];
+
+/**
  * Listen for the backend's `repos-changed` event (emitted when a watched repo's
  * working tree changes outside the app — a branch switch or commit in a
  * terminal, or a file edited in another editor/IDE) and refetch the
  * git-derived queries so the UI stays live. Bursts are coalesced so one storm
- * of events triggers one invalidation round rather than many.
+ * of events triggers one invalidation round rather than many. The event
+ * carries the ids of the repos that actually changed (or `null` when the
+ * backend can't narrow it down), so a round only refetches those repos'
+ * queries rather than re-scanning the whole fleet — `repo-statuses` is a
+ * single aggregate query with no per-repo variant, so it's always refreshed.
  */
 export function useGitWatch() {
   useEffect(() => {
-    const keys = [
-      "repo-statuses",
-      "branches",
-      "git-tags",
-      "log",
-      "review-files",
-      "worktree-status",
-      "worktree-file-diff",
-      "stash-list",
-      "sync-status",
-      // Files tab: directory listings and open-file contents.
-      "dir",
-      "file",
-    ];
-
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let repoIds = new Set<number>();
+    let fullInvalidate = false;
+
     const flush = () => {
       timer = null;
-      for (const key of keys) {
-        queryClient.invalidateQueries({ queryKey: [key] });
+      queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
+      if (fullInvalidate) {
+        for (const key of REPO_SCOPED_KEYS) {
+          queryClient.invalidateQueries({ queryKey: [key] });
+        }
+      } else {
+        for (const id of repoIds) {
+          for (const key of REPO_SCOPED_KEYS) {
+            queryClient.invalidateQueries({ queryKey: [key, id] });
+          }
+        }
       }
+      repoIds = new Set();
+      fullInvalidate = false;
     };
 
-    const unlisten = listen("repos-changed", () => {
+    const unlisten = listen<number[] | null>("repos-changed", (event) => {
+      if (event.payload == null) fullInvalidate = true;
+      else for (const id of event.payload) repoIds.add(id);
       if (timer) clearTimeout(timer);
       timer = setTimeout(flush, COALESCE_MS);
     });
