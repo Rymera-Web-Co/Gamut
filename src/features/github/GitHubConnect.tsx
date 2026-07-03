@@ -1,16 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Github, Loader2, LogOut, ExternalLink, Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { copy } from "@/lib/clipboard";
 import { ipc, type DeviceCode } from "@/lib/ipc";
@@ -123,48 +117,74 @@ export function GitHubConnect() {
   const auth = useGithubAuth();
   const logout = useLogout();
   const [open, setOpen] = useState(false);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const connected = auth.data?.logged_in ?? false;
+  const login = auth.data?.login;
+
+  // A broken avatar for one account shouldn't stick around after switching accounts.
+  useEffect(() => {
+    setAvatarBroken(false);
+  }, [login]);
 
   return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        title={connected ? `GitHub: ${auth.data?.login}` : "Connect to GitHub"}
-        className="relative mt-1 flex size-10 items-center justify-center rounded-lg text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
-      >
-        <Github className="size-5" />
-        {connected && (
-          <span className="absolute bottom-1 right-1 size-2 rounded-full border border-[var(--color-sidebar)] bg-[#16a34a]" />
-        )}
-      </button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Github className="size-4" /> GitHub
-            </DialogTitle>
-          </DialogHeader>
-
-          {connected ? (
-            <div className="flex flex-col gap-3 py-2">
-              <p className="text-sm">
-                Signed in as <span className="font-medium">{auth.data?.login}</span>
-              </p>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => logout.mutate(undefined, { onSuccess: () => setOpen(false) })}
-                >
-                  <LogOut /> Sign out
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <ConnectBody onDone={() => setOpen(false)} />
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          title={connected ? `GitHub: ${login ?? "Connected"}` : "Connect to GitHub"}
+          className="relative mt-1 flex size-10 items-center justify-center rounded-lg text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        >
+          <Github className="size-5" />
+          {/* Amber dot only when disconnected — signals "action needed: connect".
+              Once signed in (or while auth is still loading) there's nothing to
+              act on yet, so no dot. */}
+          {!auth.isLoading && !connected && (
+            <span className="absolute bottom-1 right-1 size-2 rounded-full border border-[var(--color-sidebar)] bg-[#f59e0b]" />
           )}
-        </DialogContent>
-      </Dialog>
-    </>
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent
+        side="right"
+        align="end"
+        sideOffset={8}
+        aria-label="GitHub account"
+        className="w-72 p-3"
+      >
+        {connected ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              {login && !avatarBroken ? (
+                <img
+                  src={`https://github.com/${login}.png`}
+                  alt=""
+                  onError={() => setAvatarBroken(true)}
+                  className="size-9 shrink-0 rounded-full"
+                />
+              ) : (
+                <Github className="size-9 shrink-0 rounded-full border p-1.5" />
+              )}
+              <span className="truncate font-medium">{login ?? "Connected"}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!login}
+              onClick={() => login && openUrl(`https://github.com/${login}`)}
+            >
+              <ExternalLink /> View on GitHub
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => logout.mutate(undefined, { onSuccess: () => setOpen(false) })}
+            >
+              <LogOut /> Sign out
+            </Button>
+          </div>
+        ) : (
+          <ConnectBody onDone={() => setOpen(false)} />
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
