@@ -80,6 +80,14 @@ fn is_macos_bundle(name: &str) -> bool {
     BUNDLE_SUFFIXES.iter().any(|suffix| lower.ends_with(suffix))
 }
 
+/// Whether a directory named `name` should be skipped when walking a tree: a
+/// dotfile directory, a macOS bundle, or explicitly listed in `prune`. Shared by
+/// folder discovery and the filesystem watcher, which both need to avoid
+/// descending into the same heavy/ignored directories.
+pub(crate) fn is_pruned_dir(name: &str, prune: &[String]) -> bool {
+    name.starts_with('.') || is_macos_bundle(name) || prune.iter().any(|p| p == name)
+}
+
 /// Outcome of walking a directory subtree, used to decide which non-git folders
 /// to surface.
 enum Walk {
@@ -174,10 +182,7 @@ fn walk(
         }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.')
-            || is_macos_bundle(&name)
-            || prune.iter().any(|p| p == name.as_ref())
-        {
+        if is_pruned_dir(&name, prune) {
             continue;
         }
         match walk(&path, depth + 1, max_depth, prune, out) {

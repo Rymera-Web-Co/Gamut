@@ -1,18 +1,21 @@
 //! Filesystem watcher over each registered repo's working tree, so changes made
 //! outside the app — a branch switch or commit in a terminal, *and* a file
 //! edited in another editor/IDE — are reflected live. A non-bare repo's working
-//! tree is watched recursively (which also covers its `.git`); a debounced
-//! batch emits a single `repos-changed` event to the frontend, carrying the ids
-//! of the repos whose watched directory actually contained a changed path (or
-//! `None` when the affected repos can't be narrowed down, e.g. a folder-bound
-//! group just added new repos) so the frontend can scope its refetch instead of
-//! re-scanning every repo (#206). Events are filtered so `.git` object/log
-//! churn doesn't trigger needless refreshes — only working-tree files and the
-//! refs/HEAD/index that reflect repo state count. Bare repos have no work
-//! tree, so we watch only their `refs/` and top-level git-state files, never
-//! the object store.
+//! tree is watched directory-by-directory (non-recursively), skipping heavy or
+//! ignored directories (`node_modules`, `target`, `.git`, …) so build/install
+//! churn inside them never reaches the OS watch layer; newly created
+//! directories are picked up as they appear. Its `.git` is watched the same way
+//! bare repos are — `refs/` and top-level git-state files, never the object
+//! store. A debounced batch emits a single `repos-changed` event to the
+//! frontend, carrying the ids of the repos whose watched directory actually
+//! contained a changed path (or `None` when the affected repos can't be
+//! narrowed down, e.g. a folder-bound group just added new repos) so the
+//! frontend can scope its refetch instead of re-scanning every repo (#206).
+//! Events are further filtered so `.git` log churn doesn't trigger needless
+//! refreshes — only working-tree files and the refs/HEAD/index that reflect
+//! repo state count.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -32,8 +35,9 @@ pub const REPOS_CHANGED: &str = "repos-changed";
 
 pub struct RepoWatcher {
     debouncer: Debouncer<RecommendedWatcher>,
-    /// The directories currently watched, each with its recursion mode (a repo's
-    /// working tree recursively, or a bare repo's git-state paths).
+    /// The directories currently watched, each with its recursion mode: a
+    /// repo's git-state paths, or one entry per (non-pruned) directory in a
+    /// non-bare repo's working tree.
     watched: HashMap<PathBuf, RecursiveMode>,
 }
 
@@ -116,6 +120,20 @@ impl RepoWatcher {
                     }
                 }
 
+                // A watched directory is non-recursive, so a subdirectory
+                // created inside it needs its own explicit watch to keep
+                // picking up further changes (and any of its own
+                // subdirectories already created alongside it, e.g. via
+                // `mkdir -p`).
+                let prune = crate::commands::repo::watch_prune_dirs(&state);
+                if let Ok(mut guard) = state.watcher.lock() {
+                    if let Some(w) = guard.as_mut() {
+                        let candidates: Vec<PathBuf> =
+                            events.iter().map(|e| e.path.clone()).collect();
+                        w.learn_new_dirs(&candidates, &prune);
+                    }
+                }
+
                 // Otherwise emit only when the batch touched something worth a
                 // refresh (a working-tree file or a git-state ref), not on
                 // internal `.git` object/log noise — and resolve which repo(s)
@@ -168,6 +186,90 @@ impl RepoWatcher {
         }
         self.watched = desired;
     }
+
+    /// Given paths touched by a debounced batch, watch any that are directories
+    /// not already watched and aren't pruned — e.g. a directory just created
+    /// inside a non-recursively watched working tree.
+    pub fn learn_new_dirs(&mut self, candidates: &[PathBuf], prune: &[String]) {
+        for dir in new_watchable_dirs(candidates, &self.watched, prune) {
+            let _ = self
+                .debouncer
+                .watcher()
+                .watch(&dir, RecursiveMode::NonRecursive);
+            self.watched.insert(dir, RecursiveMode::NonRecursive);
+        }
+    }
+}
+
+/// Directories among `candidates` that should start being watched: not already
+/// watched, still present as directories, and not pruned (`.git` included).
+/// Recurses into each newly-found directory to pick up any subdirectories
+/// already present, so `mkdir -p a/b/c` yields `a`, `b`, and `c` in one pass.
+/// Uses `symlink_metadata` (never follows symlinks) so a symlink cycle inside
+/// the tree (e.g. `ln -s .. sub/link`) can't send this walk into unbounded
+/// recursion the way the previous `RecursiveMode::Recursive` OS watch, whose
+/// cycle handling this replaced, did not need to worry about.
+fn new_watchable_dirs(
+    candidates: &[PathBuf],
+    already_watched: &HashMap<PathBuf, RecursiveMode>,
+    prune: &[String],
+) -> Vec<PathBuf> {
+    let mut found: HashSet<PathBuf> = HashSet::new();
+    let mut queue: Vec<PathBuf> = candidates.to_vec();
+    while let Some(dir) = queue.pop() {
+        if already_watched.contains_key(&dir) || found.contains(&dir) {
+            continue;
+        }
+        let is_dir = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            continue;
+        }
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
+        if name.as_deref() == Some(".git") || name.is_some_and(|n| git::is_pruned_dir(&n, prune)) {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            queue.extend(
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())),
+            );
+        }
+        found.insert(dir);
+    }
+    found.into_iter().collect()
+}
+
+/// Directories to watch non-recursively within a non-bare repo's working tree:
+/// the tree root plus every subdirectory, skipping `.git` (watched separately
+/// via git-state paths, like a bare repo) and heavy/ignored directories from
+/// `prune` — so build/install churn inside e.g. `node_modules` never reaches
+/// the OS watch layer. Uses `symlink_metadata` (never follows symlinks) so a
+/// symlink cycle inside the tree can't send this walk into unbounded recursion.
+fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
+    let mut dirs = vec![work.to_path_buf()];
+    let mut queue = vec![work.to_path_buf()];
+    while let Some(dir) = queue.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+            if !is_dir {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == ".git" || git::is_pruned_dir(&name, prune) {
+                continue;
+            }
+            dirs.push(path.clone());
+            queue.push(path);
+        }
+    }
+    dirs
 }
 
 /// Recompute the set of repo git dirs from the DB and update the watcher.
@@ -190,6 +292,7 @@ pub fn resync(state: &AppState) {
             .unwrap_or_default();
         (repos, bound)
     };
+    let prune = crate::commands::repo::watch_prune_dirs(state);
 
     let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
     // Watched repo root directory -> repo id, so the debounced callback can
@@ -199,19 +302,28 @@ pub fn resync(state: &AppState) {
         let Ok(repo) = git::open(Path::new(path)) else {
             continue;
         };
-        if let Some(work) = repo.workdir() {
-            // Non-bare: watch the whole working tree (also covers its `.git`).
-            desired.insert(work.to_path_buf(), RecursiveMode::Recursive);
-            repo_dirs.insert(work.to_path_buf(), *id);
-        } else {
-            // Bare: no work tree. Watch `refs/` (recursive) for branch/tag
-            // changes and the git dir non-recursively for HEAD/packed-refs/
-            // index — but NOT the object store, which would flood on every
-            // loose object written during a fetch.
-            let git_dir = repo.path().to_path_buf();
-            desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
-            desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
-            repo_dirs.insert(git_dir, *id);
+
+        // Watch `refs/` (recursive) for branch/tag changes and the git dir
+        // non-recursively for HEAD/packed-refs/index — but NOT the object
+        // store, which would flood on every loose object written during a
+        // fetch. Applies to both bare repos and a non-bare repo's `.git`.
+        let git_dir = repo.path().to_path_buf();
+        desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
+        desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
+
+        // Non-bare: also watch the working tree directory-by-directory,
+        // skipping heavy/ignored dirs so build/install churn inside e.g.
+        // `node_modules` never reaches the OS watch layer.
+        match repo.workdir() {
+            Some(work) => {
+                for dir in workdir_watch_dirs(work, &prune) {
+                    desired.insert(dir, RecursiveMode::NonRecursive);
+                }
+                repo_dirs.insert(work.to_path_buf(), *id);
+            }
+            None => {
+                repo_dirs.insert(git_dir, *id);
+            }
         }
     }
     if let Ok(mut g) = state.watched_repo_dirs.lock() {
@@ -245,6 +357,30 @@ pub fn resync(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    fn touch_dir(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn is_interesting_flags_working_tree_files_and_git_state() {
+        assert!(is_interesting(Path::new("/repo/src/main.rs")));
+        assert!(is_interesting(Path::new("/repo/.git/HEAD")));
+        assert!(is_interesting(Path::new("/repo/.git/refs/heads/main")));
+        assert!(is_interesting(Path::new("/repo/.git")));
+    }
+
+    #[test]
+    fn is_interesting_ignores_git_object_and_log_churn() {
+        assert!(!is_interesting(Path::new("/repo/.git/objects/ab/cdef1234")));
+        assert!(!is_interesting(Path::new("/repo/.git/logs/HEAD")));
+    }
 
     #[test]
     fn resolves_single_repo() {
@@ -280,5 +416,92 @@ mod tests {
         let watched = HashMap::from([(PathBuf::from("/repos/bare.git"), 7)]);
         let path = PathBuf::from("/repos/bare.git/refs/heads/main");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), Some(vec![7]));
+    }
+
+    #[test]
+    fn workdir_watch_dirs_skips_pruned_and_git() {
+        let work = temp_root("gamut_watch_workdir_test");
+        touch_dir(&work.join("src/nested"));
+        touch_dir(&work.join("node_modules/pkg"));
+        touch_dir(&work.join(".git/objects"));
+
+        let prune = vec!["node_modules".to_string()];
+        let dirs = workdir_watch_dirs(&work, &prune);
+
+        assert!(dirs.contains(&work));
+        assert!(dirs.contains(&work.join("src")));
+        assert!(dirs.contains(&work.join("src/nested")));
+        assert!(!dirs
+            .iter()
+            .any(|d| d.starts_with(work.join("node_modules"))));
+        assert!(!dirs.iter().any(|d| d.starts_with(work.join(".git"))));
+
+        std::fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[test]
+    fn new_watchable_dirs_skips_already_watched_and_pruned() {
+        let work = temp_root("gamut_watch_new_dirs_test");
+        let existing = work.join("existing");
+        let fresh = work.join("fresh");
+        let fresh_nested = fresh.join("nested");
+        let pruned = work.join("target");
+        touch_dir(&existing);
+        touch_dir(&fresh_nested);
+        touch_dir(&pruned);
+
+        let mut watched = HashMap::new();
+        watched.insert(existing.clone(), RecursiveMode::NonRecursive);
+
+        let prune = vec!["target".to_string()];
+        let candidates = vec![existing.clone(), fresh.clone(), pruned.clone()];
+        let found = new_watchable_dirs(&candidates, &watched, &prune);
+
+        assert!(!found.contains(&existing));
+        assert!(found.contains(&fresh));
+        assert!(found.contains(&fresh_nested));
+        assert!(!found.contains(&pruned));
+
+        std::fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[test]
+    fn new_watchable_dirs_ignores_missing_paths() {
+        let missing = std::env::temp_dir().join("gamut_watch_missing_dir_test");
+        let _ = std::fs::remove_dir_all(&missing);
+        let found = new_watchable_dirs(&[missing], &HashMap::new(), &[]);
+        assert!(found.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workdir_watch_dirs_does_not_follow_symlink_cycle() {
+        let work = temp_root("gamut_watch_symlink_cycle_test");
+        touch_dir(&work.join("sub"));
+        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
+
+        let dirs = workdir_watch_dirs(&work, &[]);
+
+        assert!(dirs.contains(&work));
+        assert!(dirs.contains(&work.join("sub")));
+        assert!(!dirs.iter().any(|d| d.starts_with(work.join("sub/link"))));
+
+        std::fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_watchable_dirs_does_not_follow_symlink_cycle() {
+        let work = temp_root("gamut_watch_new_dirs_symlink_cycle_test");
+        touch_dir(&work.join("sub"));
+        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
+
+        let found = new_watchable_dirs(&[work.clone()], &HashMap::new(), &[]);
+
+        assert!(found.contains(&work));
+        assert!(found.contains(&work.join("sub")));
+        assert!(!found.iter().any(|d| d.starts_with(work.join("sub/link"))));
+
+        std::fs::remove_dir_all(&work).unwrap();
     }
 }
