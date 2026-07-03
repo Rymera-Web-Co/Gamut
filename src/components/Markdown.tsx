@@ -194,7 +194,9 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
 function splitFrontmatter(source: string): { frontmatter: string | null; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(source);
   if (!m) return { frontmatter: null, body: source };
-  return { frontmatter: m[1], body: source.slice(m[0].length) };
+  // Treat a whitespace-only block as absent so it doesn't render an empty
+  // styled block; the fences are still consumed from the body.
+  return { frontmatter: m[1].trim() || null, body: source.slice(m[0].length) };
 }
 
 /** Strip a single pair of matching surrounding quotes from a scalar value. */
@@ -269,8 +271,8 @@ export function Markdown({
           <div className="mb-4 border-b border-[var(--color-border)] pb-3">
             <table className="!my-0 w-auto text-xs text-[var(--color-muted-foreground)]">
               <tbody>
-                {frontmatterRows.map((row) => (
-                  <tr key={row.key} className="!border-0 align-top">
+                {frontmatterRows.map((row, index) => (
+                  <tr key={`${row.key}-${index}`} className="!border-0 align-top">
                     <td className="!border-0 !py-0.5 !pr-3 !pl-0 font-medium whitespace-nowrap">
                       {row.key}
                     </td>
@@ -327,7 +329,7 @@ export function Markdown({
           },
         }}
       >
-        {(frontmatter != null ? body : children) || "_No description provided._"}
+        {body || "_No description provided._"}
       </ReactMarkdown>
     </div>
   );

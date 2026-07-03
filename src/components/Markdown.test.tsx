@@ -67,6 +67,13 @@ describe("Markdown frontmatter", () => {
     expect(container.textContent).toContain("- just");
   });
 
+  it("skips an empty frontmatter block without rendering an empty styled block", () => {
+    const { container } = render(<Markdown>{`---\n\n---\n\nbody`}</Markdown>);
+    expect(container.querySelector("hr")).toBeNull();
+    expect(container.querySelector("tbody")).toBeNull();
+    expect(container.querySelector("p")?.textContent).toBe("body");
+  });
+
   it("leaves a mid-document thematic break alone", () => {
     const { container } = render(<Markdown>{`before\n\n---\n\nafter`}</Markdown>);
     expect(container.querySelector("hr")).not.toBeNull();
