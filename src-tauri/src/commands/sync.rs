@@ -5,6 +5,7 @@ use tokio::process::Command;
 
 use crate::commands::history::{open_repo, repo_path};
 use crate::error::{AppError, AppResult};
+use crate::process::NoWindow;
 use crate::state::AppState;
 
 /// Run a git CLI command in `dir`, returning stdout (or stderr on failure).
@@ -15,6 +16,7 @@ pub(crate) async fn run_git(dir: &str, args: &[&str]) -> AppResult<String> {
         .arg("-C")
         .arg(dir)
         .args(args)
+        .no_window()
         .output()
         .await
         .map_err(|e| AppError::Other(format!("failed to run git: {e}")))?;

@@ -5,6 +5,8 @@
 //! plus their unit tests. `owner_repo`, which resolves a repo's `origin` via
 //! `State`, stays in `mod.rs` and calls into these.
 
+use crate::process::NoWindow;
+
 /// Whether `host` is GitHub, including custom SSH host aliases that resolve to
 /// `github.com` (a common multi-identity setup, e.g. `rymera.github.com` or
 /// `github.com-work` in `~/.ssh/config`). Non-GitHub hosts like `gitlab.com`
@@ -92,6 +94,7 @@ pub(super) fn ssh_alias_resolves_to_github(host: &str) -> bool {
     let Ok(output) = std::process::Command::new("ssh")
         .arg("-G")
         .arg(host)
+        .no_window()
         .output()
     else {
         return false;
