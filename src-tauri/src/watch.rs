@@ -496,7 +496,7 @@ mod tests {
         touch_dir(&work.join("sub"));
         std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
 
-        let found = new_watchable_dirs(&[work.clone()], &HashMap::new(), &[]);
+        let found = new_watchable_dirs(std::slice::from_ref(&work), &HashMap::new(), &[]);
 
         assert!(found.contains(&work));
         assert!(found.contains(&work.join("sub")));
