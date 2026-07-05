@@ -274,16 +274,36 @@ fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
 
 /// Recompute the set of repo git dirs from the DB and update the watcher.
 ///
-/// The DB reads above are cheap and stay on the calling thread, but walking
-/// each repo's working tree and registering a watch per directory is not — on
-/// macOS in particular, every individual `watch()` call does a full
-/// `FSEventStreamCreate`, so a large repo fleet can take a long time to
+/// Walking each repo's working tree and registering a watch per directory is
+/// not cheap — on macOS in particular, every individual `watch()` call does a
+/// full `FSEventStreamCreate`, so a large repo fleet can take a long time to
 /// resync (#225). `resync` runs from the synchronous `.setup()` hook and from
 /// synchronous `#[tauri::command]`s, both of which execute on Tauri's
-/// main/UI thread, so that work runs on a blocking thread instead of inline —
-/// the same hazard `git_worktree_status` had before #88.
+/// main/UI thread, so the entire rebuild — including the DB read — runs on a
+/// blocking thread instead of inline, the same hazard `git_worktree_status`
+/// had before #88. `resync_lock` serializes overlapping rebuilds (e.g. two
+/// repos added in quick succession) and, because the DB is re-read fresh only
+/// after the lock is acquired, whichever rebuild runs last always reflects
+/// the current DB state — so an out-of-order finish can no longer clobber a
+/// newer rebuild with stale data (#226).
 pub fn resync(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let state = app.state::<AppState>();
+            let _guard = state.resync_lock.lock().unwrap_or_else(|e| e.into_inner());
+            resync_locked(&state);
+        })
+        .await;
+        if let Err(e) = result {
+            eprintln!("watcher resync task panicked: {e}");
+        }
+    });
+}
+
+/// The actual rebuild, run while `AppState::resync_lock` is held (see
+/// `resync`).
+fn resync_locked(state: &AppState) {
     let (repos, bound): (Vec<(i64, String)>, Vec<String>) = {
         let Ok(conn) = state.db.lock() else { return };
         let repos = conn
@@ -302,76 +322,67 @@ pub fn resync(app: &AppHandle) {
             .unwrap_or_default();
         (repos, bound)
     };
-    let prune = crate::commands::repo::watch_prune_dirs(&state);
+    let prune = crate::commands::repo::watch_prune_dirs(state);
 
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        // Serialize overlapping resyncs (e.g. two repos added in quick
-        // succession) so they can't finish out of order and let an older
-        // rebuild clobber a newer one's watcher state.
-        let _guard = state.resync_lock.lock().unwrap_or_else(|e| e.into_inner());
-
-        let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
-        // Watched repo root directory -> repo id, so the debounced callback can
-        // resolve a changed path back to the repo(s) it belongs to (#206).
-        let mut repo_dirs: HashMap<PathBuf, i64> = HashMap::new();
-        for (id, path) in &repos {
-            let Ok(repo) = git::open(Path::new(path)) else {
-                continue;
-            };
-
-            // Watch `refs/` (recursive) for branch/tag changes and the git dir
-            // non-recursively for HEAD/packed-refs/index — but NOT the object
-            // store, which would flood on every loose object written during a
-            // fetch. Applies to both bare repos and a non-bare repo's `.git`.
-            let git_dir = repo.path().to_path_buf();
-            desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
-            desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
-
-            // Non-bare: also watch the working tree directory-by-directory,
-            // skipping heavy/ignored dirs so build/install churn inside e.g.
-            // `node_modules` never reaches the OS watch layer.
-            match repo.workdir() {
-                Some(work) => {
-                    for dir in workdir_watch_dirs(work, &prune) {
-                        desired.insert(dir, RecursiveMode::NonRecursive);
-                    }
-                    repo_dirs.insert(work.to_path_buf(), *id);
-                }
-                None => {
-                    repo_dirs.insert(git_dir, *id);
-                }
-            }
-        }
-        if let Ok(mut g) = state.watched_repo_dirs.lock() {
-            *g = repo_dirs;
-        }
-
-        // Watch each folder-bound group's folder recursively so newly-cloned
-        // repos anywhere beneath it are detected. The prune list is honored at
-        // scan time, not here, so heavy dirs (node_modules, …) are skipped
-        // when we re-discover.
-        let mut bound_canonical: Vec<PathBuf> = Vec::new();
-        for folder in &bound {
-            let pb = PathBuf::from(folder);
-            if !pb.is_dir() {
-                continue;
-            }
-            let canonical = pb.canonicalize().unwrap_or_else(|_| pb.clone());
-            desired.insert(canonical.clone(), RecursiveMode::Recursive);
-            bound_canonical.push(canonical);
-        }
-        if let Ok(mut g) = state.bound_folders.lock() {
-            *g = bound_canonical;
-        }
-
-        if let Ok(mut guard) = state.watcher.lock() {
-            if let Some(w) = guard.as_mut() {
-                w.sync(desired);
-            }
+    let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
+    // Watched repo root directory -> repo id, so the debounced callback can
+    // resolve a changed path back to the repo(s) it belongs to (#206).
+    let mut repo_dirs: HashMap<PathBuf, i64> = HashMap::new();
+    for (id, path) in &repos {
+        let Ok(repo) = git::open(Path::new(path)) else {
+            continue;
         };
-    });
+
+        // Watch `refs/` (recursive) for branch/tag changes and the git dir
+        // non-recursively for HEAD/packed-refs/index — but NOT the object
+        // store, which would flood on every loose object written during a
+        // fetch. Applies to both bare repos and a non-bare repo's `.git`.
+        let git_dir = repo.path().to_path_buf();
+        desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
+        desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
+
+        // Non-bare: also watch the working tree directory-by-directory,
+        // skipping heavy/ignored dirs so build/install churn inside e.g.
+        // `node_modules` never reaches the OS watch layer.
+        match repo.workdir() {
+            Some(work) => {
+                for dir in workdir_watch_dirs(work, &prune) {
+                    desired.insert(dir, RecursiveMode::NonRecursive);
+                }
+                repo_dirs.insert(work.to_path_buf(), *id);
+            }
+            None => {
+                repo_dirs.insert(git_dir, *id);
+            }
+        }
+    }
+    if let Ok(mut g) = state.watched_repo_dirs.lock() {
+        *g = repo_dirs;
+    }
+
+    // Watch each folder-bound group's folder recursively so newly-cloned
+    // repos anywhere beneath it are detected. The prune list is honored at
+    // scan time, not here, so heavy dirs (node_modules, …) are skipped
+    // when we re-discover.
+    let mut bound_canonical: Vec<PathBuf> = Vec::new();
+    for folder in &bound {
+        let pb = PathBuf::from(folder);
+        if !pb.is_dir() {
+            continue;
+        }
+        let canonical = pb.canonicalize().unwrap_or_else(|_| pb.clone());
+        desired.insert(canonical.clone(), RecursiveMode::Recursive);
+        bound_canonical.push(canonical);
+    }
+    if let Ok(mut g) = state.bound_folders.lock() {
+        *g = bound_canonical;
+    }
+
+    if let Ok(mut guard) = state.watcher.lock() {
+        if let Some(w) = guard.as_mut() {
+            w.sync(desired);
+        }
+    };
 }
 
 #[cfg(test)]
