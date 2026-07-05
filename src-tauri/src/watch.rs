@@ -273,7 +273,37 @@ fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
 }
 
 /// Recompute the set of repo git dirs from the DB and update the watcher.
-pub fn resync(state: &AppState) {
+///
+/// Walking each repo's working tree and registering a watch per directory is
+/// not cheap — on macOS in particular, every individual `watch()` call does a
+/// full `FSEventStreamCreate`, so a large repo fleet can take a long time to
+/// resync (#225). `resync` runs from the synchronous `.setup()` hook and from
+/// synchronous `#[tauri::command]`s, both of which execute on Tauri's
+/// main/UI thread, so the entire rebuild — including the DB read — runs on a
+/// blocking thread instead of inline, the same hazard `git_worktree_status`
+/// had before #88. `resync_lock` serializes overlapping rebuilds (e.g. two
+/// repos added in quick succession) and, because the DB is re-read fresh only
+/// after the lock is acquired, whichever rebuild runs last always reflects
+/// the current DB state — so an out-of-order finish can no longer clobber a
+/// newer rebuild with stale data (#226).
+pub fn resync(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let state = app.state::<AppState>();
+            let _guard = state.resync_lock.lock().unwrap_or_else(|e| e.into_inner());
+            resync_locked(&state);
+        })
+        .await;
+        if let Err(e) = result {
+            eprintln!("watcher resync task panicked: {e}");
+        }
+    });
+}
+
+/// The actual rebuild, run while `AppState::resync_lock` is held (see
+/// `resync`).
+fn resync_locked(state: &AppState) {
     let (repos, bound): (Vec<(i64, String)>, Vec<String>) = {
         let Ok(conn) = state.db.lock() else { return };
         let repos = conn
@@ -330,9 +360,10 @@ pub fn resync(state: &AppState) {
         *g = repo_dirs;
     }
 
-    // Watch each folder-bound group's folder recursively so newly-cloned repos
-    // anywhere beneath it are detected. The prune list is honored at scan time,
-    // not here, so heavy dirs (node_modules, …) are skipped when we re-discover.
+    // Watch each folder-bound group's folder recursively so newly-cloned
+    // repos anywhere beneath it are detected. The prune list is honored at
+    // scan time, not here, so heavy dirs (node_modules, …) are skipped
+    // when we re-discover.
     let mut bound_canonical: Vec<PathBuf> = Vec::new();
     for folder in &bound {
         let pb = PathBuf::from(folder);
@@ -351,7 +382,7 @@ pub fn resync(state: &AppState) {
         if let Some(w) = guard.as_mut() {
             w.sync(desired);
         }
-    }
+    };
 }
 
 #[cfg(test)]

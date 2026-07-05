@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use git2::BranchType;
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::commands::settings;
 use crate::error::{AppError, AppResult};
@@ -250,7 +250,11 @@ pub fn sync_all_bound_groups(state: &AppState) -> usize {
 /// for the initial scan on bind and the "Rescan now" button. Returns the count
 /// of newly-added repos.
 #[tauri::command]
-pub fn sync_group_folder(state: State<AppState>, group_id: i64) -> AppResult<usize> {
+pub fn sync_group_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    group_id: i64,
+) -> AppResult<usize> {
     let added = {
         let conn = lock(&state)?;
         let folder: Option<String> = conn.query_row(
@@ -264,7 +268,7 @@ pub fn sync_group_folder(state: State<AppState>, group_id: i64) -> AppResult<usi
         }
     };
     // Pick up newly-registered repos (and the folder itself) for watching.
-    crate::watch::resync(&state);
+    crate::watch::resync(&app);
     Ok(added)
 }
 
@@ -326,24 +330,24 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
 /// Register a repo by path. Validates it's a git repo, derives name and
 /// current branch. If the path is already registered, returns the existing row.
 #[tauri::command]
-pub fn register_repo(state: State<AppState>, path: String) -> AppResult<Repo> {
+pub fn register_repo(app: AppHandle, state: State<AppState>, path: String) -> AppResult<Repo> {
     let conn = lock(&state)?;
     let (id, _) = register_path(&conn, &PathBuf::from(&path))?;
     let repo = load_repo(&conn, id)?;
     drop(conn); // release the DB lock before resync re-reads it
                 // The (re-)registered repo's origin may have changed; drop any stale slug.
     invalidate_origin_slug(&state, id);
-    crate::watch::resync(&state);
+    crate::watch::resync(&app);
     Ok(repo)
 }
 
 #[tauri::command]
-pub fn remove_repo(state: State<AppState>, id: i64) -> AppResult<()> {
+pub fn remove_repo(app: AppHandle, state: State<AppState>, id: i64) -> AppResult<()> {
     let conn = lock(&state)?;
     conn.execute("DELETE FROM repos WHERE id = ?1", [id])?;
     drop(conn); // release the DB lock before resync re-reads it
     invalidate_origin_slug(&state, id);
-    crate::watch::resync(&state);
+    crate::watch::resync(&app);
     Ok(())
 }
 
