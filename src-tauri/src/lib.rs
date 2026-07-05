@@ -54,7 +54,7 @@ pub fn run() {
                 Ok(w) => {
                     let state = app.state::<AppState>();
                     *state.watcher.lock().unwrap() = Some(w);
-                    watch::resync(&state);
+                    watch::resync(app.handle());
                 }
                 Err(e) => eprintln!("repo watcher init failed: {e}"),
             }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -178,6 +178,7 @@ pub fn list_groups(state: State<AppState>) -> AppResult<Vec<Group>> {
 
 #[tauri::command]
 pub fn create_group(
+    app: AppHandle,
     state: State<AppState>,
     name: String,
     parent_id: Option<i64>,
@@ -197,7 +198,7 @@ pub fn create_group(
     // A freshly bound folder should start being watched even before its first
     // scan completes, so new repos are picked up immediately.
     if folder_path.is_some() {
-        crate::watch::resync(&state);
+        crate::watch::resync(&app);
     }
     Ok(Group {
         id,
@@ -243,7 +244,12 @@ pub fn update_group(
 /// is already bound — the path is immutable once set. The caller should follow
 /// up with `sync_group_folder` to run the initial scan.
 #[tauri::command]
-pub fn bind_group_folder(state: State<AppState>, id: i64, folder_path: String) -> AppResult<()> {
+pub fn bind_group_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    id: i64,
+    folder_path: String,
+) -> AppResult<()> {
     let folder = folder_path.trim();
     if folder.is_empty() {
         return Ok(());
@@ -256,14 +262,14 @@ pub fn bind_group_folder(state: State<AppState>, id: i64, folder_path: String) -
             rusqlite::params![folder, id],
         )?;
     }
-    crate::watch::resync(&state);
+    crate::watch::resync(&app);
     Ok(())
 }
 
 /// Detach a group from its bound folder, converting it back to a plain manual
 /// group. Existing members are kept; the folder is simply no longer watched.
 #[tauri::command]
-pub fn unbind_group_folder(state: State<AppState>, id: i64) -> AppResult<()> {
+pub fn unbind_group_folder(app: AppHandle, state: State<AppState>, id: i64) -> AppResult<()> {
     {
         let conn = lock(&state)?;
         conn.execute(
@@ -272,7 +278,7 @@ pub fn unbind_group_folder(state: State<AppState>, id: i64) -> AppResult<()> {
         )?;
     }
     // Stop watching the now-detached folder.
-    crate::watch::resync(&state);
+    crate::watch::resync(&app);
     Ok(())
 }
 
