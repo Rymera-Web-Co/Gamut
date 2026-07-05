@@ -307,6 +307,10 @@ pub fn resync(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        // Serialize overlapping resyncs (e.g. two repos added in quick
+        // succession) so they can't finish out of order and let an older
+        // rebuild clobber a newer one's watcher state.
+        let _guard = state.resync_lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
         // Watched repo root directory -> repo id, so the debounced callback can

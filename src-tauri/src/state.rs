@@ -39,6 +39,11 @@ pub struct AppState {
     /// affected repo ids instead of forcing every repo's queries to refetch
     /// (#206).
     pub watched_repo_dirs: Mutex<HashMap<PathBuf, i64>>,
+    /// Serializes `watch::resync`'s blocking rebuild so overlapping calls
+    /// (e.g. adding two repos in quick succession) can't run concurrently and
+    /// finish out of order, which would let an older rebuild clobber a newer
+    /// one's watcher state (#226).
+    pub resync_lock: Mutex<()>,
     /// Live PTY-backed terminal sessions, keyed by an opaque scope id
     /// (`repo:<id>` / `group:<id>`). Persist across tab switches so background
     /// processes keep running; see `commands::terminal`.
