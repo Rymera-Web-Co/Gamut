@@ -108,6 +108,7 @@ pub fn run() {
             commands::files::create_file,
             commands::files::create_dir,
             commands::files::delete_path,
+            commands::files::rename_path,
             commands::files::resolve_path,
             commands::files::reveal_in_file_manager,
             commands::sound::play_notification_sound,

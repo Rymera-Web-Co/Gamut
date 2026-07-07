@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FolderPlus,
   Link as LinkIcon,
+  Pencil,
   TerminalSquare,
   Trash2,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import {
 import { copy } from "@/lib/clipboard";
 import { fileReference, sendToActiveTerminal } from "@/features/terminal/sendToTerminal";
 import { fileIcon } from "@/lib/fileIcons";
+import { isMac } from "@/lib/shortcuts";
 import { ipc, type DirEntry } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
@@ -61,6 +63,29 @@ interface Pending {
   dir: string;
 }
 
+/** An in-progress rename of an existing entry — the row is swapped for an inline
+ * input seeded with its current name. */
+interface Renaming {
+  path: string;
+  kind: "dir" | "file";
+}
+
+/** The trailing name of a tree path (its last `/`-separated segment). */
+function basename(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? path : path.slice(i + 1);
+}
+
+/**
+ * The rename key for the current platform: Enter on macOS (Finder convention),
+ * F2 elsewhere (Explorer / VS Code convention). Intentionally not routed through
+ * the remappable global-shortcut system — it's contextual to a focused tree row,
+ * not a global command.
+ */
+function isRenameKey(e: { key: string }): boolean {
+  return isMac() ? e.key === "Enter" : e.key === "F2";
+}
+
 // Mirrors the status palette used by the diff FileTree.
 function statusColor(status: string): string {
   switch (status) {
@@ -89,11 +114,29 @@ interface NodeProps {
   creating: boolean;
   onCreate: (name: string) => void;
   onCancelCreate: () => void;
+  renaming: Renaming | null;
+  renamingBusy: boolean;
+  onStartRename: (target: Renaming) => void;
+  onSubmitRename: (name: string) => void;
+  onCancelRename: () => void;
 }
 
 function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
-  const { parentPath, depth, selectedPath, onSelect, changes, openPaths, onToggle, onContextMenu } =
-    props;
+  const {
+    parentPath,
+    depth,
+    selectedPath,
+    onSelect,
+    changes,
+    openPaths,
+    onToggle,
+    onContextMenu,
+    renaming,
+    renamingBusy,
+    onStartRename,
+    onSubmitRename,
+    onCancelRename,
+  } = props;
   const path = join(parentPath, entry.name);
 
   const onCtx = (e: MouseEvent) => {
@@ -101,6 +144,31 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     e.stopPropagation();
     onContextMenu({ path, kind: entry.kind, pos: { x: e.clientX, y: e.clientY } });
   };
+
+  // The rename key (Enter on macOS, F2 elsewhere) acts on the focused row; stop
+  // it here so the key doesn't also fall through to the button's default
+  // activation (toggling a folder / selecting a file).
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (isRenameKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      onStartRename({ path, kind: entry.kind });
+    }
+  };
+
+  // While this entry is being renamed, swap its row for the inline input.
+  if (renaming?.path === path) {
+    return (
+      <RenameRow
+        kind={entry.kind}
+        name={entry.name}
+        depth={depth}
+        busy={renamingBusy}
+        onSubmit={onSubmitRename}
+        onCancel={onCancelRename}
+      />
+    );
+  }
 
   if (entry.kind === "dir") {
     const open = openPaths.has(path);
@@ -110,6 +178,10 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
         <button
           onClick={() => onToggle(path)}
           onContextMenu={onCtx}
+          onKeyDown={onKeyDown}
+          // Focus the row on press so the rename key (Enter on macOS, F2
+          // elsewhere) has a target — WebKit doesn't focus buttons on click.
+          onMouseDown={(e) => e.currentTarget.focus()}
           title={path}
           style={{ paddingLeft: depth * 14 + 8 }}
           className={cn(
@@ -148,6 +220,10 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     <button
       onClick={() => onSelect(path)}
       onContextMenu={onCtx}
+      onKeyDown={onKeyDown}
+      // Focus the row on press so the rename key (Enter on macOS, F2 elsewhere)
+      // has a target — WebKit doesn't focus buttons on click.
+      onMouseDown={(e) => e.currentTarget.focus()}
       title={path}
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
@@ -215,6 +291,63 @@ function CreateRow({
   );
 }
 
+/** Inline rename input, rendered in place of the entry's row. Seeded with the
+ * current name, with the file stem (name minus its extension) pre-selected so a
+ * quick retype keeps the extension. */
+function RenameRow({
+  kind,
+  name,
+  depth,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  kind: "dir" | "file";
+  name: string;
+  depth: number;
+  busy: boolean;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(name);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const Icon = kind === "dir" ? Folder : fileIcon(name);
+  const trimmed = value.trim();
+
+  // Select the stem on mount (dirs and dotfiles select the whole name).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    const dot = kind === "file" ? name.lastIndexOf(".") : -1;
+    el.setSelectionRange(0, dot > 0 ? dot : name.length);
+  }, [kind, name]);
+
+  return (
+    <div className="flex items-center gap-2 py-0.5 pr-3" style={{ paddingLeft: depth * 14 + 8 }}>
+      <Icon className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            if (trimmed && !busy) onSubmit(trimmed);
+          } else if (e.key === "Escape") {
+            onCancel();
+          }
+        }}
+        // Click-away cancels, matching the create row. Skipped mid-submit so the
+        // row doesn't vanish while the rename is in flight.
+        onBlur={() => {
+          if (!busy) onCancel();
+        }}
+        className="min-w-0 flex-1 rounded-sm border border-[var(--color-primary)] bg-[var(--color-background)] px-1 py-0.5 font-mono text-xs outline-none"
+      />
+    </div>
+  );
+}
+
 function Children(props: NodeProps) {
   const { repoId, parentPath, depth, pending, creating, onCreate, onCancelCreate } = props;
   const { data, isLoading, isError } = useDirChildren(repoId, parentPath, true);
@@ -272,6 +405,7 @@ export function RepoTree({
   selectedPath,
   onSelect,
   onDeleted,
+  onRenamed,
   changes,
   groupRelativePrefix,
 }: {
@@ -280,6 +414,9 @@ export function RepoTree({
   onSelect: (path: string) => void;
   /** A path (file or directory) was deleted — lets the editor drop it if open. */
   onDeleted: (path: string) => void;
+  /** A path (file or directory) was renamed/moved — lets the editor follow it if
+   * the open file lived under `from`. */
+  onRenamed: (from: string, to: string) => void;
   changes: TreeChanges;
   /**
    * The repo's directory relative to its synced group's folder (e.g.
@@ -302,6 +439,8 @@ export function RepoTree({
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState<Renaming | null>(null);
+  const [renamingBusy, setRenamingBusy] = useState(false);
 
   // Path-keyed state, so drop it when switching repos to avoid carrying one
   // repo's open dirs / in-progress create into another.
@@ -309,6 +448,7 @@ export function RepoTree({
     setOpenPaths(new Set());
     setMenu(null);
     setPending(null);
+    setRenaming(null);
   }, [repoId]);
 
   const onToggle = useCallback((path: string) => {
@@ -355,6 +495,51 @@ export function RepoTree({
       toast.error(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  function startRename(target: Renaming) {
+    setRenaming(target);
+    setMenu(null);
+  }
+
+  async function submitRename(name: string) {
+    if (!renaming) return;
+    if (name.includes("/")) {
+      toast.error("Name can't contain a slash");
+      return;
+    }
+    const from = renaming.path;
+    // No-op rename (same name): just close the input.
+    if (name === basename(from)) {
+      setRenaming(null);
+      return;
+    }
+    const to = join(parentDir(from), name);
+    setRenamingBusy(true);
+    try {
+      await ipc.renamePath(repoId, from, to);
+      // Refresh the containing directory so both names update in one place.
+      await queryClient.invalidateQueries({ queryKey: ["dir", repoId, parentDir(from)] });
+      // Carry expansion across the rename: the renamed dir (and its open
+      // descendants) move under the new prefix.
+      setOpenPaths((prev) => {
+        const next = new Set<string>();
+        for (const p of prev) {
+          if (p === from) next.add(to);
+          else if (p.startsWith(`${from}/`)) next.add(`${to}${p.slice(from.length)}`);
+          else next.add(p);
+        }
+        return next;
+      });
+      onRenamed(from, to);
+      toast.success(`Renamed to ${to}`);
+      setRenaming(null);
+    } catch (e) {
+      // Keep the row open (name preserved) so the user can fix and retry.
+      toast.error(String(e));
+    } finally {
+      setRenamingBusy(false);
     }
   }
 
@@ -429,6 +614,11 @@ export function RepoTree({
           creating={busy}
           onCreate={submitCreate}
           onCancelCreate={() => setPending(null)}
+          renaming={renaming}
+          renamingBusy={renamingBusy}
+          onStartRename={startRename}
+          onSubmitRename={submitRename}
+          onCancelRename={() => setRenaming(null)}
         />
       </div>
 
@@ -524,6 +714,15 @@ export function RepoTree({
               </>
             )}
             <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-xs"
+              onClick={() =>
+                menu.kind !== "root" && startRename({ path: menu.path, kind: menu.kind })
+              }
+            >
+              <Pencil />
+              Rename…
+            </ContextMenuItem>
             <ContextMenuItem
               className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
               onClick={() => {

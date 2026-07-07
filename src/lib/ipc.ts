@@ -630,6 +630,9 @@ export const ipc = {
   createDir: (repoId: number, relPath: string) => invoke<void>("create_dir", { repoId, relPath }),
   /** Delete a file or directory (directories are removed recursively). */
   deletePath: (repoId: number, relPath: string) => invoke<void>("delete_path", { repoId, relPath }),
+  /** Rename or move an entry; rejects if a different entry already exists there. */
+  renamePath: (repoId: number, fromPath: string, toPath: string) =>
+    invoke<void>("rename_path", { repoId, fromPath, toPath }),
   /** Resolve a repo-relative tree path to its absolute filesystem path. */
   resolvePath: (repoId: number, relPath: string) =>
     invoke<string>("resolve_path", { repoId, relPath }),
