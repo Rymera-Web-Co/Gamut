@@ -319,6 +319,20 @@ export function FilesView() {
     }
   }
 
+  // A file/dir was renamed/moved in the tree: if the open file lived under it,
+  // follow it to the new path. The bytes on disk are unchanged, so keep the
+  // buffer (loadedRef → new path) rather than reloading and dropping edits.
+  function onTreeRenamed(from: string, to: string) {
+    if (repoId == null || selectedPath == null) return;
+    let next: string | null = null;
+    if (selectedPath === from) next = to;
+    else if (selectedPath.startsWith(`${from}/`)) next = `${to}${selectedPath.slice(from.length)}`;
+    if (next == null) return;
+    loadedRef.current = next;
+    setSelectedPath(next);
+    rememberFile(repoId, next);
+  }
+
   function viewChanges() {
     setReviewMode("working");
     setView("review");
@@ -464,6 +478,7 @@ export function FilesView() {
                   selectedPath={selectedPath}
                   onSelect={selectFile}
                   onDeleted={onTreeDeleted}
+                  onRenamed={onTreeRenamed}
                   changes={changes}
                   groupRelativePrefix={groupRelativePrefix}
                 />

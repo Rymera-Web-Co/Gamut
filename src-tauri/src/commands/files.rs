@@ -382,6 +382,58 @@ pub fn delete_path(state: State<AppState>, repo_id: i64, rel_path: String) -> Ap
     Ok(())
 }
 
+/// Rename or move a working-tree entry from `from_rel` to `to_rel`, both
+/// repo-relative. Both ends are sandboxed by [`safe_join`]. Refuses to touch the
+/// repo root, and won't clobber a *different* entry already at the destination.
+/// Used by the Files-tab "Rename" action.
+#[tauri::command]
+pub fn rename_path(
+    state: State<AppState>,
+    repo_id: i64,
+    from_path: String,
+    to_path: String,
+) -> AppResult<()> {
+    let root = repo_path(&state, repo_id)?;
+    rename_at(&root, &from_path, &to_path)
+}
+
+/// Path-based core of [`rename_path`], split out so it's testable without app
+/// state.
+fn rename_at(root: &Path, from_rel: &str, to_rel: &str) -> AppResult<()> {
+    if from_rel.trim().is_empty() {
+        return Err(AppError::Other(
+            "refusing to rename the repository root".into(),
+        ));
+    }
+    if to_rel.trim().is_empty() {
+        return Err(AppError::Other("a destination name is required".into()));
+    }
+
+    let from = safe_join(root, from_rel)?;
+    let to = safe_join(root, to_rel)?;
+    // Don't clobber a *different* entry. On a case-insensitive filesystem a
+    // case-only rename (`Foo` → `foo`) resolves `to` back to `from` via
+    // `safe_join`'s canonicalization, so treat that as "same entry" and allow it.
+    if to.exists() && to != from {
+        return Err(AppError::Other(
+            "a file or folder with that name already exists".into(),
+        ));
+    }
+
+    // Rename to the *requested* spelling: `safe_join` canonicalizes paths that
+    // already exist, which would otherwise swallow a case-only rename on a
+    // case-insensitive filesystem. `to`'s parent is validated + canonical; we
+    // just re-attach the caller's chosen final segment.
+    let name = Path::new(to_rel)
+        .file_name()
+        .ok_or_else(|| AppError::Other("invalid destination name".into()))?;
+    let parent = to
+        .parent()
+        .ok_or_else(|| AppError::Other("invalid destination path".into()))?;
+    fs::rename(&from, parent.join(name))?;
+    Ok(())
+}
+
 /// Resolve a repo-relative tree path to its absolute filesystem path. Used by
 /// the Files-tab "Copy Path" action (Copy Relative Path uses the tree path
 /// directly and needs no backend round-trip).
@@ -430,5 +482,81 @@ mod tests {
         assert_eq!(image_mime(""), "application/octet-stream");
         // The match is case-sensitive and expects already-lowercased input.
         assert_eq!(image_mime("PNG"), "application/octet-stream");
+    }
+
+    /// A fresh, empty temp directory unique to this test run, cleaned first.
+    fn scratch(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gamut_rename_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn rename_moves_a_file_within_the_tree() {
+        let root = scratch("file");
+        fs::write(root.join("a.txt"), "hi").unwrap();
+
+        rename_at(&root, "a.txt", "b.txt").unwrap();
+        assert!(!root.join("a.txt").exists(), "old name is gone");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "hi");
+
+        // Into an existing subdirectory (a move, not just a rename).
+        fs::create_dir(root.join("sub")).unwrap();
+        rename_at(&root, "b.txt", "sub/c.txt").unwrap();
+        assert!(!root.join("b.txt").exists());
+        assert_eq!(fs::read_to_string(root.join("sub/c.txt")).unwrap(), "hi");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_moves_a_directory() {
+        let root = scratch("dir");
+        fs::create_dir(root.join("old")).unwrap();
+        fs::write(root.join("old/inner.txt"), "x").unwrap();
+
+        rename_at(&root, "old", "new").unwrap();
+        assert!(!root.join("old").exists());
+        assert_eq!(fs::read_to_string(root.join("new/inner.txt")).unwrap(), "x");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_refuses_to_clobber_a_different_entry() {
+        let root = scratch("clobber");
+        fs::write(root.join("a.txt"), "a").unwrap();
+        fs::write(root.join("b.txt"), "b").unwrap();
+
+        assert!(rename_at(&root, "a.txt", "b.txt").is_err());
+        // Both survive untouched.
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "a");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "b");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_rejects_root_and_traversal() {
+        let root = scratch("guard");
+        fs::write(root.join("a.txt"), "a").unwrap();
+
+        assert!(
+            rename_at(&root, "", "b.txt").is_err(),
+            "empty source is root"
+        );
+        assert!(rename_at(&root, "a.txt", "").is_err(), "empty destination");
+        assert!(
+            rename_at(&root, "a.txt", "../escape.txt").is_err(),
+            "destination escapes root"
+        );
+        assert!(
+            rename_at(&root, "../etc/passwd", "a.txt").is_err(),
+            "source escapes root"
+        );
+        assert!(root.join("a.txt").exists(), "guarded file is untouched");
+
+        fs::remove_dir_all(&root).unwrap();
     }
 }
