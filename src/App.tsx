@@ -25,6 +25,7 @@ import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useMainThreadWatchdog } from "@/lib/useMainThreadWatchdog";
+import { useRefreshOnFocus } from "@/lib/useRefreshOnFocus";
 import { useUiNav } from "@/lib/useUiNav";
 import { useUiStore } from "@/store/ui";
 
@@ -62,6 +63,7 @@ export default function App() {
   const isGitRepo = useActiveRepoIsGit();
   useKeyboardShortcuts();
   useGitWatch();
+  useRefreshOnFocus();
   useUiNav();
   useAutoFetch();
   useActiveRepoReconciler();

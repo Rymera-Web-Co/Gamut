@@ -19,7 +19,7 @@ const COALESCE_MS = 250;
  * so invalidation can be scoped to just the repos the watcher says changed
  * instead of every repo (#206).
  */
-const REPO_SCOPED_KEYS = [
+export const REPO_SCOPED_KEYS = [
   "branches",
   "git-tags",
   "log",
