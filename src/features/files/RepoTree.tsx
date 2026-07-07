@@ -453,8 +453,14 @@ export function RepoTree({
     setMenu(null);
     setPending(null);
     setRenaming(null);
+    setRenamingBusy(false);
     setActive(null);
   }, [repoId]);
+
+  const startRename = useCallback((target: Renaming) => {
+    setRenaming(target);
+    setMenu(null);
+  }, []);
 
   // Rename the highlighted row on the platform rename key (Enter on macOS, F2
   // elsewhere). A window listener — not a per-row key handler — because the tree
@@ -475,7 +481,7 @@ export function RepoTree({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, renaming, pending, menu]);
+  }, [active, renaming, pending, menu, startRename]);
 
   const onToggle = useCallback((path: string) => {
     setOpenPaths((prev) => {
@@ -524,24 +530,28 @@ export function RepoTree({
     }
   }
 
-  function startRename(target: Renaming) {
-    setRenaming(target);
-    setMenu(null);
-  }
-
   async function submitRename(name: string) {
     if (!renaming) return;
-    if (name.includes("/")) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast.error("Name can't be empty");
+      return;
+    }
+    if (trimmed === "." || trimmed === "..") {
+      toast.error("Invalid name");
+      return;
+    }
+    if (trimmed.includes("/")) {
       toast.error("Name can't contain a slash");
       return;
     }
     const from = renaming.path;
     // No-op rename (same name): just close the input.
-    if (name === basename(from)) {
+    if (trimmed === basename(from)) {
       setRenaming(null);
       return;
     }
-    const to = join(parentDir(from), name);
+    const to = join(parentDir(from), trimmed);
     setRenamingBusy(true);
     try {
       await ipc.renamePath(repoId, from, to);
