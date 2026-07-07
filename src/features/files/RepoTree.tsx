@@ -116,9 +116,11 @@ interface NodeProps {
   onCancelCreate: () => void;
   renaming: Renaming | null;
   renamingBusy: boolean;
-  onStartRename: (target: Renaming) => void;
   onSubmitRename: (name: string) => void;
   onCancelRename: () => void;
+  /** The highlighted row (last clicked/focused) — the keyboard rename target. */
+  active: string | null;
+  onActivate: (target: Renaming) => void;
 }
 
 function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
@@ -133,9 +135,10 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     onContextMenu,
     renaming,
     renamingBusy,
-    onStartRename,
     onSubmitRename,
     onCancelRename,
+    active,
+    onActivate,
   } = props;
   const path = join(parentPath, entry.name);
 
@@ -145,16 +148,10 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     onContextMenu({ path, kind: entry.kind, pos: { x: e.clientX, y: e.clientY } });
   };
 
-  // The rename key (Enter on macOS, F2 elsewhere) acts on the focused row; stop
-  // it here so the key doesn't also fall through to the button's default
-  // activation (toggling a folder / selecting a file).
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (isRenameKey(e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      onStartRename({ path, kind: entry.kind });
-    }
-  };
+  // Highlight the row when it's the keyboard rename target. A ring (rather than
+  // the selection background) keeps it distinct from the open-file highlight, so
+  // both can show at once when they differ.
+  const activeRing = active === path && "ring-1 ring-inset ring-[var(--color-primary)]";
 
   // While this entry is being renamed, swap its row for the inline input.
   if (renaming?.path === path) {
@@ -176,16 +173,17 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     return (
       <div>
         <button
-          onClick={() => onToggle(path)}
+          onClick={() => {
+            onActivate({ path, kind: "dir" });
+            onToggle(path);
+          }}
+          onFocus={() => onActivate({ path, kind: "dir" })}
           onContextMenu={onCtx}
-          onKeyDown={onKeyDown}
-          // Focus the row on press so the rename key (Enter on macOS, F2
-          // elsewhere) has a target — WebKit doesn't focus buttons on click.
-          onMouseDown={(e) => e.currentTarget.focus()}
           title={path}
           style={{ paddingLeft: depth * 14 + 8 }}
           className={cn(
             "flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm hover:bg-[var(--color-accent)]",
+            activeRing,
             entry.is_ignored && "opacity-50",
           )}
         >
@@ -218,17 +216,18 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
   const color = status ? statusColor(status) : undefined;
   return (
     <button
-      onClick={() => onSelect(path)}
+      onClick={() => {
+        onActivate({ path, kind: "file" });
+        onSelect(path);
+      }}
+      onFocus={() => onActivate({ path, kind: "file" })}
       onContextMenu={onCtx}
-      onKeyDown={onKeyDown}
-      // Focus the row on press so the rename key (Enter on macOS, F2 elsewhere)
-      // has a target — WebKit doesn't focus buttons on click.
-      onMouseDown={(e) => e.currentTarget.focus()}
       title={path}
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
         "flex w-full items-center gap-2 py-1 pr-3 text-left text-sm",
         selectedPath === path ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
+        activeRing,
         entry.is_ignored && "opacity-50",
       )}
     >
@@ -441,6 +440,11 @@ export function RepoTree({
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
   const [renamingBusy, setRenamingBusy] = useState(false);
+  // The highlighted row (last clicked or keyboard-focused) — the target for the
+  // rename shortcut. Tracked explicitly rather than via DOM focus: WebKit
+  // (Tauri's macOS webview) doesn't focus <button>s on click, so a focused-row
+  // key handler would never fire there.
+  const [active, setActive] = useState<Renaming | null>(null);
 
   // Path-keyed state, so drop it when switching repos to avoid carrying one
   // repo's open dirs / in-progress create into another.
@@ -449,7 +453,29 @@ export function RepoTree({
     setMenu(null);
     setPending(null);
     setRenaming(null);
+    setActive(null);
   }, [repoId]);
+
+  // Rename the highlighted row on the platform rename key (Enter on macOS, F2
+  // elsewhere). A window listener — not a per-row key handler — because the tree
+  // rows can't reliably hold DOM focus under WebKit. RepoTree only mounts while
+  // the Files view is active, so this can't fire from other views.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!isRenameKey(e)) return;
+      // Don't hijack the key while an inline input or the context menu is open.
+      if (!active || renaming || pending || menu) return;
+      // Leave the key alone when the user is typing or in the editor/terminal.
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (el?.closest(".monaco-editor, .xterm")) return;
+      e.preventDefault();
+      startRename(active);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, renaming, pending, menu]);
 
   const onToggle = useCallback((path: string) => {
     setOpenPaths((prev) => {
@@ -533,6 +559,8 @@ export function RepoTree({
         return next;
       });
       onRenamed(from, to);
+      // Keep the highlight on the renamed entry so a follow-up shortcut targets it.
+      setActive({ path: to, kind: renaming.kind });
       toast.success(`Renamed to ${to}`);
       setRenaming(null);
     } catch (e) {
@@ -580,6 +608,10 @@ export function RepoTree({
         }
         return next;
       });
+      // Clear the highlight if it pointed at what we just removed.
+      setActive((a) =>
+        a && (a.path === target.path || a.path.startsWith(`${target.path}/`)) ? null : a,
+      );
       onDeleted(target.path);
       toast.success(`Deleted ${target.path}`);
     } catch (e) {
@@ -616,9 +648,10 @@ export function RepoTree({
           onCancelCreate={() => setPending(null)}
           renaming={renaming}
           renamingBusy={renamingBusy}
-          onStartRename={startRename}
           onSubmitRename={submitRename}
           onCancelRename={() => setRenaming(null)}
+          active={active?.path ?? null}
+          onActivate={setActive}
         />
       </div>
 
