@@ -413,10 +413,16 @@ fn rename_at(root: &Path, from_rel: &str, to_rel: &str) -> AppResult<()> {
     // The empty-string check above only catches the literal root path; a relative
     // path like `.` also resolves through `safe_join` back to the root. Reject
     // anything that canonicalizes to the repo root so we never rename it.
+    // `safe_join` only canonicalizes paths that already exist; for a source that
+    // resolves to a non-canonical form we canonicalize here so the comparison
+    // matches the stated intent rather than a raw path spelling.
     let canon_root = root
         .canonicalize()
         .map_err(|e| AppError::Other(format!("repo root unavailable: {e}")))?;
-    if from == canon_root {
+    let canon_from = from
+        .canonicalize()
+        .map_err(|e| AppError::Other(format!("source path unavailable: {e}")))?;
+    if canon_from == canon_root {
         return Err(AppError::Other(
             "refusing to rename the repository root".into(),
         ));
