@@ -37,9 +37,13 @@ export interface ActiveDrag {
 // so a plain click (select a repo, focus a tab) is never misread as a drag.
 const DRAG_THRESHOLD_PX = 4;
 
-let pending:
-  | { item: DragItem; label: string; startX: number; startY: number; onActivate?: () => void }
-  | null = null;
+let pending: {
+  item: DragItem;
+  label: string;
+  startX: number;
+  startY: number;
+  onActivate?: () => void;
+} | null = null;
 let active: ActiveDrag | null = null;
 
 type MoveListener = () => void;
@@ -90,6 +94,10 @@ export function startDrag(
   e: { clientX: number; clientY: number },
   onActivate?: () => void,
 ): void {
+  // One session at a time. If a previous press/drag never cleanly ended (e.g. a
+  // second pointer goes down mid-drag), tear it down first so we don't leak
+  // listeners or leave `pending`/`active` tracking a stale item.
+  if (pending || active) teardown();
   pending = { item, label, startX: e.clientX, startY: e.clientY, onActivate };
   window.addEventListener("pointermove", onPointerMove, true);
   window.addEventListener("pointerup", onPointerUp, true);

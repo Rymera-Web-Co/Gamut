@@ -165,6 +165,18 @@ export function TerminalTabBar({
   );
 }
 
+// `useDraggable` requires a group id in the payload, but a tab with no active
+// group is never draggable (see `disabled` below) and this value is therefore
+// never matched against a drop target — it only satisfies the payload shape.
+const NO_GROUP_ID = -1;
+
+// Which half of a (horizontal) tab the pointer sits over — the insertion edge.
+// Shared by the hover indicator (`compute`) and the drop handler so the two
+// can't drift apart.
+function tabDropSide(rect: DOMRect, x: number): "left" | "right" {
+  return x > rect.left + rect.width / 2 ? "right" : "left";
+}
+
 /**
  * One tab in the strip: draggable to reorder (within its own group), a drop
  * target for a sibling tab, and inline-renameable. Extracted so each tab can own
@@ -206,21 +218,23 @@ function TabButton({
 }) {
   // Don't start a drag while the label is being renamed — the input needs
   // normal text selection/caret behaviour — or with no active group.
-  const drag = useDraggable({ kind: "tab", groupId: activeGroupId ?? -1, id: tab.id }, termTabLabel(tab), {
-    disabled: isEditing || activeGroupId == null,
-  });
+  const drag = useDraggable(
+    { kind: "tab", groupId: activeGroupId ?? NO_GROUP_ID, id: tab.id },
+    termTabLabel(tab),
+    { disabled: isEditing || activeGroupId == null },
+  );
   // Only same-group tab drags reorder; the strip is horizontal, so the
   // insertion line lands on the nearer edge (left = before, right = after).
   const { ref, state: edge } = useDropTarget<"left" | "right", HTMLDivElement>({
     accepts: (d) => d.kind === "tab" && d.groupId === activeGroupId && d.id !== tab.id,
-    compute: (_d, rect, x) => (x > rect.left + rect.width / 2 ? "right" : "left"),
+    compute: (_d, rect, x) => tabDropSide(rect, x),
     onDrop: (d, rect, x) => {
       if (d.kind === "tab" && activeGroupId != null) {
         reorderTerminalTab(
           activeGroupId,
           d.id,
           tab.id,
-          x > rect.left + rect.width / 2 ? "after" : "before",
+          tabDropSide(rect, x) === "right" ? "after" : "before",
         );
       }
     },
@@ -273,7 +287,11 @@ function TabButton({
           className="min-w-0 w-24 rounded border border-[var(--color-accent)] bg-[var(--color-background)] px-1 text-[var(--color-foreground)] outline-none"
         />
       ) : (
-        <span className="min-w-0 truncate" title="Double-click to rename" onDoubleClick={onBeginRename}>
+        <span
+          className="min-w-0 truncate"
+          title="Double-click to rename"
+          onDoubleClick={onBeginRename}
+        >
           {termTabLabel(tab)}
         </span>
       )}

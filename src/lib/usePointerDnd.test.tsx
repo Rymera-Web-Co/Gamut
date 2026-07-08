@@ -60,15 +60,20 @@ afterEach(() => {
   win("pointercancel", 0, 0);
 });
 
+// Two stacked rows sharing one reorder callback — the fixture both drag tests use.
+function renderTwoRows(onReorder: (src: number, target: number) => void) {
+  return render(
+    <>
+      <Row id={1} onReorder={onReorder} />
+      <Row id={2} onReorder={onReorder} />
+    </>,
+  );
+}
+
 describe("useDraggable + useDropTarget", () => {
   it("reorders when a row is dragged onto another and released over it", () => {
     const onReorder = vi.fn();
-    render(
-      <>
-        <Row id={1} onReorder={onReorder} />
-        <Row id={2} onReorder={onReorder} />
-      </>,
-    );
+    renderTwoRows(onReorder);
 
     fireEvent.pointerDown(screen.getByTestId("row-1"), { button: 0, clientX: 5, clientY: 10 });
     win("pointermove", 5, 25); // cross the threshold, now over row 2
@@ -80,12 +85,7 @@ describe("useDraggable + useDropTarget", () => {
 
   it("does not reorder when released away from any target", () => {
     const onReorder = vi.fn();
-    render(
-      <>
-        <Row id={1} onReorder={onReorder} />
-        <Row id={2} onReorder={onReorder} />
-      </>,
-    );
+    renderTwoRows(onReorder);
 
     fireEvent.pointerDown(screen.getByTestId("row-1"), { button: 0, clientX: 5, clientY: 10 });
     win("pointermove", 5, 200); // dragged well below both rows

@@ -330,6 +330,10 @@ function RenameRow({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
+          // Ignore keys that belong to an in-progress IME composition, so an
+          // Enter that commits composed CJK/etc. text (or an Escape that cancels
+          // the composition) doesn't submit/cancel the rename with raw input.
+          if (e.nativeEvent.isComposing) return;
           if (e.key === "Enter") {
             if (trimmed && !busy) onSubmit(trimmed);
           } else if (e.key === "Escape") {
