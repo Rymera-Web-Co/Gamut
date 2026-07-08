@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   AlertTriangle,
   Folder,
@@ -24,7 +25,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { copy } from "@/lib/clipboard";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
-import { clearDrag, getDrag, moveBefore, setDrag } from "@/lib/dnd";
+import { moveBefore } from "@/lib/dnd";
+import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { visibleRepos } from "@/lib/groupRepos";
 import { ipc, pickDirectory, type Repo, type RepoStatus } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
@@ -62,41 +64,25 @@ function RepoRow({
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
-  const [dropOver, setDropOver] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const active = activeRepoId === repo.id;
 
+  const drag = useDraggable({ kind: "repo", id: repo.id }, repo.name);
+  const { ref: dropRef, state: dropOver } = useDropTarget<boolean, HTMLDivElement>({
+    accepts: (d) => d.kind === "repo" && d.id !== repo.id,
+    compute: () => true,
+    onDrop: (d) => {
+      if (d.kind === "repo") onReorder(d.id, repo.id);
+    },
+  });
+
   return (
     <div
+      ref={dropRef}
       role="button"
       tabIndex={0}
       title={repo.path}
-      draggable
-      onDragStart={(e) => {
-        setDrag({ kind: "repo", id: repo.id });
-        e.dataTransfer.setData("text/plain", repo.name);
-        e.dataTransfer.effectAllowed = "move";
-      }}
-      onDragEnd={() => {
-        clearDrag();
-        setDropOver(false);
-      }}
-      onDragOver={(e) => {
-        const d = getDrag();
-        if (d?.kind === "repo" && d.id !== repo.id) {
-          e.preventDefault();
-          setDropOver(true);
-        }
-      }}
-      onDragLeave={() => setDropOver(false)}
-      onDrop={(e) => {
-        setDropOver(false);
-        const d = getDrag();
-        if (d?.kind !== "repo") return;
-        e.preventDefault();
-        onReorder(d.id, repo.id);
-        clearDrag();
-      }}
+      {...drag}
       onClick={() => {
         setActiveRepo(repo.id);
         ipc.touchRepo(repo.id);
@@ -173,6 +159,8 @@ function RepoRow({
             <button
               aria-label="Open terminal here"
               title="Open terminal here"
+              // Don't let a press on this button arm a repo drag on the row.
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 if (activeGroupId != null) {
@@ -189,6 +177,8 @@ function RepoRow({
               <button
                 aria-label="Remove repository"
                 title="Remove from Gamut"
+                // Don't let a press on this button arm a repo drag on the row.
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 className={cn(
                   "shrink-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100",
@@ -233,7 +223,8 @@ function RepoRow({
           <div
             className="flex w-fit items-center gap-0.5"
             onClick={(e) => e.stopPropagation()}
-            onDragStart={(e) => e.stopPropagation()}
+            // Don't let a press on the branch/sync controls start a repo drag.
+            onPointerDown={(e) => e.stopPropagation()}
           >
             <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
             <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
@@ -262,6 +253,9 @@ export function RepoSidebar() {
 
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [editGroupOpen, setEditGroupOpen] = useState(false);
+  // A folder is being dragged from the OS file manager over the sidebar.
+  const [folderOver, setFolderOver] = useState(false);
+  const asideRef = useRef<HTMLElement>(null);
   // Right-click menus: on a repo row, or on the sidebar's blank space.
   const [menu, setMenu] = useState<
     | { at: ContextMenuPosition; kind: "repo"; repo: Repo }
@@ -316,8 +310,82 @@ export function RepoSidebar() {
     }
   }
 
+  // Register one or more folders dropped from the OS file manager, reusing the
+  // same path (register_repo classifies git/non-git and dedupes already-added
+  // paths) and active-group assignment as the picker `addRepo` above.
+  async function addDroppedFolders(paths: string[]) {
+    for (const path of paths) {
+      try {
+        const repo = await registerRepo.mutateAsync(path);
+        if (activeGroupId != null && activeGroup && !activeGroup.is_default) {
+          setRepoGroups.mutate({ repoId: repo.id, groupIds: [activeGroupId] });
+        }
+      } catch {
+        // register_repo surfaces its own error toast; keep going with the rest.
+      }
+    }
+  }
+
+  // Keep the drop handler current without re-binding the native listener below.
+  const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
+  dropHandlerRef.current = (paths) => void addDroppedFolders(paths);
+
+  // Accept folders dropped from the OS file manager onto the sidebar. Native
+  // drag-drop only exists inside the Tauri webview, so this is a no-op in a
+  // plain browser (dev/tests). The one webview-wide listener is scoped to the
+  // sidebar by hit-testing the drop position (physical px → CSS px) against it.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const isOverSidebar = (px: number, py: number) => {
+      const el = asideRef.current;
+      if (!el) return false;
+      const dpr = window.devicePixelRatio || 1;
+      const x = px / dpr;
+      const y = py / dpr;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setFolderOver(isOverSidebar(p.position.x, p.position.y));
+        } else if (p.type === "leave") {
+          setFolderOver(false);
+        } else if (p.type === "drop") {
+          const inside = isOverSidebar(p.position.x, p.position.y);
+          setFolderOver(false);
+          if (inside && p.paths.length > 0) dropHandlerRef.current(p.paths);
+        }
+      })
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   return (
-    <aside className="flex h-full w-full flex-col" style={{ background: "var(--color-sidebar)" }}>
+    <aside
+      ref={asideRef}
+      className="relative flex h-full w-full flex-col"
+      style={{ background: "var(--color-sidebar)" }}
+    >
+      {folderOver && (
+        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-[var(--color-primary)] bg-[var(--color-primary)]/10">
+          <span className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-[var(--color-primary-foreground)] shadow">
+            Drop to add repositories
+          </span>
+        </div>
+      )}
       <header className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
         <div className="group flex min-w-0 items-center gap-1">
           <span
