@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useUiStore } from "@/store/ui";
 import { takePendingCommand } from "./pendingCommands";
-import { fileReference, filePathsForShell, sendToActiveTerminal } from "./sendToTerminal";
+import {
+  fileReference,
+  filePathsForShell,
+  sendToActiveTerminal,
+  shellQuotePath,
+} from "./sendToTerminal";
 
 describe("fileReference", () => {
   it("returns the bare path when no lines are given", () => {
@@ -25,9 +30,35 @@ describe("fileReference", () => {
     expect(fileReference("src/foo.ts", 12, 5)).toBe("src/foo.ts#L12");
   });
 
-  it("quotes the token when the path contains a space", () => {
-    expect(fileReference("src/my file.ts", 1, 2)).toBe('"src/my file.ts#L1-L2"');
-    expect(fileReference("src/my file.ts")).toBe('"src/my file.ts"');
+  it("single-quotes the token when the path contains a space", () => {
+    expect(fileReference("src/my file.ts", 1, 2)).toBe("'src/my file.ts#L1-L2'");
+    expect(fileReference("src/my file.ts")).toBe("'src/my file.ts'");
+  });
+});
+
+describe("shellQuotePath", () => {
+  it("leaves a bare safe path unquoted", () => {
+    expect(shellQuotePath("/Users/me/repo/file.txt")).toBe("/Users/me/repo/file.txt");
+  });
+
+  it("keeps a mid-word # (line anchor) bare but quotes a leading #", () => {
+    expect(shellQuotePath("src/foo.ts#L12")).toBe("src/foo.ts#L12");
+    expect(shellQuotePath("#weird.txt")).toBe("'#weird.txt'");
+  });
+
+  it("single-quotes shell metacharacters so they can't be interpreted", () => {
+    // `;`, command substitution, backticks, pipes, `!`, quotes and backslashes
+    // all reach the shell literally instead of triggering execution or splitting.
+    expect(shellQuotePath("/tmp/foo; rm -rf ~")).toBe("'/tmp/foo; rm -rf ~'");
+    expect(shellQuotePath("/tmp/$(malicious)")).toBe("'/tmp/$(malicious)'");
+    expect(shellQuotePath("/tmp/`whoami`")).toBe("'/tmp/`whoami`'");
+    expect(shellQuotePath("/tmp/a|b")).toBe("'/tmp/a|b'");
+    expect(shellQuotePath('/tmp/a"b.txt')).toBe("'/tmp/a\"b.txt'");
+    expect(shellQuotePath("C:\\Users\\me\\a.txt")).toBe("'C:\\Users\\me\\a.txt'");
+  });
+
+  it("escapes an embedded single quote with the POSIX '\\'' sequence", () => {
+    expect(shellQuotePath("/tmp/it's mine.txt")).toBe("'/tmp/it'\\''s mine.txt'");
   });
 });
 
@@ -37,18 +68,24 @@ describe("filePathsForShell", () => {
   });
 
   it("quotes a path that contains spaces so it survives as one argument", () => {
-    expect(filePathsForShell(["/Users/me/My Repo/file.txt"])).toBe('"/Users/me/My Repo/file.txt"');
+    expect(filePathsForShell(["/Users/me/My Repo/file.txt"])).toBe("'/Users/me/My Repo/file.txt'");
   });
 
   it("joins multiple dropped paths with spaces, escaping each independently", () => {
     expect(filePathsForShell(["/a/one.txt", "/b/two three.txt", "/c/four.txt"])).toBe(
-      '/a/one.txt "/b/two three.txt" /c/four.txt',
+      "/a/one.txt '/b/two three.txt' /c/four.txt",
     );
   });
 
   it("handles a Windows path with spaces the same way", () => {
     expect(filePathsForShell(["C:\\Users\\me\\My Docs\\a.txt"])).toBe(
-      '"C:\\Users\\me\\My Docs\\a.txt"',
+      "'C:\\Users\\me\\My Docs\\a.txt'",
+    );
+  });
+
+  it("neutralises a dropped path crafted to inject a command", () => {
+    expect(filePathsForShell(["/tmp/$(rm -rf ~)", "/b/normal.txt"])).toBe(
+      "'/tmp/$(rm -rf ~)' /b/normal.txt",
     );
   });
 

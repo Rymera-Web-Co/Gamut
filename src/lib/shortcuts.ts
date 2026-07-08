@@ -297,6 +297,16 @@ export function isMac(): boolean {
   return /mac/i.test(p);
 }
 
+/** Best-effort Windows detection. Same signal chain as {@link isMac}. */
+export function isWindows(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const p =
+    (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+    navigator.platform ??
+    navigator.userAgent;
+  return /win/i.test(p);
+}
+
 /** The concrete modifier booleans a binding requires on the current platform. */
 function resolved(b: Binding, mac: boolean) {
   return {
