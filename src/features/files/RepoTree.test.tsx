@@ -75,9 +75,10 @@ async function renderTree() {
   return { onSelect, onRenamed, onDeleted };
 }
 
-/** Whether a row (found by its `title`) carries the selection background. */
+/** Whether a row (found by its `title`) is in the selection, read from the
+ * semantic `aria-selected` attribute rather than a styling class. */
 function isSelected(title: string): boolean {
-  return screen.getByTitle(title).classList.contains("bg-[var(--color-accent)]");
+  return screen.getByTitle(title).getAttribute("aria-selected") === "true";
 }
 
 beforeEach(() => {
@@ -148,6 +149,24 @@ describe("RepoTree drag-to-move", () => {
 
     await waitFor(() => expect(renamePath).toHaveBeenCalledWith(1, "a.ts", "src/a.ts"));
     await waitFor(() => expect(onRenamed).toHaveBeenCalledWith("a.ts", "src/a.ts"));
+  });
+
+  it("moves a file up to a parent by dropping it on a row already living there", async () => {
+    const { onRenamed } = await renderTree();
+    // Expand src so its child c.ts is visible, then drag c.ts back up to the
+    // root by dropping it on a.ts — a file row in the destination directory.
+    fireEvent.click(screen.getByTitle("src"));
+    const cFile = await screen.findByTitle("src/c.ts");
+    const aFile = screen.getByTitle("a.ts");
+    cFile.getBoundingClientRect = () => rect(0, 60, 100, 80);
+    aFile.getBoundingClientRect = () => rect(0, 0, 100, 20);
+
+    fireEvent.pointerDown(cFile, { button: 0, clientX: 5, clientY: 70 });
+    win("pointermove", 5, 10); // drag up onto a.ts
+    win("pointerup", 5, 10);
+
+    await waitFor(() => expect(renamePath).toHaveBeenCalledWith(1, "src/c.ts", "c.ts"));
+    await waitFor(() => expect(onRenamed).toHaveBeenCalledWith("src/c.ts", "c.ts"));
   });
 
   it("does not move a file dropped back onto its own parent (no-op)", async () => {

@@ -4,7 +4,7 @@ import type { DirEntry } from "@/lib/ipc";
 import {
   basename,
   flattenVisible,
-  isInside,
+  isDescendant,
   movablePaths,
   parentDir,
   rangePaths,
@@ -40,15 +40,15 @@ describe("parentDir / basename", () => {
   });
 });
 
-describe("isInside", () => {
-  it("is true for the dir itself and its descendants", () => {
-    expect(isInside("src", "src")).toBe(true);
-    expect(isInside("src/util", "src")).toBe(true);
+describe("isDescendant", () => {
+  it("is true for the ancestor itself and its descendants", () => {
+    expect(isDescendant("src", "src")).toBe(true);
+    expect(isDescendant("src/util", "src")).toBe(true);
   });
 
-  it("is false for siblings and prefix look-alikes", () => {
-    expect(isInside("src", "src/util")).toBe(false);
-    expect(isInside("src-extra/x", "src")).toBe(false);
+  it("is false for ancestors, siblings and prefix look-alikes", () => {
+    expect(isDescendant("src", "src/util")).toBe(false);
+    expect(isDescendant("src-extra/x", "src")).toBe(false);
   });
 });
 
@@ -128,9 +128,6 @@ describe("movablePaths", () => {
   });
 
   it("keeps a genuine move", () => {
-    expect(movablePaths(["README.md", "src/a.ts"], "src/util")).toEqual([
-      "README.md",
-      "src/a.ts",
-    ]);
+    expect(movablePaths(["README.md", "src/a.ts"], "src/util")).toEqual(["README.md", "src/a.ts"]);
   });
 });

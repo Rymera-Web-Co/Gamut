@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -39,7 +32,7 @@ import { useDirChildren } from "./api";
 import {
   basename,
   flattenVisible,
-  isInside,
+  isDescendant,
   movablePaths,
   parentDir,
   rangePaths,
@@ -161,17 +154,20 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     dragPaths.length > 1 ? `${dragPaths.length} items` : entry.name,
   );
 
-  // Folder rows accept a move-drop; files never do. Reject dropping a folder
-  // into itself/a descendant, or a pure no-op back into the same parent.
+  // A drop on a row moves the dragged entries into that row's directory: a
+  // folder row takes them *into* itself; a file row takes them into its
+  // containing directory. Letting file rows accept drops is what makes moving an
+  // entry *up* to a parent work — you can drop it onto any row already living in
+  // the destination, not just the parent folder's (often off-screen, or for the
+  // root nonexistent) header. `movablePaths` still rejects no-ops and moving a
+  // folder into itself/a descendant.
+  const dropDir = entry.kind === "dir" ? path : parentPath;
   const { ref: dropRef, state: dropOver } = useDropTarget<boolean, HTMLButtonElement>({
     accepts: (d) =>
-      entry.kind === "dir" &&
-      d.kind === "tree" &&
-      d.repoId === repoId &&
-      movablePaths(d.paths, path).length > 0,
+      d.kind === "tree" && d.repoId === repoId && movablePaths(d.paths, dropDir).length > 0,
     compute: () => true,
     onDrop: (d) => {
-      if (d.kind === "tree") onMove(d.paths, path);
+      if (d.kind === "tree") onMove(d.paths, dropDir);
     },
   });
 
@@ -186,7 +182,8 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
   // both can show at once when they differ.
   const activeRing = active === path && "ring-1 ring-inset ring-[var(--color-primary)]";
   // While a valid move hovers this folder, flag it as the drop destination.
-  const dropRing = dropOver && "bg-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-primary)]";
+  const dropRing =
+    dropOver && "bg-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-primary)]";
   const isSelected = selectedPaths.has(path);
 
   // While this entry is being renamed, swap its row for the inline input.
@@ -211,6 +208,7 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
         <button
           ref={dropRef}
           data-tree-row
+          aria-selected={isSelected}
           {...drag}
           onClick={(e) => onRowClick(path, "dir", e)}
           onContextMenu={onCtx}
@@ -255,6 +253,7 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     <button
       ref={dropRef}
       data-tree-row
+      aria-selected={isSelected}
       {...drag}
       onClick={(e) => onRowClick(path, "file", e)}
       onContextMenu={onCtx}
@@ -266,6 +265,7 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
           ? "bg-[var(--color-accent)]"
           : "hover:bg-[var(--color-accent)]",
         activeRing,
+        dropRing,
         entry.is_ignored && "opacity-50",
       )}
     >
@@ -639,7 +639,7 @@ export function RepoTree({
           if (!openPaths.has(active.path)) onToggle(active.path);
           else {
             const next = flat[idx + 1];
-            if (next && isInside(next.path, active.path)) moveTo(next);
+            if (next && isDescendant(next.path, active.path)) moveTo(next);
           }
         }
       } else if (e.key === "ArrowLeft") {
@@ -890,11 +890,11 @@ export function RepoTree({
     setOpenPaths((prev) => {
       const next = new Set<string>();
       for (const p of prev) {
-        if (!deleted.some((d) => isInside(p, d))) next.add(p);
+        if (!deleted.some((d) => isDescendant(p, d))) next.add(p);
       }
       return next;
     });
-    setActive((a) => (a && deleted.some((d) => isInside(a.path, d)) ? null : a));
+    setActive((a) => (a && deleted.some((d) => isDescendant(a.path, d)) ? null : a));
     setSelectedPaths(new Set());
     setAnchor(null);
     for (const p of deleted) onDeleted(p);
@@ -918,16 +918,18 @@ export function RepoTree({
   const menuBulk = menu != null && selectedPaths.has(menu.path) && selectedPaths.size > 1;
 
   // Detect whether a released pointer landed on a tree row, so the root-level
-  // drop zone below only claims genuinely-blank space (folder rows own their own
-  // drops; file rows are inert).
+  // drop zone below only claims genuinely-blank space. Every row now owns its own
+  // drop (a folder into itself, a file into its parent dir), so the zone defers
+  // to any row and only handles the empty area.
   const overRow = (x: number, y: number) =>
     !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest("[data-tree-row]");
 
   // Dropping on blank space (not over any row) moves the entries to the repo
   // root. The zone spans the whole scroll area, so it's gated on `overRow` to
-  // defer to folder rows and ignore drops on inert file rows.
+  // defer to any row that would handle the drop itself.
   const { ref: rootDropRef, state: rootOver } = useDropTarget<boolean, HTMLDivElement>({
-    accepts: (d) => d.kind === "tree" && d.repoId === repoId && movablePaths(d.paths, "").length > 0,
+    accepts: (d) =>
+      d.kind === "tree" && d.repoId === repoId && movablePaths(d.paths, "").length > 0,
     compute: (_d, _rect, x, y) => !overRow(x, y),
     onDrop: (d, _rect, x, y) => {
       if (d.kind === "tree" && !overRow(x, y)) void movePaths(d.paths, "");

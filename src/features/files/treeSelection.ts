@@ -22,9 +22,13 @@ export function basename(path: string): string {
   return i === -1 ? path : path.slice(i + 1);
 }
 
-/** Whether `path` is `dir` itself or nested anywhere beneath it. */
-export function isInside(dir: string, path: string): boolean {
-  return dir === path || dir.startsWith(`${path}/`);
+/**
+ * Whether `child` is `ancestor` itself or nested anywhere beneath it — i.e.
+ * `child` is `ancestor` or a descendant of it. Named for its argument order so
+ * call sites read as a plain question: `isDescendant(p, dir)` ⇒ "is p under dir?".
+ */
+export function isDescendant(child: string, ancestor: string): boolean {
+  return child === ancestor || child.startsWith(`${ancestor}/`);
 }
 
 /**
@@ -73,7 +77,7 @@ export function rangePaths(flat: FlatRow[], a: string, b: string): string[] {
  * longer exists (a spurious failure). Preserves input order.
  */
 export function topLevelPaths(paths: string[]): string[] {
-  return paths.filter((p) => !paths.some((other) => other !== p && isInside(p, other)));
+  return paths.filter((p) => !paths.some((other) => other !== p && isDescendant(p, other)));
 }
 
 /**
@@ -85,6 +89,6 @@ export function topLevelPaths(paths: string[]): string[] {
  */
 export function movablePaths(paths: string[], targetDir: string): string[] {
   return topLevelPaths(paths).filter(
-    (p) => parentDir(p) !== targetDir && !isInside(targetDir, p),
+    (p) => parentDir(p) !== targetDir && !isDescendant(targetDir, p),
   );
 }
