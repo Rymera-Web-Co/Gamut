@@ -22,7 +22,7 @@ import {
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
-import { clipboardHasFiles, filePathsForShell } from "./sendToTerminal";
+import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -38,6 +38,8 @@ interface SessionEntry {
   disposed: boolean;
   /** Detaches the spawn output channel, if a spawn has happened. */
   disposeChannel?: () => void;
+  /** Removes the capture-phase paste listener bound on `el` at creation. */
+  disposePaste?: () => void;
   /** GPU renderer, when WebGL is available; falls back to the DOM renderer otherwise. */
   webgl?: WebglAddon;
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
@@ -317,44 +319,51 @@ export function useTerminalSessions({
     // Insert the shell-escaped absolute path(s) of file(s) copied in the OS file
     // manager when they're pasted into this pane, as editable text — the
     // clipboard counterpart to the drag-and-drop path insertion in #232 (#233).
-    // The webview signals that the clipboard holds file references but hides
-    // their real paths, so we read those natively; a plain-text paste reports no
-    // files and falls through to xterm's own (bracketed) paste untouched.
+    //
+    // Copying a file puts a *file reference* on the clipboard, not text, and its
+    // real path is only available from the platform's native pasteboard — never
+    // reliably from the webview's paste event. Which signal a webview populates
+    // for a file copy varies wildly by platform: `DataTransfer.files`, a "Files"
+    // type, a `file`-kind item, the bare filename as text/plain, or nothing at
+    // all. Gating on those signals silently did nothing on macOS, where a Finder
+    // copy surfaces none of them (see #233 follow-up). So inside the Tauri
+    // webview we make the native pasteboard the source of truth: on every paste
+    // we ask it for file URLs; if it has any we insert their paths, otherwise we
+    // fall through to a normal text paste. No trailing CR, so paths stage at the
+    // cursor rather than executing.
     //
     // Bound in the capture phase on the wrapper node so it runs before xterm's
     // target-phase paste handler on the inner textarea — only from an ancestor's
     // capture listener can preventDefault/stopPropagation reliably keep xterm
-    // from also acting on the same event. No trailing CR, so the path stages at
-    // the cursor rather than executing. No-op outside the Tauri webview
-    // (dev/tests), where the native clipboard read isn't available.
-    el.addEventListener(
-      "paste",
-      (e: ClipboardEvent) => {
-        if (!("__TAURI_INTERNALS__" in window)) return;
-        const dt = e.clipboardData;
-        if (!dt || !clipboardHasFiles(dt)) return;
-        // Capture any text now: `clipboardData` is only readable during dispatch,
-        // and we're about to suppress xterm's own paste.
-        const text = dt.getData("text/plain");
-        e.preventDefault();
-        e.stopPropagation();
-        void ipc
-          .clipboardFilePaths()
-          .then((paths) => {
-            if (paths.length > 0) {
-              ipc.terminalWrite(pane.id, encoder.encode(filePathsForShell(paths))).catch(() => {});
-            } else if (text) {
-              // The clipboard signalled files but carried no real paths — e.g. a
-              // copied image, which has no filesystem path. Don't swallow the
-              // text the payload also held: hand it to xterm's normal paste so it
-              // still gets bracketed-paste protection.
-              term.paste(text);
-            }
-          })
-          .catch(() => {});
-      },
-      true,
-    );
+    // from also acting on the same event. No-op outside the Tauri webview
+    // (dev/tests), where the native read and the pasteboard aren't available, so
+    // xterm's own (bracketed) paste handles it.
+    const onPaste = (e: ClipboardEvent) => {
+      if (!("__TAURI_INTERNALS__" in window)) return;
+      const dt = e.clipboardData;
+      if (!dt) return;
+      // Read the text now: `clipboardData` is only live during dispatch, and
+      // we're about to suppress xterm's own paste and hop to the native read.
+      const text = dt.getData("text/plain");
+      e.preventDefault();
+      e.stopPropagation();
+      void ipc
+        .clipboardFilePaths()
+        .then((paths) => {
+          if (paths.length > 0) {
+            ipc.terminalWrite(pane.id, encoder.encode(filePathsForShell(paths))).catch(() => {});
+          } else if (text) {
+            // No file references on the pasteboard — an ordinary text paste.
+            // Hand it to xterm's paste so it still gets bracketed-paste framing.
+            term.paste(text);
+          }
+        })
+        .catch(() => {
+          // Native read failed — don't drop a plain-text paste on the floor.
+          if (text) term.paste(text);
+        });
+    };
+    el.addEventListener("paste", onPaste, true);
     // Translate the macOS line-editing chords xterm doesn't emit on its own into
     // the readline/emacs control sequences the shell expects, and make
     // Shift+Enter a soft newline (#114). Returning false tells xterm to skip its
@@ -416,6 +425,7 @@ export function useTerminalSessions({
       if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
     });
     const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false, disposed: false };
+    entry.disposePaste = () => el.removeEventListener("paste", onPaste, true);
     loadWebglAddon(entry);
     sessionsRef.current.set(pane.id, entry);
     return entry;
@@ -648,6 +658,7 @@ export function useTerminalSessions({
       // then detach the spawn channel so it stops firing entirely (#139).
       e.disposed = true;
       e.disposeChannel?.();
+      e.disposePaste?.();
       e.linkHighlighter.dispose();
       e.term.dispose();
       e.el.remove();

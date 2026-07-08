@@ -2,12 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useUiStore } from "@/store/ui";
 import { takePendingCommand } from "./pendingCommands";
-import {
-  clipboardHasFiles,
-  fileReference,
-  filePathsForShell,
-  sendToActiveTerminal,
-} from "./sendToTerminal";
+import { fileReference, filePathsForShell, sendToActiveTerminal } from "./sendToTerminal";
 
 describe("fileReference", () => {
   it("returns the bare path when no lines are given", () => {
@@ -59,38 +54,6 @@ describe("filePathsForShell", () => {
 
   it("returns an empty string for no paths", () => {
     expect(filePathsForShell([])).toBe("");
-  });
-});
-
-describe("clipboardHasFiles", () => {
-  // Minimal DataTransfer stand-in: only the three fields the helper reads.
-  const dt = (over: {
-    files?: number;
-    types?: string[];
-    items?: Array<{ kind: string }>;
-  }): DataTransfer =>
-    ({
-      files: { length: over.files ?? 0 },
-      types: over.types ?? [],
-      items: over.items ?? [],
-    }) as unknown as DataTransfer;
-
-  it("is true when a File entry is present", () => {
-    expect(clipboardHasFiles(dt({ files: 1 }))).toBe(true);
-  });
-
-  it("is true when the types list advertises Files", () => {
-    expect(clipboardHasFiles(dt({ types: ["Files"] }))).toBe(true);
-  });
-
-  it("is true when an item is of kind 'file'", () => {
-    expect(clipboardHasFiles(dt({ items: [{ kind: "file" }] }))).toBe(true);
-  });
-
-  it("is false for a plain-text paste (no file signals)", () => {
-    expect(clipboardHasFiles(dt({ types: ["text/plain"], items: [{ kind: "string" }] }))).toBe(
-      false,
-    );
   });
 });
 
