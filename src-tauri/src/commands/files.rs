@@ -410,6 +410,23 @@ fn rename_at(root: &Path, from_rel: &str, to_rel: &str) -> AppResult<()> {
     }
 
     let from = safe_join(root, from_rel)?;
+    // The empty-string check above only catches the literal root path; a relative
+    // path like `.` also resolves through `safe_join` back to the root. Reject
+    // anything that canonicalizes to the repo root so we never rename it.
+    // `safe_join` only canonicalizes paths that already exist; for a source that
+    // resolves to a non-canonical form we canonicalize here so the comparison
+    // matches the stated intent rather than a raw path spelling.
+    let canon_root = root
+        .canonicalize()
+        .map_err(|e| AppError::Other(format!("repo root unavailable: {e}")))?;
+    let canon_from = from
+        .canonicalize()
+        .map_err(|e| AppError::Other(format!("source path unavailable: {e}")))?;
+    if canon_from == canon_root {
+        return Err(AppError::Other(
+            "refusing to rename the repository root".into(),
+        ));
+    }
     let to = safe_join(root, to_rel)?;
     // Don't clobber a *different* entry. On a case-insensitive filesystem a
     // case-only rename (`Foo` → `foo`) resolves `to` back to `from` via
@@ -545,6 +562,10 @@ mod tests {
         assert!(
             rename_at(&root, "", "b.txt").is_err(),
             "empty source is root"
+        );
+        assert!(
+            rename_at(&root, ".", "b.txt").is_err(),
+            "'.' resolves to root"
         );
         assert!(rename_at(&root, "a.txt", "").is_err(), "empty destination");
         assert!(

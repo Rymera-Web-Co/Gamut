@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Settings, SquareTerminal } from "lucide-react";
 
 import {
@@ -8,7 +8,8 @@ import {
 } from "@/components/ui/context-menu";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
-import { clearDrag, getDrag, moveAdjacent, setDrag } from "@/lib/dnd";
+import { moveAdjacent } from "@/lib/dnd";
+import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import type { Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind } from "@/store/ui";
@@ -36,59 +37,34 @@ function GroupButton({
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const Icon = group.icon ? GROUP_ICONS[group.icon] : null;
-  // `repoOver` = a repo is hovering to be assigned into this group (ring).
-  // `reorderEdge` = a group is hovering to be reordered next to this one; the
-  // edge (the rail is a vertical stack) shows a between-items line instead.
-  const [repoOver, setRepoOver] = useState(false);
-  const [reorderEdge, setReorderEdge] = useState<"top" | "bottom" | null>(null);
 
-  // Which side of this button the cursor is on — before (top) or after (bottom).
-  function edgeFor(e: DragEvent<HTMLButtonElement>): "top" | "bottom" {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return e.clientY > rect.top + rect.height / 2 ? "bottom" : "top";
-  }
-
-  function reset() {
-    setRepoOver(false);
-    setReorderEdge(null);
-  }
+  const drag = useDraggable({ kind: "group", id: group.id }, group.name);
+  // A repo hovering to be assigned into this group shows a ring; a group
+  // hovering to be reordered shows a between-items line on the nearer edge (the
+  // rail is a vertical stack, so top/bottom). The two are mutually exclusive.
+  const { ref: dropRef, state: hover } = useDropTarget<
+    { mode: "repo" } | { mode: "reorder"; edge: "top" | "bottom" },
+    HTMLButtonElement
+  >({
+    accepts: (d) => d.kind === "repo" || (d.kind === "group" && d.id !== group.id),
+    compute: (d, rect, _x, y) =>
+      d.kind === "repo"
+        ? { mode: "repo" }
+        : { mode: "reorder", edge: y > rect.top + rect.height / 2 ? "bottom" : "top" },
+    onDrop: (d, rect, _x, y) => {
+      if (d.kind === "repo") onRepoDrop(d.id);
+      else if (d.kind === "group")
+        onGroupReorder(d.id, group.id, y > rect.top + rect.height / 2 ? "after" : "before");
+    },
+  });
+  const repoOver = hover?.mode === "repo";
+  const reorderEdge = hover?.mode === "reorder" ? hover.edge : null;
 
   return (
     <button
+      ref={dropRef}
       title={group.name}
-      draggable
-      onDragStart={(e) => {
-        setDrag({ kind: "group", id: group.id });
-        e.dataTransfer.setData("text/plain", group.name);
-        e.dataTransfer.effectAllowed = "move";
-      }}
-      onDragEnd={() => {
-        clearDrag();
-        reset();
-      }}
-      onDragOver={(e) => {
-        const d = getDrag();
-        if (d?.kind === "repo") {
-          e.preventDefault();
-          setRepoOver(true);
-        } else if (d?.kind === "group" && d.id !== group.id) {
-          e.preventDefault();
-          setReorderEdge(edgeFor(e));
-        }
-      }}
-      onDragLeave={reset}
-      onDrop={(e) => {
-        const d = getDrag();
-        if (d?.kind === "repo") {
-          e.preventDefault();
-          onRepoDrop(d.id);
-        } else if (d?.kind === "group" && d.id !== group.id) {
-          e.preventDefault();
-          onGroupReorder(d.id, group.id, edgeFor(e) === "bottom" ? "after" : "before");
-        }
-        reset();
-        clearDrag();
-      }}
+      {...drag}
       onClick={onSelect}
       onContextMenu={onContextMenu}
       className={cn(

@@ -16,6 +16,7 @@ import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { CompareDialog } from "@/features/compare/CompareDialog";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
+import { DragGhost } from "@/lib/usePointerDnd";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch } from "@/lib/updater";
@@ -183,6 +184,7 @@ export default function App() {
       <SettingsDialog />
       <CommandPalette />
       <CompareDialog />
+      <DragGhost />
     </div>
   );
 }
