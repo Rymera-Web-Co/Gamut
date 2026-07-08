@@ -815,6 +815,11 @@ export const ipc = {
   terminalResize: (sessionId: string, cols: number, rows: number) =>
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalKill: (sessionId: string) => invoke<void>("terminal_kill", { sessionId }),
+  /** Absolute paths of the file(s) currently on the OS clipboard (empty when it
+   * holds text/an image/nothing). Copying a file in the file manager yields a
+   * file *reference*, not text; reading its path needs native pasteboard access
+   * the webview can't do (#233). */
+  clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
   /** Mirror the open terminal tabs to the backend so the local control channel's
    * `term-list` query can report active terminals. Fire-and-forget on layout change. */
   terminalRegistryReport: (terminals: TerminalInfo[]) =>
