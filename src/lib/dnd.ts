@@ -20,7 +20,11 @@ export type DragItem =
   | { kind: "group"; id: number }
   // Terminal tabs reorder within a single group; `groupId` scopes the drag so a
   // tab can't be dropped onto another group's strip. Tab ids are strings.
-  | { kind: "tab"; groupId: number; id: string };
+  | { kind: "tab"; groupId: number; id: string }
+  // One or more file-tree entries being dragged to move them into a folder.
+  // `repoId` scopes the drag to its own tree; `paths` are repo-relative (the
+  // whole multi-selection when dragging a selected row, else just that row).
+  | { kind: "tree"; repoId: number; paths: string[] };
 
 /**
  * An in-progress pointer drag: what's being dragged, a label for the on-screen
