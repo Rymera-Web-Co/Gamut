@@ -286,15 +286,29 @@ export const SHORTCUT_BY_ID: Record<ShortcutId, ShortcutDef> = Object.fromEntrie
   SHORTCUTS.map((s) => [s.id, s]),
 ) as Record<ShortcutId, ShortcutDef>;
 
-/** Best-effort macOS detection — drives the ⌘-vs-Ctrl primary modifier. */
-export function isMac(): boolean {
-  if (typeof navigator === "undefined") return false;
-  // `userAgentData.platform` is the modern signal; fall back to the UA string.
-  const p =
+/**
+ * Best-effort platform string, or `""` when there's no `navigator` (SSR/tests).
+ * `userAgentData.platform` is the modern signal; fall back to the UA string.
+ * The single source both {@link isMac} and {@link isWindows} match against, so
+ * the detection chain can't drift between them.
+ */
+function getPlatform(): string {
+  if (typeof navigator === "undefined") return "";
+  return (
     (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ??
     navigator.platform ??
-    navigator.userAgent;
-  return /mac/i.test(p);
+    navigator.userAgent
+  );
+}
+
+/** Best-effort macOS detection — drives the ⌘-vs-Ctrl primary modifier. */
+export function isMac(): boolean {
+  return /mac/i.test(getPlatform());
+}
+
+/** Best-effort Windows detection. Same signal chain as {@link isMac}. */
+export function isWindows(): boolean {
+  return /win/i.test(getPlatform());
 }
 
 /** The concrete modifier booleans a binding requires on the current platform. */
