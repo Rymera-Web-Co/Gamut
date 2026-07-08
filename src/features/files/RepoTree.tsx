@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -27,17 +34,21 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
 import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
+import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { useDirChildren } from "./api";
+import {
+  basename,
+  flattenVisible,
+  isInside,
+  movablePaths,
+  parentDir,
+  rangePaths,
+  topLevelPaths,
+  type FlatRow,
+} from "./treeSelection";
 
 function join(base: string, name: string): string {
   return base ? `${base}/${name}` : name;
-}
-
-/** The directory a create lands in: a directory targets itself, a file targets
- * its parent (root = ""). */
-function parentDir(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
 }
 
 /** Changed working-tree paths: a file→status map plus the set of directories
@@ -70,12 +81,6 @@ interface Renaming {
   kind: "dir" | "file";
 }
 
-/** The trailing name of a tree path (its last `/`-separated segment). */
-function basename(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? path : path.slice(i + 1);
-}
-
 /**
  * The rename key for the current platform: Enter on macOS (Finder convention),
  * F2 elsewhere (Explorer / VS Code convention). Intentionally not routed through
@@ -105,10 +110,13 @@ interface NodeProps {
   parentPath: string;
   depth: number;
   selectedPath: string | null;
-  onSelect: (path: string) => void;
+  /** The multi-selection set — rows in it render highlighted. */
+  selectedPaths: Set<string>;
+  /** A row was clicked; RepoTree resolves it (plain/⌘-toggle/⇧-range) against
+   * the event modifiers and decides whether to also open/toggle it. */
+  onRowClick: (path: string, kind: "dir" | "file", e: MouseEvent) => void;
   changes: TreeChanges;
   openPaths: Set<string>;
-  onToggle: (path: string) => void;
   onContextMenu: (target: MenuTarget) => void;
   pending: Pending | null;
   creating: boolean;
@@ -118,29 +126,54 @@ interface NodeProps {
   renamingBusy: boolean;
   onSubmitRename: (name: string) => void;
   onCancelRename: () => void;
-  /** The highlighted row (last clicked/focused) — the keyboard rename target. */
+  /** The highlighted row (last clicked/keyboard-focused) — the keyboard rename
+   * target and the anchor row for arrow navigation. */
   active: string | null;
-  onActivate: (target: Renaming) => void;
+  /** Move the dragged entries into `targetDir` (root = ""). */
+  onMove: (paths: string[], targetDir: string) => void;
 }
 
 function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
   const {
+    repoId,
     parentPath,
     depth,
     selectedPath,
-    onSelect,
+    selectedPaths,
+    onRowClick,
     changes,
     openPaths,
-    onToggle,
     onContextMenu,
     renaming,
     renamingBusy,
     onSubmitRename,
     onCancelRename,
     active,
-    onActivate,
+    onMove,
   } = props;
   const path = join(parentPath, entry.name);
+
+  // Dragging a selected row carries the whole selection; an unselected row
+  // carries just itself. Reuses the shared pointer-DnD (ghost + feel).
+  const dragPaths = selectedPaths.has(path) ? [...selectedPaths] : [path];
+  const drag = useDraggable(
+    { kind: "tree", repoId, paths: dragPaths },
+    dragPaths.length > 1 ? `${dragPaths.length} items` : entry.name,
+  );
+
+  // Folder rows accept a move-drop; files never do. Reject dropping a folder
+  // into itself/a descendant, or a pure no-op back into the same parent.
+  const { ref: dropRef, state: dropOver } = useDropTarget<boolean, HTMLButtonElement>({
+    accepts: (d) =>
+      entry.kind === "dir" &&
+      d.kind === "tree" &&
+      d.repoId === repoId &&
+      movablePaths(d.paths, path).length > 0,
+    compute: () => true,
+    onDrop: (d) => {
+      if (d.kind === "tree") onMove(d.paths, path);
+    },
+  });
 
   const onCtx = (e: MouseEvent) => {
     e.preventDefault();
@@ -149,9 +182,12 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
   };
 
   // Highlight the row when it's the keyboard rename target. A ring (rather than
-  // the selection background) keeps it distinct from the open-file highlight, so
+  // the selection background) keeps it distinct from the selection highlight, so
   // both can show at once when they differ.
   const activeRing = active === path && "ring-1 ring-inset ring-[var(--color-primary)]";
+  // While a valid move hovers this folder, flag it as the drop destination.
+  const dropRing = dropOver && "bg-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-primary)]";
+  const isSelected = selectedPaths.has(path);
 
   // While this entry is being renamed, swap its row for the inline input.
   if (renaming?.path === path) {
@@ -173,17 +209,18 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
     return (
       <div>
         <button
-          onClick={() => {
-            onActivate({ path, kind: "dir" });
-            onToggle(path);
-          }}
-          onFocus={() => onActivate({ path, kind: "dir" })}
+          ref={dropRef}
+          data-tree-row
+          {...drag}
+          onClick={(e) => onRowClick(path, "dir", e)}
           onContextMenu={onCtx}
           title={path}
-          style={{ paddingLeft: depth * 14 + 8 }}
+          style={{ ...drag.style, paddingLeft: depth * 14 + 8 }}
           className={cn(
             "flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm hover:bg-[var(--color-accent)]",
+            isSelected && "bg-[var(--color-accent)]",
             activeRing,
+            dropRing,
             entry.is_ignored && "opacity-50",
           )}
         >
@@ -216,17 +253,18 @@ function Entry({ entry, ...props }: NodeProps & { entry: DirEntry }) {
   const color = status ? statusColor(status) : undefined;
   return (
     <button
-      onClick={() => {
-        onActivate({ path, kind: "file" });
-        onSelect(path);
-      }}
-      onFocus={() => onActivate({ path, kind: "file" })}
+      ref={dropRef}
+      data-tree-row
+      {...drag}
+      onClick={(e) => onRowClick(path, "file", e)}
       onContextMenu={onCtx}
       title={path}
-      style={{ paddingLeft: depth * 14 + 8 }}
+      style={{ ...drag.style, paddingLeft: depth * 14 + 8 }}
       className={cn(
         "flex w-full items-center gap-2 py-1 pr-3 text-left text-sm",
-        selectedPath === path ? "bg-[var(--color-accent)]" : "hover:bg-[var(--color-accent)]",
+        isSelected || selectedPath === path
+          ? "bg-[var(--color-accent)]"
+          : "hover:bg-[var(--color-accent)]",
         activeRing,
         entry.is_ignored && "opacity-50",
       )}
@@ -449,6 +487,10 @@ export function RepoTree({
   // (Tauri's macOS webview) doesn't focus <button>s on click, so a focused-row
   // key handler would never fire there.
   const [active, setActive] = useState<Renaming | null>(null);
+  // Multi-selection (⌘/Ctrl-click, ⇧-click range, ⇧+Arrow). `anchor` is the row
+  // a range extends from (in flattened, on-screen order).
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
 
   // Path-keyed state, so drop it when switching repos to avoid carrying one
   // repo's open dirs / in-progress create into another.
@@ -459,7 +501,20 @@ export function RepoTree({
     setRenaming(null);
     setRenamingBusy(false);
     setActive(null);
+    setSelectedPaths(new Set());
+    setAnchor(null);
   }, [repoId]);
+
+  // The tree flattened to its on-screen row order, read from the React Query
+  // cache. Used to resolve ⇧-click ranges and arrow-key navigation.
+  const flatten = useCallback(
+    () =>
+      flattenVisible(
+        (dir) => queryClient.getQueryData<DirEntry[]>(["dir", repoId, dir]),
+        openPaths,
+      ),
+    [queryClient, repoId, openPaths],
+  );
 
   const startRename = useCallback((target: Renaming) => {
     setRenaming(target);
@@ -495,6 +550,174 @@ export function RepoTree({
       return next;
     });
   }, []);
+
+  // Resolve a row click against its modifiers: ⌘/Ctrl toggles the row in/out of
+  // the selection, ⇧ selects the range from the anchor, and a plain click
+  // single-selects and opens (file) or expands (dir) it.
+  const onRowClick = useCallback(
+    (path: string, kind: "dir" | "file", e: MouseEvent) => {
+      setActive({ path, kind });
+      if (e.metaKey || e.ctrlKey) {
+        setSelectedPaths((prev) => {
+          const next = new Set(prev);
+          if (next.has(path)) next.delete(path);
+          else next.add(path);
+          return next;
+        });
+        setAnchor(path);
+        return;
+      }
+      if (e.shiftKey) {
+        const from = anchor ?? active?.path ?? path;
+        setSelectedPaths(new Set(rangePaths(flatten(), from, path)));
+        setAnchor((a) => a ?? path);
+        return;
+      }
+      setSelectedPaths(new Set([path]));
+      setAnchor(path);
+      if (kind === "dir") onToggle(path);
+      else onSelect(path);
+    },
+    [anchor, active, flatten, onToggle, onSelect],
+  );
+
+  // Arrow-key navigation over the flattened tree (nice-to-have, #235). Same
+  // window-listener rationale as the rename shortcut: WebKit won't hold DOM
+  // focus on the rows. Only engages once a row is active (the user has clicked
+  // into the tree), so it can't hijack arrows elsewhere.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) return;
+      if (!active || renaming || pending || menu) return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (el?.closest(".monaco-editor, .xterm")) return;
+
+      // Enter opens/toggles — but only where it isn't the platform rename key
+      // (macOS uses Enter to rename, handled by the effect above).
+      if (e.key === "Enter") {
+        if (isRenameKey(e)) return;
+        e.preventDefault();
+        if (active.kind === "dir") onToggle(active.path);
+        else onSelect(active.path);
+        return;
+      }
+
+      const flat = flatten();
+      const idx = flat.findIndex((r) => r.path === active.path);
+      if (idx === -1) return;
+
+      // Move the highlight to `row`: ⇧ extends the selection from the anchor,
+      // a plain arrow single-selects and re-anchors.
+      const moveTo = (row: FlatRow) => {
+        setActive({ path: row.path, kind: row.kind });
+        if (e.shiftKey) {
+          setSelectedPaths(new Set(rangePaths(flat, anchor ?? active.path, row.path)));
+        } else {
+          setSelectedPaths(new Set([row.path]));
+          setAnchor(row.path);
+        }
+      };
+
+      if (e.key === "ArrowDown") {
+        const next = flat[idx + 1];
+        if (next) {
+          e.preventDefault();
+          moveTo(next);
+        }
+      } else if (e.key === "ArrowUp") {
+        const prev = flat[idx - 1];
+        if (prev) {
+          e.preventDefault();
+          moveTo(prev);
+        }
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        // Closed dir → expand; open dir → step into its first child.
+        if (active.kind === "dir") {
+          if (!openPaths.has(active.path)) onToggle(active.path);
+          else {
+            const next = flat[idx + 1];
+            if (next && isInside(next.path, active.path)) moveTo(next);
+          }
+        }
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        // Open dir → collapse; otherwise step out to the parent dir.
+        if (active.kind === "dir" && openPaths.has(active.path)) {
+          onToggle(active.path);
+        } else {
+          const parent = parentDir(active.path);
+          if (parent) {
+            setActive({ path: parent, kind: "dir" });
+            setSelectedPaths(new Set([parent]));
+            setAnchor(parent);
+          }
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, renaming, pending, menu, openPaths, anchor, flatten, onToggle, onSelect]);
+
+  // Move one or more entries into `targetDir` (root = ""), backed by the
+  // rename primitive. No-op moves and folder-into-descendant moves are dropped
+  // by `movablePaths`; conflicts (a name already there) surface as an error.
+  const movePaths = useCallback(
+    async (paths: string[], targetDir: string) => {
+      const movable = movablePaths(paths, targetDir);
+      if (movable.length === 0) return;
+      const moved: Array<{ from: string; to: string }> = [];
+      let failed = 0;
+      let lastErr: unknown;
+      for (const from of movable) {
+        const to = join(targetDir, basename(from));
+        try {
+          await ipc.renamePath(repoId, from, to);
+          moved.push({ from, to });
+        } catch (err) {
+          failed += 1;
+          lastErr = err;
+        }
+      }
+      if (moved.length === 0) {
+        toast.error(String(lastErr));
+        return;
+      }
+      // Refresh every affected directory (each source plus the destination).
+      const dirs = new Set<string>([targetDir]);
+      for (const { from } of moved) dirs.add(parentDir(from));
+      await Promise.all(
+        [...dirs].map((d) => queryClient.invalidateQueries({ queryKey: ["dir", repoId, d] })),
+      );
+      // Rewrite a path across every move it (or an ancestor) took part in, so
+      // open dirs / active row / selection / anchor follow their entries.
+      const remap = (p: string) => {
+        for (const { from, to } of moved) {
+          if (p === from) return to;
+          if (p.startsWith(`${from}/`)) return `${to}${p.slice(from.length)}`;
+        }
+        return p;
+      };
+      setOpenPaths((prev) => {
+        const next = new Set<string>();
+        for (const p of prev) next.add(remap(p));
+        // Keep the destination expanded so the moved rows are visible.
+        if (targetDir) next.add(targetDir);
+        return next;
+      });
+      setSelectedPaths(new Set(moved.map((m) => m.to)));
+      setActive((a) => (a ? { path: remap(a.path), kind: a.kind } : a));
+      setAnchor((an) => (an != null ? remap(an) : an));
+      // Let the editor follow any open file that lived under a moved entry.
+      for (const { from, to } of moved) onRenamed(from, to);
+      if (failed > 0) toast.error(`Moved ${moved.length}, ${failed} failed`);
+      else if (moved.length > 1) toast.success(`Moved ${moved.length} items`);
+      else toast.success(`Moved to ${moved[0].to}`);
+    },
+    [repoId, queryClient, onRenamed],
+  );
 
   // Where a create on the menu target should land. A directory (or the blank
   // root) targets itself; a file targets its parent.
@@ -633,6 +856,84 @@ export function RepoTree({
     }
   }
 
+  // Bulk-delete the current multi-selection behind a single confirm. Collapse
+  // to top-level entries first: deleting a folder already removes its selected
+  // descendants, so deleting them again would fail on a now-missing path.
+  async function deleteSelection(selection: string[]) {
+    const paths = topLevelPaths(selection);
+    const ok = window.confirm(
+      `Delete ${selection.length} selected items? Folders and everything inside them will be removed. This cannot be undone.`,
+    );
+    if (!ok) return;
+    const deleted: string[] = [];
+    let failed = 0;
+    let lastErr: unknown;
+    for (const p of paths) {
+      try {
+        await ipc.deletePath(repoId, p);
+        deleted.push(p);
+      } catch (err) {
+        failed += 1;
+        lastErr = err;
+      }
+    }
+    if (deleted.length === 0) {
+      toast.error(String(lastErr));
+      return;
+    }
+    const dirs = new Set(deleted.map(parentDir));
+    await Promise.all(
+      [...dirs].map((d) => queryClient.invalidateQueries({ queryKey: ["dir", repoId, d] })),
+    );
+    // Drop every deleted entry (and its descendants) from the open set, the
+    // highlight, and the selection.
+    setOpenPaths((prev) => {
+      const next = new Set<string>();
+      for (const p of prev) {
+        if (!deleted.some((d) => isInside(p, d))) next.add(p);
+      }
+      return next;
+    });
+    setActive((a) => (a && deleted.some((d) => isInside(a.path, d)) ? null : a));
+    setSelectedPaths(new Set());
+    setAnchor(null);
+    for (const p of deleted) onDeleted(p);
+    if (failed > 0) toast.error(`Deleted ${deleted.length}, ${failed} failed`);
+    else toast.success(`Deleted ${deleted.length} items`);
+  }
+
+  // A right-clicked row that isn't already part of the multi-selection replaces
+  // it (matching Finder / VS Code); a click inside the selection keeps it so the
+  // menu can act on the whole set.
+  function openRowMenu(target: MenuTarget) {
+    if (target.kind !== "root") {
+      setSelectedPaths((prev) => (prev.has(target.path) ? prev : new Set([target.path])));
+      setActive({ path: target.path, kind: target.kind });
+    }
+    setMenu(target);
+  }
+
+  // Whether the current context-menu row is part of a multi-selection — bulk
+  // actions (Delete) then operate on the whole selection.
+  const menuBulk = menu != null && selectedPaths.has(menu.path) && selectedPaths.size > 1;
+
+  // Detect whether a released pointer landed on a tree row, so the root-level
+  // drop zone below only claims genuinely-blank space (folder rows own their own
+  // drops; file rows are inert).
+  const overRow = (x: number, y: number) =>
+    !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest("[data-tree-row]");
+
+  // Dropping on blank space (not over any row) moves the entries to the repo
+  // root. The zone spans the whole scroll area, so it's gated on `overRow` to
+  // defer to folder rows and ignore drops on inert file rows.
+  const { ref: rootDropRef, state: rootOver } = useDropTarget<boolean, HTMLDivElement>({
+    accepts: (d) => d.kind === "tree" && d.repoId === repoId && movablePaths(d.paths, "").length > 0,
+    compute: (_d, _rect, x, y) => !overRow(x, y),
+    onDrop: (d, _rect, x, y) => {
+      if (d.kind === "tree" && !overRow(x, y)) void movePaths(d.paths, "");
+    },
+  });
+
   return (
     <>
       {/* The wrapper fills the scroll area so right-clicking the blank space
@@ -640,10 +941,14 @@ export function RepoTree({
           propagation in their own handler, so only genuinely empty space (and
           the empty/loading hints) bubbles up to here. */}
       <div
-        className="min-h-full"
+        ref={rootDropRef}
+        className={cn(
+          "min-h-full",
+          rootOver && "rounded-sm ring-1 ring-inset ring-[var(--color-primary)]",
+        )}
         onContextMenu={(e) => {
           e.preventDefault();
-          setMenu({ path: "", kind: "root", pos: { x: e.clientX, y: e.clientY } });
+          openRowMenu({ path: "", kind: "root", pos: { x: e.clientX, y: e.clientY } });
         }}
       >
         <Children
@@ -651,11 +956,11 @@ export function RepoTree({
           parentPath=""
           depth={0}
           selectedPath={selectedPath}
-          onSelect={onSelect}
+          selectedPaths={selectedPaths}
+          onRowClick={onRowClick}
           changes={changes}
           openPaths={openPaths}
-          onToggle={onToggle}
-          onContextMenu={setMenu}
+          onContextMenu={openRowMenu}
           pending={pending}
           creating={busy}
           onCreate={submitCreate}
@@ -665,7 +970,7 @@ export function RepoTree({
           onSubmitRename={submitRename}
           onCancelRename={() => setRenaming(null)}
           active={active?.path ?? null}
-          onActivate={setActive}
+          onMove={movePaths}
         />
       </div>
 
@@ -761,25 +1066,30 @@ export function RepoTree({
               </>
             )}
             <div className="my-1 border-t border-[var(--color-border)]" />
-            <ContextMenuItem
-              className="text-xs"
-              onClick={() =>
-                menu.kind !== "root" && startRename({ path: menu.path, kind: menu.kind })
-              }
-            >
-              <Pencil />
-              Rename…
-            </ContextMenuItem>
+            {/* Rename acts on a single entry, so it's hidden for a bulk menu. */}
+            {!menuBulk && (
+              <ContextMenuItem
+                className="text-xs"
+                onClick={() =>
+                  menu.kind !== "root" && startRename({ path: menu.path, kind: menu.kind })
+                }
+              >
+                <Pencil />
+                Rename…
+              </ContextMenuItem>
+            )}
             <ContextMenuItem
               className="text-xs text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
               onClick={() => {
                 const target = menu;
+                const paths = [...selectedPaths];
                 setMenu(null);
-                void deleteTarget(target);
+                if (menuBulk) void deleteSelection(paths);
+                else void deleteTarget(target);
               }}
             >
               <Trash2 />
-              Delete
+              {menuBulk ? `Delete ${selectedPaths.size} items` : "Delete"}
             </ContextMenuItem>
           </>
         )}
