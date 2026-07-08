@@ -3,13 +3,26 @@ import { useUiStore } from "@/store/ui";
 import { setPendingCommand } from "./pendingCommands";
 
 /**
- * Wrap a token in double quotes when it contains whitespace, so it survives as a
- * single shell argument once typed into the terminal. Paths without spaces are
- * left bare to keep the common case clean. This is the minimal quoting the rest
- * of the terminal relies on (#199); it is deliberately not a full shell escaper.
+ * Quote a path so it survives as a single, literal shell argument once typed
+ * into the terminal.
+ *
+ * A path made up entirely of characters the shell never treats specially is
+ * left bare, to keep the common case clean. Anything else is wrapped in POSIX
+ * single quotes, inside which the shell takes every character literally — no
+ * whitespace splitting, `$`/backtick expansion, globbing, or `!` history
+ * expansion. An embedded single quote can't appear inside a single-quoted
+ * string, so it's emitted with the standard `'\''` sequence: close the quote, a
+ * backslash-escaped literal quote, reopen. This replaces the earlier
+ * double-quote wrapper, which still let `$`, backticks and `\` through and so
+ * could turn a dropped filename like `$(cmd)` into a live command (#232).
+ *
+ * `#` is allowed unquoted only when it isn't the first character: a leading `#`
+ * starts a comment, but `#` mid-word (e.g. the `path#L12` line anchor from
+ * #199) is literal, so those references stay clean.
  */
 export function shellQuotePath(token: string): string {
-  return /\s/.test(token) ? `"${token}"` : token;
+  if (/^[A-Za-z0-9_./@%+=:,-][A-Za-z0-9_./@%+=:,#-]*$/.test(token)) return token;
+  return `'${token.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -20,8 +33,8 @@ export function shellQuotePath(token: string): string {
  * - single line/caret   → `src/foo.ts#L12`
  * - multi-line range     → `src/foo.ts#L12-L20`
  *
- * The whole token is wrapped in double quotes when the path contains whitespace,
- * so it survives as a single shell argument once it lands in the terminal.
+ * The whole token is shell-quoted when the path isn't a bare safe word, so it
+ * survives as a single literal argument once it lands in the terminal.
  */
 export function fileReference(path: string, startLine?: number, endLine?: number): string {
   let ref = path;

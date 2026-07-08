@@ -9,7 +9,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { ipc } from "@/lib/ipc";
-import { isMac } from "@/lib/shortcuts";
+import { isMac, isWindows } from "@/lib/shortcuts";
 import { useSettings } from "@/lib/settings";
 import type { Theme } from "@/lib/theme";
 import {
@@ -565,11 +565,22 @@ export function useTerminalSessions({
     let unlisten: (() => void) | undefined;
     let cancelled = false;
 
-    // Which currently-visible pane sits under a drop point (physical px → CSS px).
+    // Which currently-visible pane sits under a drop point.
+    //
+    // Tauri types the drop position as `PhysicalPosition`, but that only holds
+    // on Windows. wry sources the coordinates from the native drag event —
+    // AppKit's `draggingLocation` on macOS and GTK's signal args on Linux, both
+    // in *logical* points — and forwards them to Tauri unscaled. So only on
+    // Windows (Win32 `ScreenToClient`, physical pixels) do we divide by the
+    // device pixel ratio to reach the CSS pixels `getBoundingClientRect` uses;
+    // dividing on macOS would halve an already-logical value and drop the
+    // hit-test off the pane, which is why the drop silently did nothing on
+    // Retina displays. (The sidebar's own drop handler survives the same
+    // division only because its region is anchored at the window origin.)
     const paneAt = (px: number, py: number): { id: string; e: SessionEntry } | null => {
-      const dpr = window.devicePixelRatio || 1;
-      const x = px / dpr;
-      const y = py / dpr;
+      const scale = isWindows() ? window.devicePixelRatio || 1 : 1;
+      const x = px / scale;
+      const y = py / scale;
       for (const [id, e] of sessionsRef.current) {
         if (e.el.style.display === "none") continue;
         const r = e.el.getBoundingClientRect();
