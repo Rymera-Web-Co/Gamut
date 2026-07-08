@@ -22,7 +22,7 @@ import {
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
-import { filePathsForShell } from "./sendToTerminal";
+import { clipboardHasFiles, filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -314,6 +314,47 @@ export function useTerminalSessions({
       }),
     );
     term.open(el);
+    // Insert the shell-escaped absolute path(s) of file(s) copied in the OS file
+    // manager when they're pasted into this pane, as editable text — the
+    // clipboard counterpart to the drag-and-drop path insertion in #232 (#233).
+    // The webview signals that the clipboard holds file references but hides
+    // their real paths, so we read those natively; a plain-text paste reports no
+    // files and falls through to xterm's own (bracketed) paste untouched.
+    //
+    // Bound in the capture phase on the wrapper node so it runs before xterm's
+    // target-phase paste handler on the inner textarea — only from an ancestor's
+    // capture listener can preventDefault/stopPropagation reliably keep xterm
+    // from also acting on the same event. No trailing CR, so the path stages at
+    // the cursor rather than executing. No-op outside the Tauri webview
+    // (dev/tests), where the native clipboard read isn't available.
+    el.addEventListener(
+      "paste",
+      (e: ClipboardEvent) => {
+        if (!("__TAURI_INTERNALS__" in window)) return;
+        const dt = e.clipboardData;
+        if (!dt || !clipboardHasFiles(dt)) return;
+        // Capture any text now: `clipboardData` is only readable during dispatch,
+        // and we're about to suppress xterm's own paste.
+        const text = dt.getData("text/plain");
+        e.preventDefault();
+        e.stopPropagation();
+        void ipc
+          .clipboardFilePaths()
+          .then((paths) => {
+            if (paths.length > 0) {
+              ipc.terminalWrite(pane.id, encoder.encode(filePathsForShell(paths))).catch(() => {});
+            } else if (text) {
+              // The clipboard signalled files but carried no real paths — e.g. a
+              // copied image, which has no filesystem path. Don't swallow the
+              // text the payload also held: hand it to xterm's normal paste so it
+              // still gets bracketed-paste protection.
+              term.paste(text);
+            }
+          })
+          .catch(() => {});
+      },
+      true,
+    );
     // Translate the macOS line-editing chords xterm doesn't emit on its own into
     // the readline/emacs control sequences the shell expects, and make
     // Shift+Enter a soft newline (#114). Returning false tells xterm to skip its

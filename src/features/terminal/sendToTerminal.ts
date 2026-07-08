@@ -44,6 +44,22 @@ export function filePathsForShell(paths: string[]): string {
 }
 
 /**
+ * Whether a paste's clipboard carries file references rather than plain text.
+ * Copying a file in the OS file manager puts a file *reference* on the
+ * clipboard; the webview signals its presence — a `File` entry, a `file`-kind
+ * item, or a "Files" type — but hides the real path. This only gates whether a
+ * terminal paste falls back to a native path read (#233): plain-text pastes
+ * report none of these and are left to xterm's normal (bracketed) paste. The
+ * three checks are OR'd because which one a given webview populates varies by
+ * platform.
+ */
+export function clipboardHasFiles(dt: DataTransfer): boolean {
+  if (dt.files.length > 0) return true;
+  if (dt.types.includes("Files")) return true;
+  return Array.from(dt.items).some((item) => item.kind === "file");
+}
+
+/**
  * Insert `text` into the active group's active terminal as editable input — no
  * trailing carriage return, so it stages at the cursor and can be wrapped in a
  * command before the user hits Enter (issue #199).

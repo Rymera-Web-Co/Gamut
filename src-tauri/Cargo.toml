@@ -65,3 +65,11 @@ regex = "1"
 # a user gesture, so the context can't revive and the cue is silent (#119, #167).
 # `symphonia-all` adds the codecs (aac/m4a/etc.) on top of the default decoders.
 rodio = { version = "0.20", features = ["symphonia-all"] }
+# Read file *references* off the OS clipboard so a file copied in the file
+# manager can be pasted into the terminal as its absolute path (#233). File
+# refs aren't plain text — neither the webview's paste event nor the
+# clipboard-manager plugin exposes their paths — so this reads the platform's
+# native pasteboard (NSPasteboard file-URLs on macOS, CF_HDROP on Windows,
+# text/uri-list on Linux). Its Linux backend is gtk 0.18, the same version
+# Tauri already pulls, so it adds no second gtk to the tree.
+clipboard-files = "0.1.2"

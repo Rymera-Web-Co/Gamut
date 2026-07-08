@@ -170,6 +170,7 @@ pub fn run() {
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_kill,
+            commands::terminal::clipboard_file_paths,
             commands::terminal::terminal_registry_report,
             commands::updater::check_for_update,
             commands::updater::download_and_install_update,
