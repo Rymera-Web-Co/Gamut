@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useUiStore } from "@/store/ui";
 import { takePendingCommand } from "./pendingCommands";
-import { fileReference, sendToActiveTerminal } from "./sendToTerminal";
+import { fileReference, filePathsForShell, sendToActiveTerminal } from "./sendToTerminal";
 
 describe("fileReference", () => {
   it("returns the bare path when no lines are given", () => {
@@ -28,6 +28,32 @@ describe("fileReference", () => {
   it("quotes the token when the path contains a space", () => {
     expect(fileReference("src/my file.ts", 1, 2)).toBe('"src/my file.ts#L1-L2"');
     expect(fileReference("src/my file.ts")).toBe('"src/my file.ts"');
+  });
+});
+
+describe("filePathsForShell", () => {
+  it("returns a bare path for a single space-free file", () => {
+    expect(filePathsForShell(["/Users/me/repo/file.txt"])).toBe("/Users/me/repo/file.txt");
+  });
+
+  it("quotes a path that contains spaces so it survives as one argument", () => {
+    expect(filePathsForShell(["/Users/me/My Repo/file.txt"])).toBe('"/Users/me/My Repo/file.txt"');
+  });
+
+  it("joins multiple dropped paths with spaces, escaping each independently", () => {
+    expect(filePathsForShell(["/a/one.txt", "/b/two three.txt", "/c/four.txt"])).toBe(
+      '/a/one.txt "/b/two three.txt" /c/four.txt',
+    );
+  });
+
+  it("handles a Windows path with spaces the same way", () => {
+    expect(filePathsForShell(["C:\\Users\\me\\My Docs\\a.txt"])).toBe(
+      '"C:\\Users\\me\\My Docs\\a.txt"',
+    );
+  });
+
+  it("returns an empty string for no paths", () => {
+    expect(filePathsForShell([])).toBe("");
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -20,7 +21,8 @@ import {
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
-import { takePendingCommand } from "./pendingCommands";
+import { setPendingCommand, takePendingCommand } from "./pendingCommands";
+import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
@@ -498,6 +500,80 @@ export function useTerminalSessions({
     ro.observe(host);
     return () => ro.disconnect();
   }, [hostRef]);
+
+  // Insert the shell-escaped absolute path(s) of file(s) dropped from the OS
+  // file manager into the pane they were dropped onto, as editable text (#232).
+  // #231 turned on the webview's native drag-drop, so HTML5 drop events never
+  // reach the DOM — the one webview-wide `onDragDropEvent` is the only source of
+  // real filesystem paths. It fires for every drop anywhere in the window, so we
+  // hit-test the drop position against each visible pane and act only when it
+  // lands on one; the sidebar's repo-add listener hit-tests its own region, so
+  // the two never collide. No-op outside the Tauri webview (dev/tests).
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    // Which currently-visible pane sits under a drop point (physical px → CSS px).
+    const paneAt = (px: number, py: number): { id: string; e: SessionEntry } | null => {
+      const dpr = window.devicePixelRatio || 1;
+      const x = px / dpr;
+      const y = py / dpr;
+      for (const [id, e] of sessionsRef.current) {
+        if (e.el.style.display === "none") continue;
+        const r = e.el.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { id, e };
+      }
+      return null;
+    };
+
+    // Outline the pane being dragged over (and clear every other), so the drop
+    // target is discoverable; `null` clears them all (on leave/drop).
+    const markTarget = (targetId: string | null) => {
+      for (const [id, e] of sessionsRef.current) {
+        const on = id === targetId;
+        e.el.style.outline = on ? "2px dashed var(--color-primary)" : "";
+        e.el.style.outlineOffset = on ? "-2px" : "";
+      }
+    };
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          markTarget(paneAt(p.position.x, p.position.y)?.id ?? null);
+        } else if (p.type === "leave") {
+          markTarget(null);
+        } else if (p.type === "drop") {
+          const hit = paneAt(p.position.x, p.position.y);
+          markTarget(null);
+          if (!hit || p.paths.length === 0) return;
+          const text = filePathsForShell(p.paths);
+          // Stage at the shell's cursor: write straight to a live PTY, otherwise
+          // queue it to drain when the pane spawns. No trailing CR — editable.
+          if (hit.e.spawned) {
+            ipc.terminalWrite(hit.id, encoder.encode(text)).catch(() => {});
+          } else {
+            setPendingCommand(hit.id, text);
+          }
+          // Focus the dropped-on pane so the staged path is where the user types.
+          const { groupId, tabId } = ctxRef.current;
+          if (groupId != null && tabId) setActivePane(groupId, tabId, hit.id);
+          hit.e.term.focus();
+        }
+      })
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // Bound once; reads live state through refs (sessions, ctx) and stable props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A shell exited: note it so the active pane can offer Restart, and badge it
   // as activity if it exited while hidden.

@@ -3,6 +3,16 @@ import { useUiStore } from "@/store/ui";
 import { setPendingCommand } from "./pendingCommands";
 
 /**
+ * Wrap a token in double quotes when it contains whitespace, so it survives as a
+ * single shell argument once typed into the terminal. Paths without spaces are
+ * left bare to keep the common case clean. This is the minimal quoting the rest
+ * of the terminal relies on (#199); it is deliberately not a full shell escaper.
+ */
+export function shellQuotePath(token: string): string {
+  return /\s/.test(token) ? `"${token}"` : token;
+}
+
+/**
  * Build a GitHub-style location reference for a file (and optional line range),
  * matching the `path#Lstart-Lend` anchor format GitHub uses for permalinks:
  *
@@ -19,7 +29,18 @@ export function fileReference(path: string, startLine?: number, endLine?: number
     ref += `#L${startLine}`;
     if (endLine != null && endLine > startLine) ref += `-L${endLine}`;
   }
-  return /\s/.test(ref) ? `"${ref}"` : ref;
+  return shellQuotePath(ref);
+}
+
+/**
+ * Format a list of file paths dropped from the OS file manager as one run of
+ * terminal input: each path shell-quoted (so spaces survive as a single
+ * argument) and space-separated. No trailing carriage return, so the caller
+ * stages it as editable text rather than auto-executing it (#232, matching the
+ * insert-don't-run behaviour of #199).
+ */
+export function filePathsForShell(paths: string[]): string {
+  return paths.map(shellQuotePath).join(" ");
 }
 
 /**
