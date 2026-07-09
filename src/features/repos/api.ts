@@ -24,6 +24,22 @@ export function useRepoStatuses() {
   });
 }
 
+/**
+ * The repo's linked worktrees (main checkout excluded). Kept live by the
+ * watcher: `git worktree add/remove` touches `.git/worktrees/`, which emits
+ * `repos-changed` and invalidates `["linked-worktrees", repoId]` (scoped, see
+ * useGitWatch).
+ */
+export function useLinkedWorktrees(repoId: number, enabled = true) {
+  return useQuery({
+    queryKey: ["linked-worktrees", repoId],
+    queryFn: () => ipc.gitWorktreeList(repoId),
+    staleTime: 30_000,
+    enabled,
+    select: (worktrees) => worktrees.filter((w) => !w.is_main),
+  });
+}
+
 /** Git-derived query keys that a fetch can make stale (ahead/behind, branches…). */
 const GIT_QUERY_KEYS = [
   "repo-statuses",

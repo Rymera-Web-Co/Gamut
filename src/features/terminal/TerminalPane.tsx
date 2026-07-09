@@ -27,6 +27,7 @@ export function TerminalPane() {
   const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
+  const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const terminals = useUiStore((s) => s.terminals);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
@@ -87,7 +88,14 @@ export function TerminalPane() {
     const group = groupList.find((g) => g.id === activeGroupId);
     const visible = visibleRepos(repoList, group);
     const selected = visible.find((r) => r.id === activeRepoId && !r.missing);
-    if (selected) return { cwd: selected.path, title: selected.name };
+    if (selected) {
+      // A selected linked worktree of the repo wins over its main checkout.
+      if (activeWorktreePath) {
+        const base = activeWorktreePath.split("/").filter(Boolean).pop() ?? selected.name;
+        return { cwd: activeWorktreePath, title: `${selected.name} (${base})` };
+      }
+      return { cwd: selected.path, title: selected.name };
+    }
 
     const groupFolder = group?.folder_path ? { cwd: group.folder_path, title: group.name } : null;
     const firstRepo = (() => {

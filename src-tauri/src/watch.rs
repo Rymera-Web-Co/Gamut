@@ -59,7 +59,17 @@ fn is_interesting(path: &Path) -> bool {
         None => true,
         Some(Component::Normal(name)) => matches!(
             name.to_str(),
-            Some("HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "packed-refs" | "index" | "refs")
+            // `worktrees/` holds linked-worktree metadata — entries appearing or
+            // disappearing there is how `git worktree add/remove` shows up.
+            Some(
+                "HEAD"
+                    | "ORIG_HEAD"
+                    | "MERGE_HEAD"
+                    | "packed-refs"
+                    | "index"
+                    | "refs"
+                    | "worktrees"
+            )
         ),
         Some(_) => false,
     }
@@ -341,6 +351,16 @@ fn resync_locked(state: &AppState) {
         desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
         desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
 
+        // Linked-worktree metadata lives in `<git_dir>/worktrees/<name>/`;
+        // watching that directory catches worktrees being added or removed.
+        // When it doesn't exist yet, its own creation fires on the
+        // non-recursive `git_dir` watch above and `learn_new_dirs` picks the
+        // new directory up from that event.
+        let worktrees_dir = git_dir.join("worktrees");
+        if worktrees_dir.is_dir() {
+            desired.insert(worktrees_dir, RecursiveMode::NonRecursive);
+        }
+
         // Non-bare: also watch the working tree directory-by-directory,
         // skipping heavy/ignored dirs so build/install churn inside e.g.
         // `node_modules` never reaches the OS watch layer.
@@ -405,6 +425,8 @@ mod tests {
         assert!(is_interesting(Path::new("/repo/.git/HEAD")));
         assert!(is_interesting(Path::new("/repo/.git/refs/heads/main")));
         assert!(is_interesting(Path::new("/repo/.git")));
+        assert!(is_interesting(Path::new("/repo/.git/worktrees")));
+        assert!(is_interesting(Path::new("/repo/.git/worktrees/feat-1")));
     }
 
     #[test]
