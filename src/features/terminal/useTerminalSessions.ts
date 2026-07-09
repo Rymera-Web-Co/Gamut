@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -8,6 +8,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { getActiveDrag, subscribeDrag, subscribeDrop } from "@/lib/dnd";
 import { ipc } from "@/lib/ipc";
 import { isMac, isWindows } from "@/lib/shortcuts";
 import { useSettings } from "@/lib/settings";
@@ -276,6 +277,36 @@ export function useTerminalSessions({
     return paneId !== visiblePaneRef.current;
   });
 
+  // Which currently-visible pane sits under a viewport point, in the CSS pixels
+  // `getBoundingClientRect` uses. Shared by both drop paths: the OS-file-manager
+  // drop (below) and the in-app file-tree drag. Callers pass CSS-pixel
+  // coordinates — the OS handler converts its physical-pixel positions first.
+  const paneAt = useCallback((x: number, y: number): { id: string; e: SessionEntry } | null => {
+    for (const [id, e] of sessionsRef.current) {
+      if (e.el.style.display === "none") continue;
+      const r = e.el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { id, e };
+    }
+    return null;
+  }, []);
+
+  // Outline the pane being dragged over (and clear every other), so the drop
+  // target is discoverable; `null` clears them all (on leave/drop/cancel). The
+  // subscribeDrag path calls this on every pointermove of *any* app-wide drag,
+  // so short-circuit when the target is unchanged (the common case: `null`
+  // throughout an unrelated repo/tab reorder) rather than rewriting every pane's
+  // style each move.
+  const outlinedPaneRef = useRef<string | null>(null);
+  const markTarget = useCallback((targetId: string | null) => {
+    if (outlinedPaneRef.current === targetId) return;
+    outlinedPaneRef.current = targetId;
+    for (const [id, e] of sessionsRef.current) {
+      const on = id === targetId;
+      e.el.style.outline = on ? "2px dashed var(--color-primary)" : "";
+      e.el.style.outlineOffset = on ? "-2px" : "";
+    }
+  }, []);
+
   function ensureEntry(pane: TermPane): SessionEntry {
     const existing = sessionsRef.current.get(pane.id);
     if (existing) return existing;
@@ -522,49 +553,32 @@ export function useTerminalSessions({
     let unlisten: (() => void) | undefined;
     let cancelled = false;
 
-    // Which currently-visible pane sits under a drop point.
-    //
     // Tauri types the drop position as `PhysicalPosition`, but that only holds
     // on Windows. wry sources the coordinates from the native drag event —
     // AppKit's `draggingLocation` on macOS and GTK's signal args on Linux, both
     // in *logical* points — and forwards them to Tauri unscaled. So only on
     // Windows (Win32 `ScreenToClient`, physical pixels) do we divide by the
-    // device pixel ratio to reach the CSS pixels `getBoundingClientRect` uses;
-    // dividing on macOS would halve an already-logical value and drop the
-    // hit-test off the pane, which is why the drop silently did nothing on
-    // Retina displays. (The sidebar's own drop handler survives the same
-    // division only because its region is anchored at the window origin.)
-    const paneAt = (px: number, py: number): { id: string; e: SessionEntry } | null => {
+    // device pixel ratio to reach the CSS pixels `paneAt` expects; dividing on
+    // macOS would halve an already-logical value and drop the hit-test off the
+    // pane, which is why the drop silently did nothing on Retina displays. (The
+    // sidebar's own drop handler survives the same division only because its
+    // region is anchored at the window origin.) The ratio is read per event, not
+    // cached: on Windows the window can move to a differently-scaled monitor
+    // mid-session, and a frozen ratio would hit-test stale coordinates.
+    const at = (pos: { x: number; y: number }) => {
       const scale = isWindows() ? window.devicePixelRatio || 1 : 1;
-      const x = px / scale;
-      const y = py / scale;
-      for (const [id, e] of sessionsRef.current) {
-        if (e.el.style.display === "none") continue;
-        const r = e.el.getBoundingClientRect();
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { id, e };
-      }
-      return null;
-    };
-
-    // Outline the pane being dragged over (and clear every other), so the drop
-    // target is discoverable; `null` clears them all (on leave/drop).
-    const markTarget = (targetId: string | null) => {
-      for (const [id, e] of sessionsRef.current) {
-        const on = id === targetId;
-        e.el.style.outline = on ? "2px dashed var(--color-primary)" : "";
-        e.el.style.outlineOffset = on ? "-2px" : "";
-      }
+      return paneAt(pos.x / scale, pos.y / scale);
     };
 
     getCurrentWebview()
       .onDragDropEvent((event) => {
         const p = event.payload;
         if (p.type === "enter" || p.type === "over") {
-          markTarget(paneAt(p.position.x, p.position.y)?.id ?? null);
+          markTarget(at(p.position)?.id ?? null);
         } else if (p.type === "leave") {
           markTarget(null);
         } else if (p.type === "drop") {
-          const hit = paneAt(p.position.x, p.position.y);
+          const hit = at(p.position);
           markTarget(null);
           if (!hit || p.paths.length === 0) return;
           const text = filePathsForShell(p.paths);
@@ -593,6 +607,66 @@ export function useTerminalSessions({
     // Bound once; reads live state through refs (sessions, ctx) and stable props.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Insert the shell-escaped absolute path(s) of file(s)/folder(s) dragged from
+  // the app's own editor file tree onto a terminal pane, as editable text —
+  // mirroring the OS-file-manager drop above (#241, mirror of #232). The tree
+  // drag is a pointer-based DnD (`src/lib/dnd.ts`), a different event system from
+  // the webview's native `onDragDropEvent`, so the two drop mechanisms never
+  // collide. Tree paths are repo-relative, so each is resolved to its absolute
+  // path before quoting; the per-pane hit-test and dashed dragover outline are
+  // reused unchanged. Pointer coordinates are already CSS pixels on every
+  // platform, so no device-pixel scaling is applied.
+  useEffect(() => {
+    const offMove = subscribeDrag(() => {
+      const drag = getActiveDrag();
+      // Only a file-tree drag targets a pane; clear the outline for anything
+      // else (a repo/tab reorder) and once the drag ends (drag gone → null).
+      if (drag?.item.kind === "tree") {
+        markTarget(paneAt(drag.x, drag.y)?.id ?? null);
+      } else {
+        markTarget(null);
+      }
+    });
+    const offDrop = subscribeDrop((item, x, y) => {
+      if (item.kind !== "tree") return;
+      const hit = paneAt(x, y);
+      markTarget(null);
+      if (!hit || item.paths.length === 0) return;
+      const { repoId } = item;
+      const paneId = hit.id;
+      // Resolve each repo-relative tree path to its absolute filesystem path
+      // independently (allSettled, not all): one path that fails to resolve
+      // shouldn't drop the rest of the selection. Then stage the survivors like
+      // an OS-file-manager drop: shell-quoted, space-separated, no trailing CR.
+      Promise.allSettled(item.paths.map((rel) => ipc.resolvePath(repoId, rel)))
+        .then((results) => {
+          const paths = results
+            .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+            .map((r) => r.value);
+          if (paths.length === 0) return;
+          // The pane may have been closed during the await — re-look it up and
+          // act only if it's still live, so we never write to a disposed xterm.
+          const live = sessionsRef.current.get(paneId);
+          if (!live) return;
+          const text = filePathsForShell(paths);
+          if (live.spawned) {
+            ipc.terminalWrite(paneId, encoder.encode(text)).catch(() => {});
+          } else {
+            setPendingCommand(paneId, text);
+          }
+          // Focus the dropped-on pane so the staged path is where the user types.
+          const { groupId, tabId } = ctxRef.current;
+          if (groupId != null && tabId) setActivePane(groupId, tabId, paneId);
+          live.term.focus();
+        })
+        .catch(() => {});
+    });
+    return () => {
+      offMove();
+      offDrop();
+    };
+  }, [paneAt, markTarget, setActivePane]);
 
   // A shell exited: note it so the active pane can offer Restart, and badge it
   // as activity if it exited while hidden.
