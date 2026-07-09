@@ -47,6 +47,53 @@ import {
 import { DiscoverDialog } from "./DiscoverDialog";
 import { GroupDialog } from "./GroupDialog";
 
+// Shared active/inactive styling for the selectable rows (repo + worktree) so
+// the highlight treatment stays in lockstep between them.
+function getActiveRowClass(active: boolean) {
+  return active
+    ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
+    : "border-l-transparent hover:bg-[var(--color-accent)]";
+}
+
+/**
+ * The "open terminal here" button shared by repo and worktree rows. Roots a new
+ * terminal tab at `path` in the active group, titled `tabTitle`. `className`
+ * carries the row-specific hover group (`group-hover` vs `group-hover/wt`), and
+ * `onPointerDown` lets a row suppress a drag arming when the button is pressed.
+ */
+function TerminalButton({
+  groupId,
+  path,
+  tabTitle,
+  className,
+  onPointerDown,
+}: {
+  groupId: number | null;
+  path: string;
+  tabTitle: string;
+  className?: string;
+  onPointerDown?: (e: React.PointerEvent) => void;
+}) {
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  return (
+    <button
+      aria-label="Open terminal here"
+      title="Open terminal here"
+      onPointerDown={onPointerDown}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (groupId != null) addTerminalTab(groupId, path, tabTitle);
+      }}
+      className={cn(
+        "shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)]",
+        className,
+      )}
+    >
+      <SquareTerminal className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]" />
+    </button>
+  );
+}
+
 /**
  * One linked worktree, nested under its repo's row. Selecting it keeps the
  * repo active for the content views but roots new terminals at the worktree's
@@ -57,26 +104,34 @@ function WorktreeRow({ repo, worktree }: { repo: Repo; worktree: LinkedWorktree 
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const active = activeRepoId === repo.id && activeWorktreePath === worktree.path;
-  const label = worktree.branch ?? worktree.path.split("/").filter(Boolean).pop() ?? worktree.path;
+  // Fall back to the checkout's folder name when detached; split on both
+  // separators so a Windows path (`\`) yields the folder, not the whole path.
+  const label =
+    worktree.branch ?? worktree.path.split(/[\\/]/).filter(Boolean).pop() ?? worktree.path;
+
+  const activate = () => {
+    if (worktree.missing) return;
+    setActiveRepo(repo.id, worktree.path);
+    ipc.touchRepo(repo.id);
+  };
 
   return (
     <div
       role="button"
       tabIndex={0}
       title={worktree.missing ? "Checkout folder no longer exists on disk" : worktree.path}
-      onClick={() => {
-        if (worktree.missing) return;
-        setActiveRepo(repo.id, worktree.path);
-        ipc.touchRepo(repo.id);
+      onClick={activate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        }
       }}
       className={cn(
         "group/wt ml-6 flex cursor-pointer items-center gap-1.5 rounded-md border-l-2 py-1 pl-1.5 pr-1 text-xs",
         worktree.missing && "cursor-default opacity-60",
-        active
-          ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
-          : "border-l-transparent hover:bg-[var(--color-accent)]",
+        getActiveRowClass(active),
       )}
     >
       {worktree.missing ? (
@@ -98,19 +153,12 @@ function WorktreeRow({ repo, worktree }: { repo: Repo; worktree: LinkedWorktree 
         {label}
       </span>
       {!worktree.missing && (
-        <button
-          aria-label="Open terminal here"
-          title="Open terminal here"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (activeGroupId != null) {
-              addTerminalTab(activeGroupId, worktree.path, `${repo.name} (${label})`);
-            }
-          }}
-          className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover/wt:opacity-100"
-        >
-          <SquareTerminal className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]" />
-        </button>
+        <TerminalButton
+          groupId={activeGroupId}
+          path={worktree.path}
+          tabTitle={`${repo.name} (${label})`}
+          className="group-hover/wt:opacity-100"
+        />
       )}
     </div>
   );
@@ -135,7 +183,6 @@ function RepoRow({
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // A selected worktree highlights its own nested row, not the repo row.
   const active = activeRepoId === repo.id && activeWorktreePath == null;
@@ -173,9 +220,7 @@ function RepoRow({
           "group flex cursor-pointer items-start gap-1.5 rounded-md border-l-2 px-1 py-1.5 text-sm",
           dropOver && "border-t-2 border-t-[var(--color-primary)]",
           repo.missing && "opacity-60",
-          active
-            ? "border-l-[#2563eb] bg-[#2563eb]/15 font-medium text-[var(--color-foreground)]"
-            : "border-l-transparent hover:bg-[var(--color-accent)]",
+          getActiveRowClass(active),
         )}
       >
         <GripVertical className="mt-0.5 size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
@@ -231,21 +276,14 @@ function RepoRow({
               />
             )}
             {!repo.missing && (
-              <button
-                aria-label="Open terminal here"
-                title="Open terminal here"
+              <TerminalButton
+                groupId={activeGroupId}
+                path={repo.path}
+                tabTitle={repo.name}
+                className="group-hover:opacity-100"
                 // Don't let a press on this button arm a repo drag on the row.
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeGroupId != null) {
-                    addTerminalTab(activeGroupId, repo.path, repo.name);
-                  }
-                }}
-                className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
-              >
-                <SquareTerminal className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]" />
-              </button>
+              />
             )}
             <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
               <PopoverTrigger asChild>
