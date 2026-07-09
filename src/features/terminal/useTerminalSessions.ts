@@ -38,8 +38,6 @@ interface SessionEntry {
   disposed: boolean;
   /** Detaches the spawn output channel, if a spawn has happened. */
   disposeChannel?: () => void;
-  /** Removes the capture-phase paste listener bound on `el` at creation. */
-  disposePaste?: () => void;
   /** GPU renderer, when WebGL is available; falls back to the DOM renderer otherwise. */
   webgl?: WebglAddon;
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
@@ -316,54 +314,14 @@ export function useTerminalSessions({
       }),
     );
     term.open(el);
-    // Insert the shell-escaped absolute path(s) of file(s) copied in the OS file
-    // manager when they're pasted into this pane, as editable text — the
-    // clipboard counterpart to the drag-and-drop path insertion in #232 (#233).
-    //
-    // Copying a file puts a *file reference* on the clipboard, not text, and its
-    // real path is only available from the platform's native pasteboard — never
-    // reliably from the webview's paste event. Which signal a webview populates
-    // for a file copy varies wildly by platform: `DataTransfer.files`, a "Files"
-    // type, a `file`-kind item, the bare filename as text/plain, or nothing at
-    // all. Gating on those signals silently did nothing on macOS, where a Finder
-    // copy surfaces none of them (see #233 follow-up). So inside the Tauri
-    // webview we make the native pasteboard the source of truth: on every paste
-    // we ask it for file URLs; if it has any we insert their paths, otherwise we
-    // fall through to a normal text paste. No trailing CR, so paths stage at the
-    // cursor rather than executing.
-    //
-    // Bound in the capture phase on the wrapper node so it runs before xterm's
-    // target-phase paste handler on the inner textarea — only from an ancestor's
-    // capture listener can preventDefault/stopPropagation reliably keep xterm
-    // from also acting on the same event. No-op outside the Tauri webview
-    // (dev/tests), where the native read and the pasteboard aren't available, so
-    // xterm's own (bracketed) paste handles it.
-    const onPaste = (e: ClipboardEvent) => {
-      if (!("__TAURI_INTERNALS__" in window)) return;
-      const dt = e.clipboardData;
-      if (!dt) return;
-      // Read the text now: `clipboardData` is only live during dispatch, and
-      // we're about to suppress xterm's own paste and hop to the native read.
-      const text = dt.getData("text/plain");
-      e.preventDefault();
-      e.stopPropagation();
-      void ipc
-        .clipboardFilePaths()
-        .then((paths) => {
-          if (paths.length > 0) {
-            ipc.terminalWrite(pane.id, encoder.encode(filePathsForShell(paths))).catch(() => {});
-          } else if (text) {
-            // No file references on the pasteboard — an ordinary text paste.
-            // Hand it to xterm's paste so it still gets bracketed-paste framing.
-            term.paste(text);
-          }
-        })
-        .catch(() => {
-          // Native read failed — don't drop a plain-text paste on the floor.
-          if (text) term.paste(text);
-        });
-    };
-    el.addEventListener("paste", onPaste, true);
+    // Paste is left entirely to xterm's built-in handler: it reads the clipboard
+    // text and emits the bracketed-paste frame (ESC[200~ … ESC[201~) to the PTY.
+    // Crucially, an image-only clipboard (a screenshot, "Copy Image") yields empty
+    // text but xterm still emits the empty bracketed frame — that frame is how a
+    // program running in the pane (e.g. an interactive CLI) learns a paste
+    // happened and reads the image from the OS clipboard itself. We deliberately
+    // do NOT install a capture-phase paste interceptor here, so that path stays
+    // unbroken.
     // Translate the macOS line-editing chords xterm doesn't emit on its own into
     // the readline/emacs control sequences the shell expects, and make
     // Shift+Enter a soft newline (#114). Returning false tells xterm to skip its
@@ -425,7 +383,6 @@ export function useTerminalSessions({
       if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
     });
     const entry: SessionEntry = { term, fit, el, linkHighlighter, spawned: false, disposed: false };
-    entry.disposePaste = () => el.removeEventListener("paste", onPaste, true);
     loadWebglAddon(entry);
     sessionsRef.current.set(pane.id, entry);
     return entry;
@@ -669,7 +626,6 @@ export function useTerminalSessions({
       // then detach the spawn channel so it stops firing entirely (#139).
       e.disposed = true;
       e.disposeChannel?.();
-      e.disposePaste?.();
       e.linkHighlighter.dispose();
       e.term.dispose();
       e.el.remove();

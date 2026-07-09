@@ -357,32 +357,6 @@ pub fn terminal_kill(state: State<AppState>, session_id: String) -> AppResult<()
     Ok(())
 }
 
-/// Absolute paths of the file(s) currently on the OS clipboard, or an empty
-/// list when it holds no file references (plain text, an image, or nothing).
-///
-/// Copying a file in the OS file manager puts a *file reference* on the
-/// clipboard, not text — which neither the webview's paste event nor the
-/// clipboard-manager plugin surfaces as a path — so reading it needs the
-/// platform's native pasteboard. Powers "copy a file, paste its path into the
-/// terminal" (#233), the clipboard counterpart to the drag-and-drop path
-/// insertion in #232. A read error is treated the same as "no files": the
-/// caller just lets the paste fall through to normal text handling.
-///
-/// The native read is wrapped in `catch_unwind` because the cross-platform
-/// backends touch platform clipboard APIs (e.g. GTK on Linux) that can panic;
-/// a panic here must never abort the app, so we degrade to "no files" instead.
-#[tauri::command]
-pub fn clipboard_file_paths() -> Vec<String> {
-    std::panic::catch_unwind(|| match clipboard_files::read() {
-        Ok(paths) => paths
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect(),
-        Err(_) => Vec::new(),
-    })
-    .unwrap_or_default()
-}
-
 /// Kill a single session by id, if present. Safe to call for unknown ids.
 pub fn kill(state: &AppState, session_id: &str) {
     if let Ok(mut sessions) = state.terminals.lock() {
