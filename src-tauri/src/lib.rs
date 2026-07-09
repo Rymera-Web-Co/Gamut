@@ -131,6 +131,7 @@ pub fn run() {
             commands::sync::git_push,
             commands::sync::git_checkout_pr,
             commands::worktree::git_worktree_status,
+            commands::worktree::git_worktree_list,
             commands::worktree::worktree_file_diff,
             commands::worktree::git_stage,
             commands::worktree::git_unstage,

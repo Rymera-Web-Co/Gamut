@@ -26,6 +26,7 @@ export const REPO_SCOPED_KEYS = [
   "review-files",
   "worktree-status",
   "worktree-file-diff",
+  "linked-worktrees",
   "stash-list",
   "sync-status",
   // Files tab: directory listings and open-file contents.

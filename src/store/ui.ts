@@ -201,6 +201,11 @@ interface UiState {
   view: View;
   reviewMode: ReviewMode;
   activeRepoId: number | null;
+  // When set, a linked worktree of the active repo is selected instead of its
+  // main checkout: new terminals root there, while repo-scoped views (history,
+  // PRs, …) keep following `activeRepoId`. Cleared whenever the selection moves
+  // back to a plain repo (every one-argument `setActiveRepo` call).
+  activeWorktreePath: string | null;
   activeGroupId: number | null;
   selectedPrNumber: number | null;
   // Whether the repo sidebar column is hidden. Persisted to localStorage.
@@ -256,7 +261,7 @@ interface UiState {
   terminalBgQueue: string[];
   setView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
-  setActiveRepo: (id: number | null) => void;
+  setActiveRepo: (id: number | null, worktreePath?: string | null) => void;
   setActiveGroup: (id: number | null) => void;
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
@@ -336,6 +341,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   view: "files",
   reviewMode: "working",
   activeRepoId: null,
+  activeWorktreePath: null,
   activeGroupId: null,
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
@@ -358,7 +364,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setView: (view) => set({ view }),
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
-  setActiveRepo: (id) => set({ activeRepoId: id, selectedPrNumber: null }),
+  setActiveRepo: (id, worktreePath = null) =>
+    set({ activeRepoId: id, activeWorktreePath: worktreePath, selectedPrNumber: null }),
   // Switching groups stashes the outgoing group's repo + view, then restores
   // the group being entered. A repo that's since left the group (or a group
   // never visited, hence no memory) leaves `activeRepoId` pointing nowhere
@@ -379,6 +386,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         activeGroupId: id,
         groupSelections,
         activeRepoId: remembered ? remembered.repoId : null,
+        activeWorktreePath: null,
         view: remembered ? remembered.view : s.view,
         selectedPrNumber: null,
       };

@@ -333,3 +333,113 @@ pub async fn git_stash_drop(
 ) -> AppResult<String> {
     stash_action(&state, repo_id, "drop", index).await
 }
+
+/// One entry of `git worktree list` — the main working tree or a linked
+/// worktree created with `git worktree add`. Linked worktrees are discovered
+/// from git itself (never stored), so trees created by any external tool show
+/// up the same way.
+#[derive(Serialize)]
+pub struct LinkedWorktree {
+    pub repo_id: i64,
+    /// Absolute path of the working tree checkout.
+    pub path: String,
+    /// Checked-out branch, without the `refs/heads/` prefix (`None` when
+    /// detached or bare).
+    pub branch: Option<String>,
+    /// Commit id the tree is at (`None` for a bare entry).
+    pub head: Option<String>,
+    /// Whether this is the repo's main working tree (always listed first).
+    pub is_main: bool,
+    /// The checkout directory no longer exists on disk (prunable).
+    pub missing: bool,
+}
+
+/// All working trees of a repo — the main checkout plus any linked worktrees —
+/// straight from `git worktree list --porcelain`.
+#[tauri::command]
+pub async fn git_worktree_list(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<Vec<LinkedWorktree>> {
+    let dir = repo_path(&state, repo_id)?.to_string_lossy().to_string();
+    let out = run_git(&dir, &["worktree", "list", "--porcelain"]).await?;
+    Ok(parse_worktree_list(repo_id, &out))
+}
+
+/// Parse `git worktree list --porcelain` output: blank-line-separated blocks of
+/// `worktree <path>` / `HEAD <sha>` / `branch <ref>` (or `detached` / `bare`)
+/// lines, main working tree first.
+fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
+    let mut out: Vec<LinkedWorktree> = Vec::new();
+    for block in porcelain.split("\n\n") {
+        let mut path: Option<&str> = None;
+        let mut head: Option<&str> = None;
+        let mut branch: Option<&str> = None;
+        for line in block.lines() {
+            if let Some(v) = line.strip_prefix("worktree ") {
+                path = Some(v);
+            } else if let Some(v) = line.strip_prefix("HEAD ") {
+                head = Some(v);
+            } else if let Some(v) = line.strip_prefix("branch ") {
+                branch = Some(v.strip_prefix("refs/heads/").unwrap_or(v));
+            }
+        }
+        let Some(path) = path else { continue };
+        out.push(LinkedWorktree {
+            repo_id,
+            path: path.to_string(),
+            branch: branch.map(String::from),
+            head: head.map(String::from),
+            is_main: out.is_empty(),
+            missing: !Path::new(path).is_dir(),
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_main_and_linked_worktrees() {
+        let existing = std::env::temp_dir();
+        let porcelain = format!(
+            "worktree {main}\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n\
+             worktree /nonexistent/wt-feat\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/feat/thing\n\n\
+             worktree /nonexistent/wt-detached\nHEAD 3333333333333333333333333333333333333333\ndetached",
+            main = existing.display()
+        );
+        let wts = parse_worktree_list(7, &porcelain);
+        assert_eq!(wts.len(), 3);
+
+        assert!(wts[0].is_main);
+        assert_eq!(wts[0].repo_id, 7);
+        assert_eq!(wts[0].branch.as_deref(), Some("main"));
+        assert!(!wts[0].missing);
+
+        assert!(!wts[1].is_main);
+        assert_eq!(wts[1].branch.as_deref(), Some("feat/thing"));
+        assert!(wts[1].missing);
+
+        assert_eq!(wts[2].branch, None);
+        assert_eq!(
+            wts[2].head.as_deref(),
+            Some("3333333333333333333333333333333333333333")
+        );
+    }
+
+    #[test]
+    fn parses_bare_entry_without_head_or_branch() {
+        let wts = parse_worktree_list(1, "worktree /repos/bare.git\nbare");
+        assert_eq!(wts.len(), 1);
+        assert!(wts[0].is_main);
+        assert_eq!(wts[0].head, None);
+        assert_eq!(wts[0].branch, None);
+    }
+
+    #[test]
+    fn empty_output_parses_to_no_entries() {
+        assert!(parse_worktree_list(1, "").is_empty());
+    }
+}

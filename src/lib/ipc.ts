@@ -42,6 +42,24 @@ export interface Repo {
   is_git_repo: boolean;
 }
 
+/**
+ * One entry of `git worktree list` — the repo's main working tree or a linked
+ * worktree created with `git worktree add`. Discovered from git itself, so
+ * worktrees created by any external tool show up too.
+ */
+export interface LinkedWorktree {
+  repo_id: number;
+  /** Absolute path of the working tree checkout. */
+  path: string;
+  /** Checked-out branch (no `refs/heads/` prefix); null when detached or bare. */
+  branch: string | null;
+  head: string | null;
+  /** Whether this is the repo's main working tree. */
+  is_main: boolean;
+  /** The checkout directory no longer exists on disk (prunable). */
+  missing: boolean;
+}
+
 export interface DiscoveredRepo {
   path: string;
   name: string;
@@ -559,6 +577,7 @@ export const ipc = {
 
   // working tree (staging / commit / stash)
   worktreeStatus: (repoId: number) => invoke<WorktreeStatus>("git_worktree_status", { repoId }),
+  gitWorktreeList: (repoId: number) => invoke<LinkedWorktree[]>("git_worktree_list", { repoId }),
   worktreeFileDiff: (repoId: number, path: string, staged: boolean, oldPath?: string) =>
     invoke<FileDiff>("worktree_file_diff", { repoId, path, staged, oldPath }),
   gitStage: (repoId: number, paths: string[]) => invoke<void>("git_stage", { repoId, paths }),
