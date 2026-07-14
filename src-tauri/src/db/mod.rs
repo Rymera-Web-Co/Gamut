@@ -28,6 +28,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0006_gh_user_cache",
         include_str!("migrations/0006_gh_user_cache.sql"),
     ),
+    (
+        "0007_repo_has_worktrees",
+        include_str!("migrations/0007_repo_has_worktrees.sql"),
+    ),
 ];
 
 /// How long a connection waits for a competing writer's lock before giving up

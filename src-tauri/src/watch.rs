@@ -415,6 +415,17 @@ fn resync_locked(state: &AppState) {
         desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
         desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
 
+        // Linked-worktree metadata lives in `<git_dir>/worktrees/<name>/`;
+        // watching that directory non-recursively catches worktrees being added
+        // or removed (each `<name>` is a direct child), which keeps a repo's
+        // `has_worktrees` flag and worktree list live. The first worktree, which
+        // creates `worktrees/` itself, is caught by the non-recursive git-dir
+        // watch above.
+        let worktrees_dir = git_dir.join("worktrees");
+        if worktrees_dir.is_dir() {
+            desired.insert(worktrees_dir, RecursiveMode::NonRecursive);
+        }
+
         // Non-bare: watch the working tree top-level hybrid — root
         // non-recursively plus each non-pruned top-level subdirectory
         // recursively — so `.git` and heavy/generated dirs stay out of the OS

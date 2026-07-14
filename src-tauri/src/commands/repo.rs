@@ -29,6 +29,11 @@ pub struct Repo {
     /// can be added too; for those the UI shows only the Files tab and the
     /// backend skips all git operations (status, branches, ahead/behind).
     pub is_git_repo: bool,
+    /// Cached "has any linked worktree" flag (maintained by the status scan).
+    /// The UI uses it to decide whether to run the per-repo `git worktree list`
+    /// at all — repos with none skip it entirely. May lag reality until the
+    /// next status scan; the live value rides on `RepoStatus`.
+    pub has_worktrees: bool,
 }
 
 #[derive(Serialize)]
@@ -69,20 +74,22 @@ fn id_map(conn: &Connection, sql: &str) -> AppResult<HashMap<i64, Vec<i64>>> {
 }
 
 fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
-    let (path, name, default_branch, last_opened, created_at, is_git_repo) = conn.query_row(
-        "SELECT path, name, default_branch, last_opened, created_at, is_git_repo FROM repos WHERE id = ?1",
-        [id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)? != 0,
-            ))
-        },
-    )?;
+    let (path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees) = conn
+        .query_row(
+            "SELECT path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees FROM repos WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)? != 0,
+                    row.get::<_, i64>(6)? != 0,
+                ))
+            },
+        )?;
 
     let missing = !std::path::Path::new(&path).exists();
 
@@ -101,6 +108,7 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
         )?,
         missing,
         is_git_repo,
+        has_worktrees,
     })
 }
 
@@ -288,7 +296,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
     let mut groups = id_map(conn, "SELECT repo_id, group_id FROM repo_groups")?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo
+        "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees
          FROM repos ORDER BY sort, name COLLATE NOCASE",
     )?;
     let rows = stmt
@@ -301,6 +309,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)? != 0,
+                row.get::<_, i64>(7)? != 0,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -308,7 +317,16 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, path, name, default_branch, last_opened, created_at, is_git_repo)| {
+            |(
+                id,
+                path,
+                name,
+                default_branch,
+                last_opened,
+                created_at,
+                is_git_repo,
+                has_worktrees,
+            )| {
                 let missing = !std::path::Path::new(&path).exists();
                 Repo {
                     id,
@@ -321,6 +339,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                     group_ids: groups.remove(&id).unwrap_or_default(),
                     missing,
                     is_git_repo,
+                    has_worktrees,
                 }
             },
         )
@@ -394,6 +413,10 @@ pub struct RepoStatus {
     /// True when the working tree has staged, unstaged, or untracked changes.
     /// Surfaced as a dirty indicator in the sidebar.
     pub has_uncommitted_changes: bool,
+    /// True when the repo has any linked worktree (`git worktree add`). The
+    /// live value; the persisted `Repo.has_worktrees` is refreshed from it.
+    /// The UI uses it to decide whether to run `git worktree list` at all.
+    pub has_worktrees: bool,
 }
 
 /// Whether the repo's working tree has any uncommitted changes — staged,
@@ -424,24 +447,60 @@ fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
 #[tauri::command]
 pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStatus>> {
     let started = std::time::Instant::now();
-    let rows: Vec<(i64, String)> = {
+    // `stored` is the persisted has_worktrees per repo, so after the scan we can
+    // write back only the ones that actually changed.
+    let (scan_rows, stored): (Vec<(i64, String)>, HashMap<i64, bool>) = {
         let conn = lock(&state)?;
         // Non-git folders have no branch / ahead-behind; skip them entirely so
         // the scan never touches a plain directory.
-        let mut stmt = conn.prepare("SELECT id, path FROM repos WHERE is_git_repo != 0")?;
-        let r = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        r
+        let mut stmt =
+            conn.prepare("SELECT id, path, has_worktrees FROM repos WHERE is_git_repo != 0")?;
+        let mut scan_rows: Vec<(i64, String)> = Vec::new();
+        let mut stored: HashMap<i64, bool> = HashMap::new();
+        let iter = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+            ))
+        })?;
+        for row in iter {
+            let (id, path, has_worktrees) = row?;
+            stored.insert(id, has_worktrees);
+            scan_rows.push((id, path));
+        }
+        (scan_rows, stored)
     };
 
     // Bound concurrency and get the blocking git2 work off the async runtime's
     // worker threads. This whole scan holds a single git-status permit, so it
     // can't stampede alongside per-repo worktree-status calls and trigger the
     // libiconv lock convoy (issue #89).
-    let result = crate::commands::run_git_gated(&state, move || compute_repo_statuses(rows)).await;
+    let result =
+        crate::commands::run_git_gated(&state, move || compute_repo_statuses(scan_rows)).await;
+
+    // Persist any change in linked-worktree presence so `Repo.has_worktrees`
+    // (which gates whether the UI runs `git worktree list` per repo) survives a
+    // restart. Worktree state rarely changes, so this usually writes nothing and
+    // never takes the lock.
+    if let Ok(statuses) = &result {
+        let changed: Vec<(i64, bool)> = statuses
+            .iter()
+            .filter(|s| stored.get(&s.id) != Some(&s.has_worktrees))
+            .map(|s| (s.id, s.has_worktrees))
+            .collect();
+        if !changed.is_empty() {
+            if let Ok(conn) = lock(&state) {
+                for (id, has_worktrees) in changed {
+                    let _ = conn.execute(
+                        "UPDATE repos SET has_worktrees = ?1 WHERE id = ?2",
+                        rusqlite::params![has_worktrees as i64, id],
+                    );
+                }
+            }
+        }
+    }
+
     crate::commands::diagnostics::record(
         &state,
         crate::commands::diagnostics::OpTiming::finished(
@@ -468,6 +527,14 @@ fn compute_repo_statuses(rows: Vec<(i64, String)>) -> AppResult<Vec<RepoStatus>>
         .collect())
 }
 
+/// Whether the repo has any linked worktree (`git worktree add`). Cheap: git2
+/// reads `.git/worktrees/` without spawning a subprocess, so it's fine to run
+/// in the per-repo status scan — unlike the `git worktree list` CLI call the
+/// UI needs for full details, which this flag lets it avoid for repos with none.
+fn has_linked_worktrees(repo: &git2::Repository) -> bool {
+    repo.worktrees().map(|w| !w.is_empty()).unwrap_or(false)
+}
+
 /// Compute a single repo's branch and ahead/behind from its path. Never errors:
 /// an unreadable repo just yields a zeroed status (matching the batch scan).
 fn compute_repo_status(id: i64, path: &str) -> RepoStatus {
@@ -477,9 +544,11 @@ fn compute_repo_status(id: i64, path: &str) -> RepoStatus {
         ahead: 0,
         behind: 0,
         has_uncommitted_changes: false,
+        has_worktrees: false,
     };
     if let Ok(repo) = git::open(std::path::Path::new(path)) {
         status.has_uncommitted_changes = has_uncommitted_changes(&repo);
+        status.has_worktrees = has_linked_worktrees(&repo);
         if let Ok(head) = repo.head() {
             status.branch = head.shorthand().map(|s| s.to_string());
             if head.is_branch() {
