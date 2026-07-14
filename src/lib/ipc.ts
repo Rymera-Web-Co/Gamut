@@ -558,6 +558,8 @@ export const ipc = {
   // repos
   listRepos: () => invoke<Repo[]>("list_repos"),
   repoStatuses: () => invoke<RepoStatus[]>("repo_statuses"),
+  /** Statuses for just the given repos — the watcher's scoped refresh path. */
+  repoStatusesFor: (repoIds: number[]) => invoke<RepoStatus[]>("repo_statuses_for", { repoIds }),
   repoStatus: (repoId: number) => invoke<RepoStatus>("repo_status", { repoId }),
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),

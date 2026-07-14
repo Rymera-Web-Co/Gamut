@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 
+import { ipc, type RepoStatus } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
 
 /**
@@ -42,31 +43,65 @@ export const REPO_SCOPED_KEYS = [
  * of events triggers one invalidation round rather than many. The event
  * carries the ids of the repos that actually changed (or `null` when the
  * backend can't narrow it down), so a round only refetches those repos'
- * queries rather than re-scanning the whole fleet — `repo-statuses` is a
- * single aggregate query with no per-repo variant, so it's always refreshed.
+ * queries rather than re-scanning the whole fleet. `repo-statuses` is a
+ * single aggregate query with no per-repo variant, so scoped rounds fetch just
+ * the changed repos' statuses (`repo_statuses_for`) and patch them into the
+ * aggregate cache — invalidating it instead would run a full-fleet git scan
+ * per round, which on a busy fleet (build tools and editors writing
+ * constantly) pegged the CPU with back-to-back scans.
  */
 export function useGitWatch() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let repoIds = new Set<number>();
     let fullInvalidate = false;
+    // All writes to the aggregate `repo-statuses` cache are chained behind the
+    // previous round, so they apply in submission order. Without this, a second
+    // flush could start while an earlier scoped fetch is still in flight, and
+    // the older response — resolving last — would overwrite the fresher patch.
+    // Chaining (rather than dropping superseded responses) also keeps updates
+    // for repos that only appeared in the earlier round. Rounds never reject:
+    // each round's failure is handled inside it.
+    let aggregateChain: Promise<unknown> = Promise.resolve();
 
     const flush = () => {
       timer = null;
-      queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
-      if (fullInvalidate) {
+      const ids = [...repoIds];
+      const full = fullInvalidate;
+      repoIds = new Set();
+      fullInvalidate = false;
+
+      if (full) {
+        aggregateChain = aggregateChain.then(() =>
+          queryClient.invalidateQueries({ queryKey: ["repo-statuses"] }),
+        );
         for (const key of REPO_SCOPED_KEYS) {
           queryClient.invalidateQueries({ queryKey: [key] });
         }
-      } else {
-        for (const id of repoIds) {
-          for (const key of REPO_SCOPED_KEYS) {
-            queryClient.invalidateQueries({ queryKey: [key, id] });
-          }
+        return;
+      }
+
+      aggregateChain = aggregateChain.then(() =>
+        ipc
+          .repoStatusesFor(ids)
+          .then((fresh) => {
+            queryClient.setQueryData<RepoStatus[]>(["repo-statuses"], (prev) => {
+              // No cached aggregate yet — leave it to the full query.
+              if (!prev) return prev;
+              const byId = new Map(fresh.map((s) => [s.id, s]));
+              return prev.map((s) => byId.get(s.id) ?? s);
+            });
+          })
+          .catch(() => {
+            // Scoped refresh failed; fall back to the full scan.
+            return queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
+          }),
+      );
+      for (const id of ids) {
+        for (const key of REPO_SCOPED_KEYS) {
+          queryClient.invalidateQueries({ queryKey: [key, id] });
         }
       }
-      repoIds = new Set();
-      fullInvalidate = false;
     };
 
     const unlisten = listen<number[] | null>("repos-changed", (event) => {
