@@ -76,11 +76,7 @@ export function DiagnosticsPanel() {
             <DiagRow label="Groups" value={String(data.group_count)} />
             <DiagRow label="Watched paths" value={String(data.watched_path_count)} />
             {data.watch_failed_count > 0 && (
-              <DiagRow
-                label="Watch failures"
-                value={String(data.watch_failed_count)}
-                danger
-              />
+              <DiagRow label="Watch failures" value={String(data.watch_failed_count)} danger />
             )}
             {stalls && (
               <DiagRow label="UI stalls" value={`${stalls.count} (max ${stalls.max_ms} ms)`} />
