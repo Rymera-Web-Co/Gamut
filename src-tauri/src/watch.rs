@@ -1,21 +1,29 @@
 //! Filesystem watcher over each registered repo's working tree, so changes made
 //! outside the app — a branch switch or commit in a terminal, *and* a file
 //! edited in another editor/IDE — are reflected live. A non-bare repo's working
-//! tree is watched directory-by-directory (non-recursively), skipping heavy or
-//! ignored directories (`node_modules`, `target`, `.git`, …) so build/install
-//! churn inside them never reaches the OS watch layer; newly created
-//! directories are picked up as they appear. Its `.git` is watched the same way
-//! bare repos are — `refs/` and top-level git-state files, never the object
-//! store. A debounced batch emits a single `repos-changed` event to the
-//! frontend, carrying the ids of the repos whose watched directory actually
-//! contained a changed path (or `None` when the affected repos can't be
-//! narrowed down, e.g. a folder-bound group just added new repos) so the
-//! frontend can scope its refetch instead of re-scanning every repo (#206).
-//! Events are further filtered so `.git` log churn doesn't trigger needless
-//! refreshes — only working-tree files and the refs/HEAD/index that reflect
-//! repo state count.
+//! tree is watched with a single recursive OS watch (which also covers its
+//! `.git`); its git dir and `refs/` are additionally watched so a repo whose
+//! git dir lives outside the working tree (a separate git dir, a linked
+//! worktree) is still covered. Bare repos have no work tree, so only their
+//! `refs/` and top-level git-state files are watched.
+//!
+//! Watching recursively keeps the number of OS watches bounded (a handful per
+//! repo) rather than one-per-directory: a large fleet spread over tens of
+//! thousands of directories would otherwise blow past the per-process limit on
+//! filesystem watches, and the excess registrations fail silently, leaving most
+//! repos unwatched. Build/install churn (`node_modules`, `target`, …) and
+//! `.git` object/log noise still reach the OS layer under a recursive watch, so
+//! it is discarded at the event-filter stage (`is_interesting`) instead — only
+//! working-tree files outside pruned directories and the refs/HEAD/index that
+//! reflect repo state trigger a refresh.
+//!
+//! A debounced batch emits a single `repos-changed` event to the frontend,
+//! carrying the ids of the repos whose watched directory actually contained a
+//! changed path (or `None` when the affected repos can't be narrowed down, e.g.
+//! a folder-bound group just added new repos) so the frontend can scope its
+//! refetch instead of re-scanning every repo (#206).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -35,24 +43,42 @@ pub const REPOS_CHANGED: &str = "repos-changed";
 
 pub struct RepoWatcher {
     debouncer: Debouncer<RecommendedWatcher>,
-    /// The directories currently watched, each with its recursion mode: a
-    /// repo's git-state paths, or one entry per (non-pruned) directory in a
-    /// non-bare repo's working tree.
+    /// The directories the OS watch layer actually accepted, each with its
+    /// recursion mode: a repo's git-state paths and, for a non-bare repo, its
+    /// working tree watched recursively. Only successful `watch()` calls land
+    /// here — see `sync`.
     watched: HashMap<PathBuf, RecursiveMode>,
+    /// How many `watch()` calls the last `sync` could not register (e.g. the
+    /// per-process filesystem-watch limit). Surfaced in diagnostics so a silent
+    /// registration failure is visible rather than masquerading as a healthy
+    /// watch count.
+    failed: usize,
 }
 
-/// Whether a changed path warrants a UI refresh. Working-tree files always
-/// count. Inside `.git`, only the entries that reflect repo state do — `HEAD`,
-/// `refs/`, `packed-refs`, `index` — so object/log churn (which fires
+/// Whether a changed path warrants a UI refresh. A working-tree file counts
+/// unless it sits under a pruned directory (`node_modules`, `target`, a
+/// dotfile dir, …): under a recursive watch, build/install churn reaches the
+/// OS layer, so it is discarded here instead of by not watching it. Inside
+/// `.git`, only the entries that reflect repo state count — `HEAD`, `refs/`,
+/// `packed-refs`, `index`, `worktrees` — so object/log churn (which fires
 /// constantly during fetches and gc) doesn't spam the frontend.
-fn is_interesting(path: &Path) -> bool {
+fn is_interesting(path: &Path, prune: &[String]) -> bool {
     let comps: Vec<Component> = path.components().collect();
     let git_at = comps.iter().position(|c| match c {
         Component::Normal(name) => *name == OsStr::new(".git"),
         _ => false,
     });
     let Some(i) = git_at else {
-        return true; // no `.git` component -> a working-tree file
+        // No `.git` component -> a working-tree path. Drop it when an ancestor
+        // directory is pruned so churn inside heavy/ignored trees is ignored.
+        // Only ancestors are checked, never the final component — otherwise a
+        // tracked root dotfile (`.gitignore`, `.env`) would be dropped, since
+        // `is_pruned_dir` treats any dot-prefixed name as pruned.
+        let ancestors = comps.len().saturating_sub(1);
+        return !comps.iter().take(ancestors).any(|c| match c {
+            Component::Normal(name) => git::is_pruned_dir(&name.to_string_lossy(), prune),
+            _ => false,
+        });
     };
     match comps.get(i + 1) {
         // `.git` itself (HEAD/packed-refs swapped on a branch switch).
@@ -130,29 +156,16 @@ impl RepoWatcher {
                     }
                 }
 
-                // A watched directory is non-recursive, so a subdirectory
-                // created inside it needs its own explicit watch to keep
-                // picking up further changes (and any of its own
-                // subdirectories already created alongside it, e.g. via
-                // `mkdir -p`).
+                // Emit only when the batch touched something worth a refresh (a
+                // working-tree file outside a pruned dir, or a git-state ref),
+                // not build/install churn or internal `.git` object/log noise —
+                // and resolve which repo(s) the changed paths belong to so the
+                // frontend can scope its refetch to just those repos.
                 let prune = crate::commands::repo::watch_prune_dirs(&state);
-                if let Ok(mut guard) = state.watcher.lock() {
-                    if let Some(w) = guard.as_mut() {
-                        let candidates: Vec<PathBuf> =
-                            events.iter().map(|e| e.path.clone()).collect();
-                        w.learn_new_dirs(&candidates, &prune);
-                    }
-                }
-
-                // Otherwise emit only when the batch touched something worth a
-                // refresh (a working-tree file or a git-state ref), not on
-                // internal `.git` object/log noise — and resolve which repo(s)
-                // the changed paths belong to so the frontend can scope its
-                // refetch to just those repos.
                 let interesting: Vec<&PathBuf> = events
                     .iter()
                     .map(|e| &e.path)
-                    .filter(|p| is_interesting(p))
+                    .filter(|p| is_interesting(p, &prune))
                     .collect();
                 if interesting.is_empty() {
                     return;
@@ -172,21 +185,43 @@ impl RepoWatcher {
         Ok(Self {
             debouncer,
             watched: HashMap::new(),
+            failed: 0,
         })
     }
 
-    /// Number of directories currently watched (for diagnostics).
+    /// Number of directories the OS watch layer is actually watching.
     pub fn watched_count(&self) -> usize {
         self.watched.len()
     }
 
+    /// Number of `watch()` calls the last `sync` could not register.
+    pub fn failed_count(&self) -> usize {
+        self.failed
+    }
+
     /// Watch exactly the given set of directories (add new, drop removed), each
-    /// with its requested recursion mode.
+    /// with its requested recursion mode. Only registrations the OS accepts are
+    /// retained; failures are counted (`failed_count`) rather than silently
+    /// treated as watched, so a registration cap surfaces in diagnostics.
     pub fn sync(&mut self, desired: HashMap<PathBuf, RecursiveMode>) {
         let watcher = self.debouncer.watcher();
+        let mut next: HashMap<PathBuf, RecursiveMode> = HashMap::new();
+        let mut failed = 0usize;
         for (dir, mode) in &desired {
-            if !self.watched.contains_key(dir) {
-                let _ = watcher.watch(dir, *mode);
+            // Already watched with the same mode -> keep as-is, no re-register.
+            if self.watched.get(dir) == Some(mode) {
+                next.insert(dir.clone(), *mode);
+                continue;
+            }
+            // A mode change re-registers; unwatch the stale entry first.
+            if self.watched.contains_key(dir) {
+                let _ = watcher.unwatch(dir);
+            }
+            match watcher.watch(dir, *mode) {
+                Ok(()) => {
+                    next.insert(dir.clone(), *mode);
+                }
+                Err(_) => failed += 1,
             }
         }
         for dir in self.watched.keys() {
@@ -194,99 +229,15 @@ impl RepoWatcher {
                 let _ = watcher.unwatch(dir);
             }
         }
-        self.watched = desired;
+        self.watched = next;
+        self.failed = failed;
     }
-
-    /// Given paths touched by a debounced batch, watch any that are directories
-    /// not already watched and aren't pruned — e.g. a directory just created
-    /// inside a non-recursively watched working tree.
-    pub fn learn_new_dirs(&mut self, candidates: &[PathBuf], prune: &[String]) {
-        for dir in new_watchable_dirs(candidates, &self.watched, prune) {
-            let _ = self
-                .debouncer
-                .watcher()
-                .watch(&dir, RecursiveMode::NonRecursive);
-            self.watched.insert(dir, RecursiveMode::NonRecursive);
-        }
-    }
-}
-
-/// Directories among `candidates` that should start being watched: not already
-/// watched, still present as directories, and not pruned (`.git` included).
-/// Recurses into each newly-found directory to pick up any subdirectories
-/// already present, so `mkdir -p a/b/c` yields `a`, `b`, and `c` in one pass.
-/// Uses `symlink_metadata` (never follows symlinks) so a symlink cycle inside
-/// the tree (e.g. `ln -s .. sub/link`) can't send this walk into unbounded
-/// recursion the way the previous `RecursiveMode::Recursive` OS watch, whose
-/// cycle handling this replaced, did not need to worry about.
-fn new_watchable_dirs(
-    candidates: &[PathBuf],
-    already_watched: &HashMap<PathBuf, RecursiveMode>,
-    prune: &[String],
-) -> Vec<PathBuf> {
-    let mut found: HashSet<PathBuf> = HashSet::new();
-    let mut queue: Vec<PathBuf> = candidates.to_vec();
-    while let Some(dir) = queue.pop() {
-        if already_watched.contains_key(&dir) || found.contains(&dir) {
-            continue;
-        }
-        let is_dir = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir());
-        if !is_dir {
-            continue;
-        }
-        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
-        if name.as_deref() == Some(".git") || name.is_some_and(|n| git::is_pruned_dir(&n, prune)) {
-            continue;
-        }
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            queue.extend(
-                entries
-                    .flatten()
-                    .map(|e| e.path())
-                    .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())),
-            );
-        }
-        found.insert(dir);
-    }
-    found.into_iter().collect()
-}
-
-/// Directories to watch non-recursively within a non-bare repo's working tree:
-/// the tree root plus every subdirectory, skipping `.git` (watched separately
-/// via git-state paths, like a bare repo) and heavy/ignored directories from
-/// `prune` — so build/install churn inside e.g. `node_modules` never reaches
-/// the OS watch layer. Uses `symlink_metadata` (never follows symlinks) so a
-/// symlink cycle inside the tree can't send this walk into unbounded recursion.
-fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<PathBuf> {
-    let mut dirs = vec![work.to_path_buf()];
-    let mut queue = vec![work.to_path_buf()];
-    while let Some(dir) = queue.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
-            if !is_dir {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == ".git" || git::is_pruned_dir(&name, prune) {
-                continue;
-            }
-            dirs.push(path.clone());
-            queue.push(path);
-        }
-    }
-    dirs
 }
 
 /// Recompute the set of repo git dirs from the DB and update the watcher.
 ///
-/// Walking each repo's working tree and registering a watch per directory is
-/// not cheap — on macOS in particular, every individual `watch()` call does a
-/// full `FSEventStreamCreate`, so a large repo fleet can take a long time to
+/// Registering a recursive `watch()` per repo is not free — on macOS each call
+/// does a full `FSEventStreamCreate`, so a large repo fleet can take a while to
 /// resync (#225). `resync` runs from the synchronous `.setup()` hook and from
 /// synchronous `#[tauri::command]`s, both of which execute on Tauri's
 /// main/UI thread, so the entire rebuild — including the DB read — runs on a
@@ -332,8 +283,6 @@ fn resync_locked(state: &AppState) {
             .unwrap_or_default();
         (repos, bound)
     };
-    let prune = crate::commands::repo::watch_prune_dirs(state);
-
     let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
     // Watched repo root directory -> repo id, so the debounced callback can
     // resolve a changed path back to the repo(s) it belongs to (#206).
@@ -344,31 +293,24 @@ fn resync_locked(state: &AppState) {
         };
 
         // Watch `refs/` (recursive) for branch/tag changes and the git dir
-        // non-recursively for HEAD/packed-refs/index — but NOT the object
-        // store, which would flood on every loose object written during a
-        // fetch. Applies to both bare repos and a non-bare repo's `.git`.
+        // non-recursively for HEAD/packed-refs/index/worktrees — but NOT the
+        // object store, which would flood on every loose object written during
+        // a fetch. This covers bare repos and a repo whose git dir lives
+        // outside its working tree (a separate git dir, a linked worktree);
+        // for an in-tree `.git` it overlaps the recursive workdir watch below,
+        // which is harmless (the debouncer coalesces).
         let git_dir = repo.path().to_path_buf();
         desired.insert(git_dir.join("refs"), RecursiveMode::Recursive);
         desired.insert(git_dir.clone(), RecursiveMode::NonRecursive);
 
-        // Linked-worktree metadata lives in `<git_dir>/worktrees/<name>/`;
-        // watching that directory catches worktrees being added or removed.
-        // When it doesn't exist yet, its own creation fires on the
-        // non-recursive `git_dir` watch above and `learn_new_dirs` picks the
-        // new directory up from that event.
-        let worktrees_dir = git_dir.join("worktrees");
-        if worktrees_dir.is_dir() {
-            desired.insert(worktrees_dir, RecursiveMode::NonRecursive);
-        }
-
-        // Non-bare: also watch the working tree directory-by-directory,
-        // skipping heavy/ignored dirs so build/install churn inside e.g.
-        // `node_modules` never reaches the OS watch layer.
+        // Non-bare: watch the whole working tree with a single recursive watch.
+        // Build/install churn and `.git` object/log noise reach the OS layer
+        // this way, but `is_interesting` discards them — keeping the watch count
+        // bounded (a handful per repo) so a large fleet never exceeds the
+        // per-process watch limit.
         match repo.workdir() {
             Some(work) => {
-                for dir in workdir_watch_dirs(work, &prune) {
-                    desired.insert(dir, RecursiveMode::NonRecursive);
-                }
+                desired.insert(work.to_path_buf(), RecursiveMode::Recursive);
                 repo_dirs.insert(work.to_path_buf(), *id);
             }
             None => {
@@ -409,30 +351,53 @@ fn resync_locked(state: &AppState) {
 mod tests {
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&root);
-        root
-    }
-
-    fn touch_dir(path: &Path) {
-        std::fs::create_dir_all(path).unwrap();
-    }
-
     #[test]
     fn is_interesting_flags_working_tree_files_and_git_state() {
-        assert!(is_interesting(Path::new("/repo/src/main.rs")));
-        assert!(is_interesting(Path::new("/repo/.git/HEAD")));
-        assert!(is_interesting(Path::new("/repo/.git/refs/heads/main")));
-        assert!(is_interesting(Path::new("/repo/.git")));
-        assert!(is_interesting(Path::new("/repo/.git/worktrees")));
-        assert!(is_interesting(Path::new("/repo/.git/worktrees/feat-1")));
+        let prune: &[String] = &[];
+        assert!(is_interesting(Path::new("/repo/src/main.rs"), prune));
+        assert!(is_interesting(Path::new("/repo/.git/HEAD"), prune));
+        assert!(is_interesting(
+            Path::new("/repo/.git/refs/heads/main"),
+            prune
+        ));
+        assert!(is_interesting(Path::new("/repo/.git"), prune));
+        assert!(is_interesting(Path::new("/repo/.git/worktrees"), prune));
+        assert!(is_interesting(
+            Path::new("/repo/.git/worktrees/feat-1"),
+            prune
+        ));
     }
 
     #[test]
     fn is_interesting_ignores_git_object_and_log_churn() {
-        assert!(!is_interesting(Path::new("/repo/.git/objects/ab/cdef1234")));
-        assert!(!is_interesting(Path::new("/repo/.git/logs/HEAD")));
+        let prune: &[String] = &[];
+        assert!(!is_interesting(
+            Path::new("/repo/.git/objects/ab/cdef1234"),
+            prune
+        ));
+        assert!(!is_interesting(Path::new("/repo/.git/logs/HEAD"), prune));
+    }
+
+    #[test]
+    fn is_interesting_ignores_pruned_working_tree_churn() {
+        // Under a recursive watch, build/install churn reaches the OS layer;
+        // it must be dropped at the event filter instead of by not watching it.
+        let prune = vec!["node_modules".to_string(), "target".to_string()];
+        assert!(!is_interesting(
+            Path::new("/repo/node_modules/pkg/index.js"),
+            &prune
+        ));
+        assert!(!is_interesting(Path::new("/repo/target/debug/foo"), &prune));
+        // Dotfile dirs are pruned regardless of the configured list.
+        assert!(!is_interesting(Path::new("/repo/.venv/lib/x.py"), &prune));
+        // A real source edit still counts.
+        assert!(is_interesting(Path::new("/repo/src/lib.rs"), &prune));
+        // A tracked root dotfile is NOT pruned — only ancestor dirs are checked,
+        // never the changed file itself.
+        assert!(is_interesting(Path::new("/repo/.gitignore"), &prune));
+        assert!(is_interesting(Path::new("/repo/.env"), &prune));
+        // `.git` state is unaffected by the working-tree prune filter.
+        assert!(is_interesting(Path::new("/repo/.git/HEAD"), &prune));
     }
 
     #[test]
@@ -469,92 +434,5 @@ mod tests {
         let watched = HashMap::from([(PathBuf::from("/repos/bare.git"), 7)]);
         let path = PathBuf::from("/repos/bare.git/refs/heads/main");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), Some(vec![7]));
-    }
-
-    #[test]
-    fn workdir_watch_dirs_skips_pruned_and_git() {
-        let work = temp_root("gamut_watch_workdir_test");
-        touch_dir(&work.join("src/nested"));
-        touch_dir(&work.join("node_modules/pkg"));
-        touch_dir(&work.join(".git/objects"));
-
-        let prune = vec!["node_modules".to_string()];
-        let dirs = workdir_watch_dirs(&work, &prune);
-
-        assert!(dirs.contains(&work));
-        assert!(dirs.contains(&work.join("src")));
-        assert!(dirs.contains(&work.join("src/nested")));
-        assert!(!dirs
-            .iter()
-            .any(|d| d.starts_with(work.join("node_modules"))));
-        assert!(!dirs.iter().any(|d| d.starts_with(work.join(".git"))));
-
-        std::fs::remove_dir_all(&work).unwrap();
-    }
-
-    #[test]
-    fn new_watchable_dirs_skips_already_watched_and_pruned() {
-        let work = temp_root("gamut_watch_new_dirs_test");
-        let existing = work.join("existing");
-        let fresh = work.join("fresh");
-        let fresh_nested = fresh.join("nested");
-        let pruned = work.join("target");
-        touch_dir(&existing);
-        touch_dir(&fresh_nested);
-        touch_dir(&pruned);
-
-        let mut watched = HashMap::new();
-        watched.insert(existing.clone(), RecursiveMode::NonRecursive);
-
-        let prune = vec!["target".to_string()];
-        let candidates = vec![existing.clone(), fresh.clone(), pruned.clone()];
-        let found = new_watchable_dirs(&candidates, &watched, &prune);
-
-        assert!(!found.contains(&existing));
-        assert!(found.contains(&fresh));
-        assert!(found.contains(&fresh_nested));
-        assert!(!found.contains(&pruned));
-
-        std::fs::remove_dir_all(&work).unwrap();
-    }
-
-    #[test]
-    fn new_watchable_dirs_ignores_missing_paths() {
-        let missing = std::env::temp_dir().join("gamut_watch_missing_dir_test");
-        let _ = std::fs::remove_dir_all(&missing);
-        let found = new_watchable_dirs(&[missing], &HashMap::new(), &[]);
-        assert!(found.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn workdir_watch_dirs_does_not_follow_symlink_cycle() {
-        let work = temp_root("gamut_watch_symlink_cycle_test");
-        touch_dir(&work.join("sub"));
-        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
-
-        let dirs = workdir_watch_dirs(&work, &[]);
-
-        assert!(dirs.contains(&work));
-        assert!(dirs.contains(&work.join("sub")));
-        assert!(!dirs.iter().any(|d| d.starts_with(work.join("sub/link"))));
-
-        std::fs::remove_dir_all(&work).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn new_watchable_dirs_does_not_follow_symlink_cycle() {
-        let work = temp_root("gamut_watch_new_dirs_symlink_cycle_test");
-        touch_dir(&work.join("sub"));
-        std::os::unix::fs::symlink(&work, work.join("sub/link")).unwrap();
-
-        let found = new_watchable_dirs(std::slice::from_ref(&work), &HashMap::new(), &[]);
-
-        assert!(found.contains(&work));
-        assert!(found.contains(&work.join("sub")));
-        assert!(!found.iter().any(|d| d.starts_with(work.join("sub/link"))));
-
-        std::fs::remove_dir_all(&work).unwrap();
     }
 }

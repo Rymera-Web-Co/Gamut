@@ -92,6 +92,10 @@ pub struct Diagnostics {
     pub repo_count: usize,
     pub group_count: usize,
     pub watched_path_count: usize,
+    /// Directories the last watcher resync tried to watch but the OS rejected
+    /// (e.g. the per-process filesystem-watch limit). Nonzero means some repos
+    /// aren't being watched and their changes won't refresh live.
+    pub watch_failed_count: usize,
     /// Per-operation aggregates over the rolling log, slowest first.
     pub op_stats: Vec<OpStat>,
     /// The most recent timings, newest last.
@@ -141,12 +145,12 @@ fn op_stats(log: &VecDeque<OpTiming>) -> Vec<OpStat> {
 
 /// Build the current diagnostics bundle.
 pub fn snapshot(app: &AppHandle, state: &AppState) -> Diagnostics {
-    let watched_path_count = state
+    let (watched_path_count, watch_failed_count) = state
         .watcher
         .lock()
         .ok()
-        .and_then(|w| w.as_ref().map(|w| w.watched_count()))
-        .unwrap_or(0);
+        .and_then(|w| w.as_ref().map(|w| (w.watched_count(), w.failed_count())))
+        .unwrap_or((0, 0));
 
     let log = state.op_log.lock().map(|l| l.clone()).unwrap_or_default();
     let recent_ops: Vec<OpTiming> = log.iter().rev().take(RECENT_OPS).rev().cloned().collect();
@@ -159,6 +163,7 @@ pub fn snapshot(app: &AppHandle, state: &AppState) -> Diagnostics {
         repo_count: count(state, "SELECT COUNT(*) FROM repos"),
         group_count: count(state, "SELECT COUNT(*) FROM groups"),
         watched_path_count,
+        watch_failed_count,
         op_stats: op_stats(&log),
         recent_ops,
     }

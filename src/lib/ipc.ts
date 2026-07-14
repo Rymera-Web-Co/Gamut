@@ -530,6 +530,7 @@ export interface Diagnostics {
   repo_count: number;
   group_count: number;
   watched_path_count: number;
+  watch_failed_count: number;
   op_stats: OpStat[];
   recent_ops: OpTiming[];
 }

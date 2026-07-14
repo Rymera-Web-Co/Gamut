@@ -75,6 +75,13 @@ export function DiagnosticsPanel() {
             <DiagRow label="Repositories" value={String(data.repo_count)} />
             <DiagRow label="Groups" value={String(data.group_count)} />
             <DiagRow label="Watched paths" value={String(data.watched_path_count)} />
+            {data.watch_failed_count > 0 && (
+              <DiagRow
+                label="Watch failures"
+                value={String(data.watch_failed_count)}
+                danger
+              />
+            )}
             {stalls && (
               <DiagRow label="UI stalls" value={`${stalls.count} (max ${stalls.max_ms} ms)`} />
             )}
@@ -131,11 +138,28 @@ export function DiagnosticsPanel() {
   );
 }
 
-function DiagRow({ label, value }: { label: string; value: string }) {
+function DiagRow({
+  label,
+  value,
+  danger = false,
+}: {
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
   return (
     <div className="flex justify-between gap-4 py-0.5">
-      <span className="text-[var(--color-muted-foreground)]">{label}</span>
-      <span className="tabular-nums">{value}</span>
+      <span
+        className={cn(
+          "text-[var(--color-muted-foreground)]",
+          danger && "text-[var(--color-destructive)]",
+        )}
+      >
+        {label}
+      </span>
+      <span className={cn("tabular-nums", danger && "text-[var(--color-destructive)]")}>
+        {value}
+      </span>
     </div>
   );
 }
