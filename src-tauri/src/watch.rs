@@ -206,7 +206,7 @@ impl RepoWatcher {
 
                 let prune = crate::commands::repo::watch_prune_dirs(&state);
                 let watched = state
-                    .watched_repo_dirs
+                    .watched_entry_dirs
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
@@ -220,7 +220,7 @@ impl RepoWatcher {
                 // for may be a new clone — run an add-only discovery sync (see
                 // `suggests_new_repo` for why attribution, plus the interval
                 // throttle, gate it). The added repos aren't in
-                // `watched_repo_dirs` yet, so scope is unknown; and since bound
+                // `watched_entry_dirs` yet, so scope is unknown; and since bound
                 // folders are watched non-recursively, nothing covers a new
                 // repo's tree until the resync lands.
                 let maybe_new_repo = events
@@ -543,7 +543,7 @@ fn resync_locked(state: &AppState) {
             }
         }
     }
-    if let Ok(mut g) = state.watched_repo_dirs.lock() {
+    if let Ok(mut g) = state.watched_entry_dirs.lock() {
         *g = repo_dirs;
     }
 

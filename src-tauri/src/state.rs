@@ -19,8 +19,7 @@ use crate::watch::RepoWatcher;
 /// ceiling keeps status refreshes from stampeding while still overlapping a few.
 pub const GIT_STATUS_CONCURRENCY: usize = 4;
 
-/// Shared application state, managed by Tauri and injected into commands via `State`.
-/// One watched entry root in [`AppState::watched_repo_dirs`].
+/// One watched entry root in [`AppState::watched_entry_dirs`].
 #[derive(Clone)]
 pub struct WatchedDir {
     /// The repos-table id of the entry.
@@ -32,6 +31,7 @@ pub struct WatchedDir {
     pub is_git: bool,
 }
 
+/// Shared application state, managed by Tauri and injected into commands via `State`.
 pub struct AppState {
     /// SQLite connection. `rusqlite::Connection` is not `Sync`, so guard it with a `Mutex`.
     pub db: Mutex<Connection>,
@@ -51,7 +51,7 @@ pub struct AppState {
     /// changed path back to the specific entries it belongs to, so
     /// `repos-changed` can carry only the affected ids instead of forcing
     /// every repo's queries to refetch (#206).
-    pub watched_repo_dirs: Mutex<HashMap<PathBuf, WatchedDir>>,
+    pub watched_entry_dirs: Mutex<HashMap<PathBuf, WatchedDir>>,
     /// Serializes `watch::resync`'s blocking rebuild so overlapping calls
     /// (e.g. adding two repos in quick succession) can't run concurrently and
     /// finish out of order, which would let an older rebuild clobber a newer
