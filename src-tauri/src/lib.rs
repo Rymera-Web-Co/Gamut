@@ -10,7 +10,7 @@ mod watch;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 use state::AppState;
 
@@ -191,6 +191,15 @@ pub fn run() {
                 control::cleanup(window.app_handle());
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // Also drop the control-channel files on app-level quit (e.g. Cmd+Q),
+            // which exits through RunEvent::Exit without necessarily firing the
+            // window CloseRequested/Destroyed events handled above. cleanup() is
+            // idempotent, so overlapping with those hooks is harmless.
+            if let RunEvent::Exit = event {
+                control::cleanup(app_handle);
+            }
+        });
 }
