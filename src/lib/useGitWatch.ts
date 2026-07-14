@@ -30,9 +30,13 @@ export const REPO_SCOPED_KEYS = [
   "linked-worktrees",
   "stash-list",
   "sync-status",
-  // Files tab: directory listings and open-file contents.
+  // Files tab: directory listings, open-file contents, and image previews.
+  // Invalidation refetches only *active* queries, so just the displayed file
+  // (or image) and the expanded dir listings actually reload; everything else
+  // is merely marked stale for its next mount.
   "dir",
   "file",
+  "image",
 ];
 
 /**

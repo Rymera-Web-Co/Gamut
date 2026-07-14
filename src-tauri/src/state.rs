@@ -20,6 +20,18 @@ use crate::watch::RepoWatcher;
 pub const GIT_STATUS_CONCURRENCY: usize = 4;
 
 /// Shared application state, managed by Tauri and injected into commands via `State`.
+/// One watched entry root in [`AppState::watched_repo_dirs`].
+#[derive(Clone)]
+pub struct WatchedDir {
+    /// The repos-table id of the entry.
+    pub id: i64,
+    /// Whether the entry is a git repo. Plain folders resolve changed paths
+    /// for query scoping like repos do, but must NOT mask new-repo discovery:
+    /// a path under a registered folder (a workspace, a bound group's root
+    /// entry) can still be a brand-new clone.
+    pub is_git: bool,
+}
+
 pub struct AppState {
     /// SQLite connection. `rusqlite::Connection` is not `Sync`, so guard it with a `Mutex`.
     pub db: Mutex<Connection>,
@@ -33,12 +45,13 @@ pub struct AppState {
     /// landed under a bound folder (and thus warrants an auto-sync) without
     /// hitting the DB on every event.
     pub bound_folders: Mutex<Vec<PathBuf>>,
-    /// Watched repo root directory → repo id, refreshed on each watcher resync.
-    /// Lets the debounced watch callback resolve a changed path back to the
-    /// specific repo(s) it belongs to, so `repos-changed` can carry only the
-    /// affected repo ids instead of forcing every repo's queries to refetch
-    /// (#206).
-    pub watched_repo_dirs: Mutex<HashMap<PathBuf, i64>>,
+    /// Watched entry root directory → entry, refreshed on each watcher resync.
+    /// Covers git repos (working tree, or git dir for a bare repo) and
+    /// registered plain folders. Lets the debounced watch callback resolve a
+    /// changed path back to the specific entries it belongs to, so
+    /// `repos-changed` can carry only the affected ids instead of forcing
+    /// every repo's queries to refetch (#206).
+    pub watched_repo_dirs: Mutex<HashMap<PathBuf, WatchedDir>>,
     /// Serializes `watch::resync`'s blocking rebuild so overlapping calls
     /// (e.g. adding two repos in quick succession) can't run concurrently and
     /// finish out of order, which would let an older rebuild clobber a newer

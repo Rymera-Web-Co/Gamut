@@ -4,16 +4,20 @@
 //!
 //! A non-bare repo's working tree is watched *top-level hybrid*: the tree root
 //! non-recursively (root files, and to notice new top-level directories) plus
-//! each non-pruned top-level subdirectory recursively. `.git` and heavy or
-//! generated directories (`node_modules`, `target`, `dist`, …) are left out of
-//! the OS watch entirely, so their churn never reaches the process — rather
-//! than being watched and then discarded, which wakes the process constantly
-//! (a background fetch writes loose objects across the fleet; a dev server
-//! rewrites `node_modules`/`dist`). The git dir and `refs/` are watched
-//! separately (never the object store) so branch/commit state is still seen,
-//! and so is a repo whose git dir lives outside its working tree. Bare repos
-//! have no work tree, so only their `refs/` and top-level git-state files are
-//! watched.
+//! each non-pruned top-level subdirectory recursively. Registered plain
+//! folders (a docs dir, a workspace, a bound group's root entry) are watched
+//! the same way — they have Files tabs whose open file and dir listings must
+//! stay live too — except top-level children that are registered entries
+//! themselves are skipped, since those get their own watches and attribution.
+//! `.git` and heavy or generated directories (`node_modules`, `target`,
+//! `dist`, …) are left out of the OS watch entirely, so their churn never
+//! reaches the process — rather than being watched and then discarded, which
+//! wakes the process constantly (a background fetch writes loose objects
+//! across the fleet; a dev server rewrites `node_modules`/`dist`). The git dir
+//! and `refs/` are watched separately (never the object store) so
+//! branch/commit state is still seen, and so is a repo whose git dir lives
+//! outside its working tree. Bare repos have no work tree, so only their
+//! `refs/` and top-level git-state files are watched.
 //!
 //! This keeps the number of OS watches bounded — a repo's top-level fan-out,
 //! not one-per-directory. A large fleet spread over tens of thousands of
@@ -53,7 +57,7 @@ use notify_debouncer_mini::{
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::git;
-use crate::state::AppState;
+use crate::state::{AppState, WatchedDir};
 
 /// Event name emitted when any watched repo's git state changes.
 pub const REPOS_CHANGED: &str = "repos-changed";
@@ -119,21 +123,23 @@ fn is_interesting(path: &Path, prune: &[String]) -> bool {
     }
 }
 
-/// Resolves a batch of changed paths to the ids of the repos whose watched
-/// directory contains them, by longest-match-agnostic prefix membership
-/// against `watched` (repo root dir -> repo id). Returns `None` when no
-/// changed path matches a known repo dir — a scope that can't be resolved
-/// (e.g. a stale watch during a resync race) falls back to a full
-/// invalidation rather than silently dropping the refresh.
+/// Resolves a batch of changed paths to the ids of the entries (repos and
+/// plain folders) whose watched directory contains them, by prefix membership
+/// against `watched` (entry root dir -> entry). Nested entries all match — a
+/// path inside a folder that itself sits inside another registered folder
+/// belongs to both. Returns `None` when no changed path matches a known
+/// entry — a scope that can't be resolved (e.g. a stale watch during a resync
+/// race) falls back to a full invalidation rather than silently dropping the
+/// refresh.
 fn resolve_changed_repo_ids(
     paths: &[&PathBuf],
-    watched: &HashMap<PathBuf, i64>,
+    watched: &HashMap<PathBuf, WatchedDir>,
 ) -> Option<Vec<i64>> {
     let mut ids: Vec<i64> = Vec::new();
     for path in paths {
-        for (dir, id) in watched {
-            if path.starts_with(dir) && !ids.contains(id) {
-                ids.push(*id);
+        for (dir, entry) in watched {
+            if path.starts_with(dir) && !ids.contains(&entry.id) {
+                ids.push(entry.id);
             }
         }
     }
@@ -152,28 +158,39 @@ fn resolve_changed_repo_ids(
 const BOUND_DISCOVERY_MIN_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Whether a changed path might be a brand-new repo appearing under a bound
-/// group folder: it's under a bound folder, can't be attributed to any
-/// registered repo, and isn't a pruned/hidden name (Finder's `.DS_Store`,
-/// `node_modules`, …). The attribution check is what keeps this trigger rare —
-/// every registered repo's working tree (or git dir, for a bare repo) also
-/// lives under the bound folder, and their churn arrives constantly from build
-/// tools and editors; without it, every batch would re-walk the entire bound
-/// tree (which also holds DB access) and peg a core.
+/// group folder: a *directory* under a bound folder that can't be attributed
+/// to any registered *git* repo and isn't a pruned/hidden name (Finder's
+/// `.DS_Store`, `node_modules`, …). The attribution check is what keeps this
+/// trigger rare — every registered repo's working tree (or git dir, for a
+/// bare repo) also lives under the bound folder, and their churn arrives
+/// constantly from build tools and editors; without it, every batch would
+/// re-walk the entire bound tree and peg a core. Only git entries mask:
+/// registered plain folders are containers (a workspace, the bound root
+/// entry) that a new repo can legitimately be cloned into. The directory
+/// requirement keeps file churn inside those folders (someone editing docs)
+/// from re-triggering the walk — a file can't be a repo.
 fn suggests_new_repo(
     path: &Path,
     bound: &[PathBuf],
-    repo_dirs: &HashMap<PathBuf, i64>,
+    watched: &HashMap<PathBuf, WatchedDir>,
     prune: &[String],
 ) -> bool {
     if !bound.iter().any(|b| path.starts_with(b)) {
         return false;
     }
-    if repo_dirs.keys().any(|dir| path.starts_with(dir)) {
+    if watched
+        .iter()
+        .any(|(dir, entry)| entry.is_git && path.starts_with(dir))
+    {
         return false;
     }
-    !path
+    if path
         .file_name()
         .is_some_and(|n| git::is_pruned_dir(&n.to_string_lossy(), prune))
+    {
+        return false;
+    }
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
 impl RepoWatcher {
@@ -326,15 +343,22 @@ impl RepoWatcher {
     }
 }
 
-/// The watches for a non-bare repo's working tree: the tree root
-/// (non-recursive, for root-level files and to notice new top-level dirs) plus
-/// each top-level subdirectory recursively, skipping `.git` (watched via
-/// git-state paths) and pruned dirs (`node_modules`, `target`, …). Heavy or
-/// generated trees are kept out of the OS watch entirely so their churn never
-/// reaches the process, while the watch count stays bounded to the repo's
-/// top-level fan-out. `symlink_metadata` never follows symlinks, so a symlinked
-/// top-level entry isn't descended into.
-fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<(PathBuf, RecursiveMode)> {
+/// The watches for an entry's tree (a non-bare repo's working tree, or a
+/// registered plain folder): the root (non-recursive, for root-level files
+/// and to notice new top-level dirs) plus each top-level subdirectory
+/// recursively, skipping `.git` (watched via git-state paths), pruned dirs
+/// (`node_modules`, `target`, …), and top-level children in `skip` (other
+/// registered entries — nested repos and folders get their own watches and
+/// attribution, so re-covering them here would only duplicate events). Heavy
+/// or generated trees are kept out of the OS watch entirely so their churn
+/// never reaches the process, while the watch count stays bounded to the
+/// entry's top-level fan-out. `symlink_metadata` never follows symlinks, so a
+/// symlinked top-level entry isn't descended into.
+fn workdir_watch_dirs(
+    work: &Path,
+    prune: &[String],
+    skip: &HashSet<PathBuf>,
+) -> Vec<(PathBuf, RecursiveMode)> {
     let mut out = vec![(work.to_path_buf(), RecursiveMode::NonRecursive)];
     let Ok(entries) = std::fs::read_dir(work) else {
         return out;
@@ -346,7 +370,7 @@ fn workdir_watch_dirs(work: &Path, prune: &[String]) -> Vec<(PathBuf, RecursiveM
         }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == ".git" || git::is_pruned_dir(&name, prune) {
+        if name == ".git" || git::is_pruned_dir(&name, prune) || skip.contains(&path) {
             continue;
         }
         out.push((path, RecursiveMode::Recursive));
@@ -438,12 +462,33 @@ fn resync_locked(state: &AppState) {
         (repos, bound)
     };
     let prune = crate::commands::repo::watch_prune_dirs(state);
+    // Every registered entry's path, so an entry's tree walk can skip
+    // top-level children that are entries themselves (see workdir_watch_dirs).
+    let registered: HashSet<PathBuf> = repos.iter().map(|(_, p)| PathBuf::from(p)).collect();
     let mut desired: HashMap<PathBuf, RecursiveMode> = HashMap::new();
-    // Watched repo root directory -> repo id, so the debounced callback can
-    // resolve a changed path back to the repo(s) it belongs to (#206).
-    let mut repo_dirs: HashMap<PathBuf, i64> = HashMap::new();
+    // Watched entry root directory -> entry, so the debounced callback can
+    // resolve a changed path back to the entries it belongs to (#206).
+    let mut repo_dirs: HashMap<PathBuf, WatchedDir> = HashMap::new();
     for (id, path) in &repos {
         let Ok(repo) = git::open(Path::new(path)) else {
+            // Not a git repo — a registered plain folder (a docs dir, a
+            // workspace, a bound group's root entry). Watch its tree like a
+            // working tree so the Files tab's open file and dir listings stay
+            // live when files change outside the app. `is_dir` also filters
+            // out registered single-file entries and missing paths.
+            let folder = Path::new(path);
+            if folder.is_dir() {
+                for (dir, mode) in workdir_watch_dirs(folder, &prune, &registered) {
+                    desired.insert(dir, mode);
+                }
+                repo_dirs.insert(
+                    folder.to_path_buf(),
+                    WatchedDir {
+                        id: *id,
+                        is_git: false,
+                    },
+                );
+            }
             continue;
         };
 
@@ -476,13 +521,25 @@ fn resync_locked(state: &AppState) {
         // count stays bounded to the repo's top-level fan-out.
         match repo.workdir() {
             Some(work) => {
-                for (dir, mode) in workdir_watch_dirs(work, &prune) {
+                for (dir, mode) in workdir_watch_dirs(work, &prune, &registered) {
                     desired.insert(dir, mode);
                 }
-                repo_dirs.insert(work.to_path_buf(), *id);
+                repo_dirs.insert(
+                    work.to_path_buf(),
+                    WatchedDir {
+                        id: *id,
+                        is_git: true,
+                    },
+                );
             }
             None => {
-                repo_dirs.insert(git_dir, *id);
+                repo_dirs.insert(
+                    git_dir,
+                    WatchedDir {
+                        id: *id,
+                        is_git: true,
+                    },
+                );
             }
         }
     }
@@ -570,9 +627,17 @@ mod tests {
         assert!(is_interesting(Path::new("/repo/.git/HEAD"), &prune));
     }
 
+    fn git_entry(id: i64) -> WatchedDir {
+        WatchedDir { id, is_git: true }
+    }
+
+    fn folder_entry(id: i64) -> WatchedDir {
+        WatchedDir { id, is_git: false }
+    }
+
     #[test]
     fn resolves_single_repo() {
-        let watched = HashMap::from([(PathBuf::from("/repos/a"), 1)]);
+        let watched = HashMap::from([(PathBuf::from("/repos/a"), git_entry(1))]);
         let path = PathBuf::from("/repos/a/.git/refs/heads/main");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), Some(vec![1]));
     }
@@ -580,8 +645,8 @@ mod tests {
     #[test]
     fn resolves_multiple_distinct_repos_without_duplicates() {
         let watched = HashMap::from([
-            (PathBuf::from("/repos/a"), 1),
-            (PathBuf::from("/repos/b"), 2),
+            (PathBuf::from("/repos/a"), git_entry(1)),
+            (PathBuf::from("/repos/b"), git_entry(2)),
         ]);
         let a1 = PathBuf::from("/repos/a/file.txt");
         let a2 = PathBuf::from("/repos/a/.git/HEAD");
@@ -593,7 +658,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_none_when_no_repo_matches() {
-        let watched = HashMap::from([(PathBuf::from("/repos/a"), 1)]);
+        let watched = HashMap::from([(PathBuf::from("/repos/a"), git_entry(1))]);
         let path = PathBuf::from("/somewhere/else/file.txt");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), None);
     }
@@ -601,58 +666,79 @@ mod tests {
     #[test]
     fn matches_bare_repo_refs_dir_under_git_dir() {
         // Bare repos are keyed by their git dir; `refs/` is a subpath of it.
-        let watched = HashMap::from([(PathBuf::from("/repos/bare.git"), 7)]);
+        let watched = HashMap::from([(PathBuf::from("/repos/bare.git"), git_entry(7))]);
         let path = PathBuf::from("/repos/bare.git/refs/heads/main");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), Some(vec![7]));
     }
 
     #[test]
-    fn suggests_new_repo_only_for_unattributed_paths_under_bound_folders() {
-        let bound = vec![PathBuf::from("/work")];
-        let mut repo_dirs: HashMap<PathBuf, i64> = HashMap::new();
-        repo_dirs.insert(PathBuf::from("/work/app"), 1);
+    fn resolves_plain_folder_entries_and_nested_entries() {
+        // A registered plain folder resolves like a repo; a path inside a
+        // nested entry belongs to both the entry and its containing folder.
+        let watched = HashMap::from([
+            (PathBuf::from("/work/space"), folder_entry(3)),
+            (PathBuf::from("/work/space/app"), git_entry(4)),
+        ]);
+        let doc = PathBuf::from("/work/space/notes.md");
+        assert_eq!(resolve_changed_repo_ids(&[&doc], &watched), Some(vec![3]));
+        let nested = PathBuf::from("/work/space/app/src/main.rs");
+        let mut ids = resolve_changed_repo_ids(&[&nested], &watched).unwrap();
+        ids.sort();
+        assert_eq!(ids, vec![3, 4]);
+    }
+
+    #[test]
+    fn suggests_new_repo_only_for_unattributed_dirs_under_bound_folders() {
+        let root = temp_root("gamut_watch_suggests_new_repo_test");
+        let repo = root.join("app");
+        let folder = root.join("workspace");
+        let clone_in_folder = folder.join("fresh-clone");
+        let fresh = root.join("new-clone");
+        let pruned = root.join("node_modules");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(&clone_in_folder).unwrap();
+        std::fs::create_dir_all(&fresh).unwrap();
+        std::fs::create_dir_all(&pruned).unwrap();
+        let doc = folder.join("notes.md");
+        std::fs::write(&doc, "x").unwrap();
+
+        let bound = vec![root.clone()];
+        let watched = HashMap::from([
+            (repo.clone(), git_entry(1)),
+            (folder.clone(), folder_entry(2)),
+        ]);
         let prune = vec!["node_modules".to_string()];
 
-        // A new dir under the bound folder that isn't part of any repo.
+        // A new dir under the bound folder that no git repo accounts for.
+        assert!(suggests_new_repo(&fresh, &bound, &watched, &prune));
+        // A new dir inside a registered *plain folder* still counts — folders
+        // are containers a repo can be cloned into, so they don't mask.
         assert!(suggests_new_repo(
-            Path::new("/work/new-clone"),
+            &clone_in_folder,
             &bound,
-            &repo_dirs,
+            &watched,
             &prune
         ));
-        // Churn inside a registered repo is attributed, never a walk trigger.
+        // Anything under a git repo is attributed, never a walk trigger.
         assert!(!suggests_new_repo(
-            Path::new("/work/app/src/main.rs"),
+            &repo.join("src"),
             &bound,
-            &repo_dirs,
+            &watched,
             &prune
         ));
-        assert!(!suggests_new_repo(
-            Path::new("/work/app"),
-            &bound,
-            &repo_dirs,
-            &prune
-        ));
-        // Outside any bound folder.
+        assert!(!suggests_new_repo(&repo, &bound, &watched, &prune));
+        // A file is never a new repo — doc edits in a folder don't walk.
+        assert!(!suggests_new_repo(&doc, &bound, &watched, &prune));
+        // Pruned names and paths outside any bound folder don't trigger.
+        assert!(!suggests_new_repo(&pruned, &bound, &watched, &prune));
         assert!(!suggests_new_repo(
             Path::new("/elsewhere/thing"),
             &bound,
-            &repo_dirs,
+            &watched,
             &prune
         ));
-        // Finder metadata and pruned names.
-        assert!(!suggests_new_repo(
-            Path::new("/work/.DS_Store"),
-            &bound,
-            &repo_dirs,
-            &prune
-        ));
-        assert!(!suggests_new_repo(
-            Path::new("/work/node_modules"),
-            &bound,
-            &repo_dirs,
-            &prune
-        ));
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn temp_root(name: &str) -> PathBuf {
@@ -662,15 +748,19 @@ mod tests {
     }
 
     #[test]
-    fn workdir_watch_dirs_is_top_level_and_skips_pruned_and_git() {
+    fn workdir_watch_dirs_is_top_level_and_skips_pruned_git_and_registered() {
         let work = temp_root("gamut_watch_workdir_toplevel_test");
         std::fs::create_dir_all(work.join("src/nested")).unwrap();
         std::fs::create_dir_all(work.join("node_modules/pkg")).unwrap();
         std::fs::create_dir_all(work.join("target/debug")).unwrap();
         std::fs::create_dir_all(work.join(".git/objects")).unwrap();
+        std::fs::create_dir_all(work.join("vendored-repo")).unwrap();
 
         let prune = vec!["node_modules".to_string(), "target".to_string()];
-        let dirs = workdir_watch_dirs(&work, &prune);
+        // A top-level child that is a registered entry itself gets its own
+        // watches and attribution — its parent must not re-cover it.
+        let registered = HashSet::from([work.join("vendored-repo")]);
+        let dirs = workdir_watch_dirs(&work, &prune, &registered);
 
         // Root watched non-recursively.
         assert!(dirs.contains(&(work.clone(), RecursiveMode::NonRecursive)));
@@ -678,12 +768,16 @@ mod tests {
         // that recursive watch, not listed separately).
         assert!(dirs.contains(&(work.join("src"), RecursiveMode::Recursive)));
         assert!(!dirs.iter().any(|(d, _)| *d == work.join("src/nested")));
-        // Heavy/generated dirs and `.git` are left out of the OS watch entirely.
+        // Heavy/generated dirs, `.git`, and registered children are left out of
+        // the OS watch entirely.
         assert!(!dirs
             .iter()
             .any(|(d, _)| d.starts_with(work.join("node_modules"))));
         assert!(!dirs.iter().any(|(d, _)| d.starts_with(work.join("target"))));
         assert!(!dirs.iter().any(|(d, _)| d.starts_with(work.join(".git"))));
+        assert!(!dirs
+            .iter()
+            .any(|(d, _)| d.starts_with(work.join("vendored-repo"))));
 
         std::fs::remove_dir_all(&work).unwrap();
     }
