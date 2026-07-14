@@ -59,9 +59,21 @@ const GIT_QUERY_KEYS = [
 export function useFetchGroup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (repoIds: number[]) => ipc.gitFetchMany(repoIds),
+    mutationFn: async (repoIds: number[]) => {
+      const results = await ipc.gitFetchMany(repoIds);
+      // Keep the button spinning until the ahead/behind counts actually reflect
+      // the fetch. `repo_statuses` is a gated full-fleet scan that lands a few
+      // seconds after the fetch resolves; refetch it *inside* the mutation and
+      // await it, so `isPending` (and the spinner) stays true until the counts
+      // update instead of clearing the instant the fetch returns.
+      await qc.refetchQueries({ queryKey: ["repo-statuses"] });
+      return results;
+    },
     onSuccess: (results) => {
+      // The remaining git-derived views don't gate the spinner — refresh them
+      // in the background. `repo-statuses` was already refetched above.
       for (const key of GIT_QUERY_KEYS) {
+        if (key === "repo-statuses") continue;
         qc.invalidateQueries({ queryKey: [key] });
       }
       const failed = results.filter((r) => !r.ok);
