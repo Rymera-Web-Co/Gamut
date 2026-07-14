@@ -40,6 +40,13 @@ export interface Repo {
    * (status, branch, sync) are skipped.
    */
   is_git_repo: boolean;
+  /**
+   * Cached "has any linked worktree" flag, maintained by the status scan. The
+   * sidebar uses it to decide whether to run `git worktree list` at all — repos
+   * with none skip that subprocess. May lag until the next scan; the live value
+   * is on `RepoStatus.has_worktrees`.
+   */
+  has_worktrees: boolean;
 }
 
 /**
@@ -79,6 +86,8 @@ export interface RepoStatus {
   ahead: number;
   behind: number;
   has_uncommitted_changes: boolean;
+  /** Live "has any linked worktree" flag; refreshes the persisted Repo flag. */
+  has_worktrees: boolean;
 }
 
 /** A local branch whose upstream tracking ref is gone (merged & deleted on remote). */
@@ -530,6 +539,7 @@ export interface Diagnostics {
   repo_count: number;
   group_count: number;
   watched_path_count: number;
+  watch_failed_count: number;
   op_stats: OpStat[];
   recent_ops: OpTiming[];
 }

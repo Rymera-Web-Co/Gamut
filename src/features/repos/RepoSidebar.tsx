@@ -186,7 +186,12 @@ function RepoRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
   // A selected worktree highlights its own nested row, not the repo row.
   const active = activeRepoId === repo.id && activeWorktreePath == null;
-  const worktrees = useLinkedWorktrees(repo.id, repo.is_git_repo && !repo.missing);
+  // Only run `git worktree list` for repos that actually have linked worktrees.
+  // The live status flag wins once loaded; the persisted repo flag gates it
+  // before the first status scan. This keeps opening a group from spawning a
+  // git subprocess per repo when almost none have worktrees.
+  const hasWorktrees = status?.has_worktrees ?? repo.has_worktrees;
+  const worktrees = useLinkedWorktrees(repo.id, repo.is_git_repo && !repo.missing && hasWorktrees);
 
   const drag = useDraggable({ kind: "repo", id: repo.id }, repo.name);
   const { ref: dropRef, state: dropOver } = useDropTarget<boolean, HTMLDivElement>({
