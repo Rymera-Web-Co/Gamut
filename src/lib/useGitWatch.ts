@@ -55,6 +55,14 @@ export function useGitWatch() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let repoIds = new Set<number>();
     let fullInvalidate = false;
+    // All writes to the aggregate `repo-statuses` cache are chained behind the
+    // previous round, so they apply in submission order. Without this, a second
+    // flush could start while an earlier scoped fetch is still in flight, and
+    // the older response — resolving last — would overwrite the fresher patch.
+    // Chaining (rather than dropping superseded responses) also keeps updates
+    // for repos that only appeared in the earlier round. Rounds never reject:
+    // each round's failure is handled inside it.
+    let aggregateChain: Promise<unknown> = Promise.resolve();
 
     const flush = () => {
       timer = null;
@@ -64,27 +72,31 @@ export function useGitWatch() {
       fullInvalidate = false;
 
       if (full) {
-        queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
+        aggregateChain = aggregateChain.then(() =>
+          queryClient.invalidateQueries({ queryKey: ["repo-statuses"] }),
+        );
         for (const key of REPO_SCOPED_KEYS) {
           queryClient.invalidateQueries({ queryKey: [key] });
         }
         return;
       }
 
-      void ipc
-        .repoStatusesFor(ids)
-        .then((fresh) => {
-          queryClient.setQueryData<RepoStatus[]>(["repo-statuses"], (prev) => {
-            // No cached aggregate yet — leave it to the full query.
-            if (!prev) return prev;
-            const byId = new Map(fresh.map((s) => [s.id, s]));
-            return prev.map((s) => byId.get(s.id) ?? s);
-          });
-        })
-        .catch(() => {
-          // Scoped refresh failed; fall back to the full scan.
-          queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
-        });
+      aggregateChain = aggregateChain.then(() =>
+        ipc
+          .repoStatusesFor(ids)
+          .then((fresh) => {
+            queryClient.setQueryData<RepoStatus[]>(["repo-statuses"], (prev) => {
+              // No cached aggregate yet — leave it to the full query.
+              if (!prev) return prev;
+              const byId = new Map(fresh.map((s) => [s.id, s]));
+              return prev.map((s) => byId.get(s.id) ?? s);
+            });
+          })
+          .catch(() => {
+            // Scoped refresh failed; fall back to the full scan.
+            return queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
+          }),
+      );
       for (const id of ids) {
         for (const key of REPO_SCOPED_KEYS) {
           queryClient.invalidateQueries({ queryKey: [key, id] });
