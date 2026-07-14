@@ -25,8 +25,11 @@
 //! Folder-bound groups are watched non-recursively (their immediate children)
 //! for the same reason: a recursive watch of a group folder would re-cover
 //! every repo's `node_modules`/`.git` under it. A repo cloned directly into a
-//! group folder is detected live; one cloned into a deeper subdirectory is
-//! picked up on the next resync rather than instantly.
+//! group folder is detected live: an event under a bound folder that no
+//! registered repo accounts for (`suggests_new_repo`) triggers an add-only
+//! discovery sync, followed by a watcher resync so the new repo's tree gets
+//! its own watches. A repo cloned into a deeper subdirectory is picked up on
+//! the next discovery sync rather than instantly.
 //!
 //! A debounced batch emits a single `repos-changed` event to the frontend,
 //! carrying the ids of the repos whose watched directory actually contained a
@@ -40,7 +43,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify_debouncer_mini::{
     new_debouncer,
@@ -141,35 +144,48 @@ fn resolve_changed_repo_ids(
     }
 }
 
+/// Minimum interval between watcher-triggered bound-folder discovery syncs
+/// (`sync_all_bound_groups`) — each one is a full disk walk of every bound
+/// tree. The trigger is already scoped to paths no registered repo accounts
+/// for, so this only backstops pathological cases (e.g. sustained writes into
+/// a non-repo folder that lives under a bound group folder).
+const BOUND_DISCOVERY_MIN_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Whether a changed path might be a brand-new repo appearing under a bound
+/// group folder: it's under a bound folder, can't be attributed to any
+/// registered repo, and isn't a pruned/hidden name (Finder's `.DS_Store`,
+/// `node_modules`, …). The attribution check is what keeps this trigger rare —
+/// every registered repo's working tree (or git dir, for a bare repo) also
+/// lives under the bound folder, and their churn arrives constantly from build
+/// tools and editors; without it, every batch would re-walk the entire bound
+/// tree (which also holds DB access) and peg a core.
+fn suggests_new_repo(
+    path: &Path,
+    bound: &[PathBuf],
+    repo_dirs: &HashMap<PathBuf, i64>,
+    prune: &[String],
+) -> bool {
+    if !bound.iter().any(|b| path.starts_with(b)) {
+        return false;
+    }
+    if repo_dirs.keys().any(|dir| path.starts_with(dir)) {
+        return false;
+    }
+    !path
+        .file_name()
+        .is_some_and(|n| git::is_pruned_dir(&n.to_string_lossy(), prune))
+}
+
 impl RepoWatcher {
     pub fn new(app: AppHandle, debounce_ms: u64) -> Result<Self, Box<dyn std::error::Error>> {
+        // Last watcher-triggered bound-folder discovery sync, for the throttle
+        // below. Only ever touched from the debouncer callback.
+        let mut last_bound_discovery: Option<Instant> = None;
         let debouncer = new_debouncer(
             Duration::from_millis(debounce_ms),
             move |res: DebounceEventResult| {
                 let Ok(events) = res else { return };
                 let state = app.state::<AppState>();
-
-                // If a batch touched anything under a folder-bound group, a new
-                // repo may have appeared — run an add-only sync. Bound folders
-                // are watched recursively, so newly-added repos are already
-                // covered; no watcher resync is needed here. The added repos
-                // aren't in `watched_repo_dirs` yet, so scope is unknown.
-                let bound: Vec<PathBuf> = state
-                    .bound_folders
-                    .lock()
-                    .map(|g| g.clone())
-                    .unwrap_or_default();
-                let under_bound = !bound.is_empty()
-                    && events
-                        .iter()
-                        .any(|e| bound.iter().any(|b| e.path.starts_with(b)));
-                if under_bound {
-                    let added = crate::commands::repo::sync_all_bound_groups(&state);
-                    if added > 0 {
-                        let _ = app.emit(REPOS_CHANGED, Option::<Vec<i64>>::None);
-                        return;
-                    }
-                }
 
                 let prune = crate::commands::repo::watch_prune_dirs(&state);
                 let watched = state
@@ -177,6 +193,33 @@ impl RepoWatcher {
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
+                let bound: Vec<PathBuf> = state
+                    .bound_folders
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+
+                // A path under a bound folder that no registered repo accounts
+                // for may be a new clone — run an add-only discovery sync (see
+                // `suggests_new_repo` for why attribution, plus the interval
+                // throttle, gate it). The added repos aren't in
+                // `watched_repo_dirs` yet, so scope is unknown; and since bound
+                // folders are watched non-recursively, nothing covers a new
+                // repo's tree until the resync lands.
+                let maybe_new_repo = events
+                    .iter()
+                    .any(|e| suggests_new_repo(&e.path, &bound, &watched, &prune));
+                let throttled = last_bound_discovery
+                    .is_some_and(|t| t.elapsed() < BOUND_DISCOVERY_MIN_INTERVAL);
+                if maybe_new_repo && !throttled {
+                    last_bound_discovery = Some(Instant::now());
+                    let added = crate::commands::repo::sync_all_bound_groups(&state);
+                    if added > 0 {
+                        resync(&app);
+                        let _ = app.emit(REPOS_CHANGED, Option::<Vec<i64>>::None);
+                        return;
+                    }
+                }
 
                 // A repo root is watched non-recursively, so a new top-level
                 // directory created directly under it needs its own recursive
@@ -561,6 +604,55 @@ mod tests {
         let watched = HashMap::from([(PathBuf::from("/repos/bare.git"), 7)]);
         let path = PathBuf::from("/repos/bare.git/refs/heads/main");
         assert_eq!(resolve_changed_repo_ids(&[&path], &watched), Some(vec![7]));
+    }
+
+    #[test]
+    fn suggests_new_repo_only_for_unattributed_paths_under_bound_folders() {
+        let bound = vec![PathBuf::from("/work")];
+        let mut repo_dirs: HashMap<PathBuf, i64> = HashMap::new();
+        repo_dirs.insert(PathBuf::from("/work/app"), 1);
+        let prune = vec!["node_modules".to_string()];
+
+        // A new dir under the bound folder that isn't part of any repo.
+        assert!(suggests_new_repo(
+            Path::new("/work/new-clone"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
+        // Churn inside a registered repo is attributed, never a walk trigger.
+        assert!(!suggests_new_repo(
+            Path::new("/work/app/src/main.rs"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
+        assert!(!suggests_new_repo(
+            Path::new("/work/app"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
+        // Outside any bound folder.
+        assert!(!suggests_new_repo(
+            Path::new("/elsewhere/thing"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
+        // Finder metadata and pruned names.
+        assert!(!suggests_new_repo(
+            Path::new("/work/.DS_Store"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
+        assert!(!suggests_new_repo(
+            Path::new("/work/node_modules"),
+            &bound,
+            &repo_dirs,
+            &prune
+        ));
     }
 
     fn temp_root(name: &str) -> PathBuf {

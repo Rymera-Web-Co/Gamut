@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use git2::BranchType;
@@ -184,6 +184,29 @@ pub fn watch_prune_dirs(state: &AppState) -> Vec<String> {
 /// Returns the count of newly-surfaced repos (new memberships for a normal
 /// group; newly-registered repos for the default group).
 pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppResult<usize> {
+    let (depth, prune) = discovery_opts(conn);
+    let paths = discover_folder_paths(folder, depth, &prune);
+    apply_folder_sync(conn, group_id, &paths)
+}
+
+/// The paths a bound folder contributes to its group: the folder itself (so
+/// its Files tab browses the whole synced tree) plus everything discovered
+/// inside it — git repos and repo-free leaf folders alike. Pure disk I/O — no
+/// DB access, so callers that own the connection lock can walk without it.
+fn discover_folder_paths(folder: &str, depth: usize, prune: &[String]) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = vec![PathBuf::from(folder)];
+    paths.extend(
+        git::discover(&PathBuf::from(folder), depth, prune)
+            .into_iter()
+            .map(|d| d.path),
+    );
+    paths
+}
+
+/// Register discovered `paths` into the group (add-only, idempotent) and stamp
+/// `last_scan_at`. `register_path` classifies each as git/non-git on its own.
+/// Returns the count of newly-surfaced repos (see `sync_folder_group`).
+fn apply_folder_sync(conn: &Connection, group_id: i64, paths: &[PathBuf]) -> AppResult<usize> {
     let is_default: bool = conn
         .query_row(
             "SELECT is_default FROM groups WHERE id = ?1",
@@ -193,21 +216,9 @@ pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppR
         .map(|v| v != 0)
         .unwrap_or(false);
 
-    let (depth, prune) = discovery_opts(conn);
-
-    // Register the bound folder itself (so its Files tab browses the whole synced
-    // tree) plus everything discovered inside it — git repos and repo-free leaf
-    // folders alike. `register_path` classifies each as git/non-git on its own.
-    let mut paths: Vec<PathBuf> = vec![PathBuf::from(folder)];
-    paths.extend(
-        git::discover(&PathBuf::from(folder), depth, &prune)
-            .into_iter()
-            .map(|d| d.path),
-    );
-
     let mut added = 0usize;
     for path in paths {
-        let Ok((repo_id, inserted)) = register_path(conn, &path) else {
+        let Ok((repo_id, inserted)) = register_path(conn, path) else {
             continue;
         };
         if is_default {
@@ -229,27 +240,41 @@ pub fn sync_folder_group(conn: &Connection, group_id: i64, folder: &str) -> AppR
 }
 
 /// Sync every folder-bound group. Used by the filesystem watcher when a change
-/// is seen under a bound folder. Returns the total number of new memberships
-/// added across all groups. Does not resync the watcher — bound folders are
-/// already watched recursively, so any new repo under them is already covered.
+/// under a bound folder suggests a new repo appeared (`suggests_new_repo`).
+/// Returns the total number of new memberships added across all groups; the
+/// caller resyncs the watcher when repos were added, since bound folders are
+/// watched non-recursively and nothing else covers a new repo's tree.
+///
+/// The disk walk runs *without* the DB lock: it can take seconds on a large
+/// bound tree, every UI command needs the same connection, and holding the
+/// lock across the walk stalled the whole app (group switches queued behind
+/// it). The lock is taken briefly to read the group list and again per group
+/// to apply the walk's results.
 pub fn sync_all_bound_groups(state: &AppState) -> usize {
-    let Ok(conn) = state.db.lock() else {
-        return 0;
-    };
-    let bound: Vec<(i64, String)> = {
-        let Ok(mut stmt) = conn.prepare(
-            "SELECT id, folder_path FROM groups
-             WHERE folder_path IS NOT NULL AND folder_path != ''",
-        ) else {
+    let (bound, depth, prune): (Vec<(i64, String)>, usize, Vec<String>) = {
+        let Ok(conn) = state.db.lock() else {
             return 0;
         };
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map(|it| it.filter_map(Result::ok).collect())
-            .unwrap_or_default()
+        let bound = conn
+            .prepare(
+                "SELECT id, folder_path FROM groups
+                 WHERE folder_path IS NOT NULL AND folder_path != ''",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map(|it| it.filter_map(Result::ok).collect())
+            })
+            .unwrap_or_default();
+        let (depth, prune) = discovery_opts(&conn);
+        (bound, depth, prune)
     };
     let mut total = 0;
     for (id, folder) in bound {
-        total += sync_folder_group(&conn, id, &folder).unwrap_or(0);
+        let paths = discover_folder_paths(&folder, depth, &prune);
+        let Ok(conn) = state.db.lock() else {
+            return total;
+        };
+        total += apply_folder_sync(&conn, id, &paths).unwrap_or(0);
     }
     total
 }
@@ -446,11 +471,34 @@ fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
 /// behind count reflects the last fetch — "new commits available" after fetching).
 #[tauri::command]
 pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStatus>> {
+    repo_statuses_impl(&state, None).await
+}
+
+/// Statuses for just the given repos — the watcher's scoped refresh path (see
+/// useGitWatch), so one repo changing doesn't rescan the whole fleet.
+#[tauri::command]
+pub async fn repo_statuses_for(
+    state: State<'_, AppState>,
+    repo_ids: Vec<i64>,
+) -> AppResult<Vec<RepoStatus>> {
+    repo_statuses_impl(&state, Some(repo_ids)).await
+}
+
+async fn repo_statuses_impl(
+    state: &AppState,
+    only: Option<Vec<i64>>,
+) -> AppResult<Vec<RepoStatus>> {
     let started = std::time::Instant::now();
+    let op = if only.is_some() {
+        "repo_statuses_for"
+    } else {
+        "repo_statuses"
+    };
+    let only: Option<HashSet<i64>> = only.map(|ids| ids.into_iter().collect());
     // `stored` is the persisted has_worktrees per repo, so after the scan we can
     // write back only the ones that actually changed.
     let (scan_rows, stored): (Vec<(i64, String)>, HashMap<i64, bool>) = {
-        let conn = lock(&state)?;
+        let conn = lock(state)?;
         // Non-git folders have no branch / ahead-behind; skip them entirely so
         // the scan never touches a plain directory.
         let mut stmt =
@@ -466,6 +514,9 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
         })?;
         for row in iter {
             let (id, path, has_worktrees) = row?;
+            if only.as_ref().is_some_and(|ids| !ids.contains(&id)) {
+                continue;
+            }
             stored.insert(id, has_worktrees);
             scan_rows.push((id, path));
         }
@@ -477,7 +528,7 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
     // can't stampede alongside per-repo worktree-status calls and trigger the
     // libiconv lock convoy (issue #89).
     let result =
-        crate::commands::run_git_gated(&state, move || compute_repo_statuses(scan_rows)).await;
+        crate::commands::run_git_gated(state, move || compute_repo_statuses(scan_rows)).await;
 
     // Persist any change in linked-worktree presence so `Repo.has_worktrees`
     // (which gates whether the UI runs `git worktree list` per repo) survives a
@@ -490,7 +541,7 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
             .map(|s| (s.id, s.has_worktrees))
             .collect();
         if !changed.is_empty() {
-            if let Ok(conn) = lock(&state) {
+            if let Ok(conn) = lock(state) {
                 for (id, has_worktrees) in changed {
                     let _ = conn.execute(
                         "UPDATE repos SET has_worktrees = ?1 WHERE id = ?2",
@@ -502,9 +553,9 @@ pub async fn repo_statuses(state: State<'_, AppState>) -> AppResult<Vec<RepoStat
     }
 
     crate::commands::diagnostics::record(
-        &state,
+        state,
         crate::commands::diagnostics::OpTiming::finished(
-            "repo_statuses",
+            op,
             None,
             started,
             result.is_ok(),
