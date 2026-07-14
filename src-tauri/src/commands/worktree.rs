@@ -362,7 +362,12 @@ pub async fn git_worktree_list(
     repo_id: i64,
 ) -> AppResult<Vec<LinkedWorktree>> {
     let dir = repo_path(&state, repo_id)?.to_string_lossy().to_string();
-    let out = run_git(&dir, &["worktree", "list", "--porcelain"]).await?;
+    // Gated: a group switch mounts one row per repo and each row fetches its
+    // worktree list, so without the cap this fans out into one `git` process
+    // per repo at once. See `run_git_cli_gated`.
+    let out =
+        crate::commands::run_git_cli_gated(&state, &dir, &["worktree", "list", "--porcelain"])
+            .await?;
     Ok(parse_worktree_list(repo_id, &out))
 }
 

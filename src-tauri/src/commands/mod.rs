@@ -53,3 +53,21 @@ where
         .await
         .map_err(|e| AppError::Other(format!("git task panicked: {e}")))?
 }
+
+/// Run a git CLI subprocess under the git-status gate — the subprocess
+/// counterpart to [`run_git_gated`]. The permit is held for the whole
+/// subprocess so a burst of these can't stampede: opening a group mounts one
+/// row per repo and each fetches its worktree list, which without a cap would
+/// spawn one `git` process per repo at once and jank the UI.
+pub(crate) async fn run_git_cli_gated(
+    state: &AppState,
+    dir: &str,
+    args: &[&str],
+) -> AppResult<String> {
+    let _permit = state
+        .git_gate
+        .acquire()
+        .await
+        .map_err(|e| AppError::Other(format!("git status gate closed: {e}")))?;
+    sync::run_git(dir, args).await
+}
