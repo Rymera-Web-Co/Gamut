@@ -111,6 +111,7 @@ pub fn run() {
             commands::files::delete_path,
             commands::files::rename_path,
             commands::files::resolve_path,
+            commands::files::resolve_terminal_path,
             commands::files::reveal_in_file_manager,
             commands::sound::play_notification_sound,
             commands::review::review_files,
