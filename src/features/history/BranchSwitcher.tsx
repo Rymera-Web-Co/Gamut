@@ -188,7 +188,9 @@ export function BranchSwitcher({
             ) : (
               <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
             )}
-            <span className="max-w-28 truncate">{current}</span>
+            <span title={current} className="max-w-28 truncate">
+              {current}
+            </span>
             <ChevronDown className="size-2.5 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -285,7 +287,9 @@ export function BranchSwitcher({
                           {b.is_head && <Check className="size-3.5" />}
                         </span>
                         <GitBranch className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{b.name}</span>
+                        <span title={b.name} className="min-w-0 flex-1 truncate font-mono text-xs">
+                          {b.name}
+                        </span>
                         {b.is_remote && (
                           <span className="shrink-0 text-[10px] text-[var(--color-muted-foreground)]">
                             remote
@@ -308,7 +312,9 @@ export function BranchSwitcher({
                       >
                         <span className="w-4 shrink-0" />
                         <TagIcon className="size-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{t}</span>
+                        <span title={t} className="min-w-0 flex-1 truncate font-mono text-xs">
+                          {t}
+                        </span>
                       </button>
                     ))}
                   </>
