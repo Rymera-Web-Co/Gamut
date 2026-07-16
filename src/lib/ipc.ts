@@ -636,8 +636,8 @@ export const ipc = {
     invoke<void>("set_repo_groups", { repoId, groupIds }),
 
   // history
-  log: (repoId: number, offset: number, limit: number) =>
-    invoke<LogPage>("log", { repoId, offset, limit }),
+  log: (repoId: number, offset: number, limit: number, revspec?: string | null) =>
+    invoke<LogPage>("log", { repoId, offset, limit, revspec: revspec ?? null }),
   commitDetail: (repoId: number, sha: string) =>
     invoke<CommitDetail>("commit_detail", { repoId, sha }),
   fileDiff: (repoId: number, sha: string, path: string, oldPath?: string) =>

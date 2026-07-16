@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { VList, type VListHandle } from "virtua";
-import { Copy, GitBranch } from "lucide-react";
+import { Copy, Eye, GitBranch } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,13 @@ import type { CommitRow, FileChange, RefLabel } from "@/lib/ipc";
 import { copy } from "@/lib/clipboard";
 import { formatDate, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { useRepos } from "@/features/repos/api";
+import { useRepos, useRepoStatuses } from "@/features/repos/api";
 import { Avatar } from "@/features/review/reviewShared";
 import { useUiStore } from "@/store/ui";
 import { useCommitAvatar, useCommitDetail, useLog } from "./api";
 import { CommitGraph, ROW_HEIGHT } from "./CommitGraph";
 import { DiffModal } from "./DiffModal";
+import { RefPicker } from "./RefPicker";
 
 const PAGE = 300;
 
@@ -150,29 +151,40 @@ export function CommitDetailPanel({ repoId, sha }: { repoId: number; sha: string
 export function HistoryView() {
   const repoId = useUiStore((s) => s.activeRepoId);
   const repos = useRepos();
+  const statuses = useRepoStatuses();
   const [limit, setLimit] = useState(PAGE);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // The ref whose history is being viewed — null means the checked-out HEAD.
+  // This is a read-only "peek"; it never checks anything out (#254).
+  const [viewRef, setViewRef] = useState<string | null>(null);
   const listRef = useRef<VListHandle>(null);
   const historySha = useUiStore((s) => s.historySha);
   const setHistorySha = useUiStore((s) => s.setHistorySha);
 
-  const logQuery = useLog(repoId, limit);
+  const logQuery = useLog(repoId, limit, viewRef);
   const repo = repos.data?.find((r) => r.id === repoId);
+  const currentBranch = statuses.data?.find((s) => s.id === repoId)?.branch ?? null;
+  // Peeking at a ref other than what's checked out — drives the read-only badge.
+  const peeking = viewRef !== null && viewRef !== currentBranch;
 
   // Reset per-repo view state when the active repo changes — the component stays
-  // mounted across repo switches, so a selection/limit/filter from one repo would
-  // otherwise leak into the next.
+  // mounted across repo switches, so a selection/limit/filter/ref-peek from one
+  // repo would otherwise leak into the next.
   useEffect(() => {
     setSelectedSha(null);
     setLimit(PAGE);
     setQuery("");
+    setViewRef(null);
   }, [repoId]);
 
-  // Reveal a commit requested from elsewhere (e.g. a PR's commit list): select
-  // it, clear any active filter, scroll it into view, then clear the signal.
+  // Reveal a commit requested from elsewhere (e.g. a PR's commit list): drop any
+  // ref-peek back to HEAD (the target commit may not be on the peeked ref),
+  // select it, clear any active filter, scroll it into view, then clear the
+  // signal.
   useEffect(() => {
     if (!historySha) return;
+    setViewRef(null);
     setSelectedSha(historySha);
     setQuery("");
     const idx = (logQuery.data?.commits ?? []).findIndex((c) => c.sha === historySha);
@@ -221,6 +233,21 @@ export function HistoryView() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b px-4 py-2">
         <h1 className="text-sm font-semibold">{repo?.name ?? "History"}</h1>
+        <RefPicker
+          repoId={repoId}
+          currentBranch={currentBranch}
+          value={viewRef}
+          onChange={setViewRef}
+        />
+        {peeking && (
+          <span
+            title="Viewing another ref's history — nothing is checked out"
+            className="flex shrink-0 items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-muted-foreground)]"
+          >
+            <Eye className="size-3" />
+            read-only
+          </span>
+        )}
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

@@ -187,12 +187,19 @@ pub(crate) fn blob_text(repo: &Repository, tree: &Tree, path: &str) -> Option<(S
 // ---- Commands ----
 
 /// Paginated commit log across all refs, with graph layout.
+///
+/// `revspec` selects which ref's ancestry to walk — any branch, tag, or sha
+/// git2 can `revparse_single` (matching how `compare.rs`/`review.rs` resolve
+/// refs). It is a read-only "peek": nothing is checked out, so `HEAD` and the
+/// working tree are untouched. When it is `None` (or fails to resolve) the walk
+/// falls back to `HEAD`, preserving the current-branch default (#254).
 #[tauri::command]
 pub async fn log(
     state: State<'_, AppState>,
     repo_id: i64,
     offset: usize,
     limit: usize,
+    revspec: Option<String>,
 ) -> AppResult<LogPage> {
     let path = repo_path(&state, repo_id)?;
     crate::commands::run_git_blocking(path, move |p| {
@@ -201,8 +208,19 @@ pub async fn log(
 
         let mut walk = repo.revwalk()?;
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-        // History of the current branch only (HEAD's ancestry).
-        if walk.push_head().is_err() {
+        // Walk the selected ref's ancestry, or the current branch (HEAD) when no
+        // ref is chosen. A revspec that resolves is pushed by oid; anything else
+        // falls back to HEAD so a stale/invalid pick degrades to the default
+        // rather than erroring the view.
+        let pushed = match revspec.as_deref() {
+            Some(rev) => repo
+                .revparse_single(rev)
+                .and_then(|o| o.peel_to_commit())
+                .map(|c| walk.push(c.id()))
+                .unwrap_or_else(|_| walk.push_head()),
+            None => walk.push_head(),
+        };
+        if pushed.is_err() {
             // Unborn branch / empty repo — nothing to show.
             return Ok(LogPage {
                 commits: Vec::new(),

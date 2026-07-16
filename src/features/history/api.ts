@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ipc } from "@/lib/ipc";
 
-export function useLog(repoId: number | null, limit: number) {
+export function useLog(repoId: number | null, limit: number, revspec?: string | null) {
   return useQuery({
-    queryKey: ["log", repoId, limit],
-    queryFn: () => ipc.log(repoId!, 0, limit),
+    // `revspec` is part of the key so switching the viewed ref refetches; null
+    // (the default) walks HEAD's ancestry, matching the checked-out branch.
+    queryKey: ["log", repoId, limit, revspec ?? null],
+    queryFn: () => ipc.log(repoId!, 0, limit, revspec),
     enabled: repoId != null,
     placeholderData: (prev) => prev, // keep prior page while loading more
   });
