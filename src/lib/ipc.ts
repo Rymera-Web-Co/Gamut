@@ -283,6 +283,19 @@ export interface PrRef {
   number: number;
 }
 
+/**
+ * A file path seen in terminal output, resolved to an absolute path and — when
+ * it lives inside a tracked repo — that repo + its repo-relative path (#255).
+ * `repo_id`/`rel_path` are null when the path is outside every tracked repo, so
+ * the caller opens `abs_path` with the OS default app instead.
+ */
+export interface ResolvedTermPath {
+  abs_path: string;
+  is_dir: boolean;
+  repo_id: number | null;
+  rel_path: string | null;
+}
+
 /** An inline review comment anchored to a line (or range) of the diff. */
 export interface DraftComment {
   path: string;
@@ -636,8 +649,8 @@ export const ipc = {
     invoke<void>("set_repo_groups", { repoId, groupIds }),
 
   // history
-  log: (repoId: number, offset: number, limit: number) =>
-    invoke<LogPage>("log", { repoId, offset, limit }),
+  log: (repoId: number, offset: number, limit: number, revspec?: string | null) =>
+    invoke<LogPage>("log", { repoId, offset, limit, revspec: revspec ?? null }),
   commitDetail: (repoId: number, sha: string) =>
     invoke<CommitDetail>("commit_detail", { repoId, sha }),
   fileDiff: (repoId: number, sha: string, path: string, oldPath?: string) =>
@@ -667,6 +680,14 @@ export const ipc = {
   /** Resolve a repo-relative tree path to its absolute filesystem path. */
   resolvePath: (repoId: number, relPath: string) =>
     invoke<string>("resolve_path", { repoId, relPath }),
+  /**
+   * Resolve a file path seen in terminal output (absolute, `~`-relative, or
+   * relative to `cwd`) to an absolute path plus the tracked repo containing it,
+   * or `null` when the path doesn't exist on disk. Powers the terminal's
+   * clickable file paths (#255).
+   */
+  resolveTerminalPath: (path: string, cwd: string) =>
+    invoke<ResolvedTermPath | null>("resolve_terminal_path", { path, cwd }),
   revealInFileManager: (repoId: number, relPath?: string | null) =>
     invoke<void>("reveal_in_file_manager", { repoId, relPath: relPath ?? null }),
 

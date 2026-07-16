@@ -1,5 +1,6 @@
 import type { IDisposable, Terminal } from "@xterm/xterm";
 import type { Theme } from "@/lib/theme";
+import { matchPaths } from "./pathLinks";
 
 /**
  * Matches `http(s)` URLs in terminal output. Kept deliberately broad — the
@@ -9,7 +10,7 @@ import type { Theme } from "@/lib/theme";
  * persistent underline extends, so an occasional one-character mismatch is
  * harmless.
  */
-const URL_RE = /https?:\/\/[^\s]+/g;
+export const URL_RE = /https?:\/\/[^\s]+/g;
 
 /** Trailing characters that are almost never part of the intended URL. */
 const TRAILING = /[.,;:!?'")\]}>]+$/;
@@ -19,7 +20,7 @@ export function linkColor(theme: Theme): string {
   return theme === "dark" ? "#539bf5" : "#0969da";
 }
 
-interface UrlHit {
+interface LinkHit {
   /** Absolute buffer row the segment lives on. */
   row: number;
   /** Start column (inclusive) within the row. */
@@ -29,22 +30,39 @@ interface UrlHit {
 }
 
 /** Stable identity for a hit, so unchanged links keep their decoration. */
-function hitKey(hit: UrlHit): string {
+function hitKey(hit: LinkHit): string {
   return `${hit.row}:${hit.col}:${hit.width}`;
 }
 
 /**
+ * Split a `[start, end)` char range on a logical line into one hit per physical
+ * row it spans (a link that soft-wraps yields several), appending to `hits`.
+ * Column math assumes single-width cells — true for the ASCII of URLs, paths,
+ * and ordinary log output.
+ */
+function pushSegments(hits: LinkHit[], startRow: number, start: number, end: number, cols: number) {
+  for (let i = start; i < end; ) {
+    const segRow = startRow + Math.floor(i / cols);
+    const segCol = i % cols;
+    const segWidth = Math.min(end - i, cols - segCol);
+    hits.push({ row: segRow, col: segCol, width: segWidth });
+    i += segWidth;
+  }
+}
+
+/**
  * Walk the rows currently in (or just above) the viewport, reconstruct logical
- * lines across soft-wraps, and return every URL as one or more per-row segments
- * — a single URL that wraps onto the next row yields one hit per physical row.
+ * lines across soft-wraps, and return every URL **and file path** as one or more
+ * per-row segments — a token that wraps onto the next row yields one hit per
+ * physical row.
  *
  * Column math assumes single-width cells, which holds for the ASCII that makes
- * up URLs and ordinary log output. Wide (CJK) glyphs *preceding* a URL on the
- * same row could shift the underline slightly; this mirrors how `WebLinksAddon`
- * itself maps strings to columns, so the underline and the click target stay in
- * agreement.
+ * up URLs, paths, and ordinary log output. Wide (CJK) glyphs *preceding* a hit
+ * on the same row could shift the underline slightly; this mirrors how
+ * `WebLinksAddon` itself maps strings to columns, so the underline and the click
+ * target stay in agreement.
  */
-function scanVisibleUrls(term: Terminal): UrlHit[] {
+function scanVisibleLinks(term: Terminal): LinkHit[] {
   const buf = term.buffer.active;
   const cols = term.cols;
   const lastRow = Math.min(buf.viewportY + term.rows, buf.length);
@@ -54,7 +72,7 @@ function scanVisibleUrls(term: Terminal): UrlHit[] {
   let firstRow = buf.viewportY;
   while (firstRow > 0 && buf.getLine(firstRow)?.isWrapped) firstRow--;
 
-  const hits: UrlHit[] = [];
+  const hits: LinkHit[] = [];
   let row = firstRow;
   while (row < lastRow) {
     // Gather this logical line: the row plus every following wrapped row.
@@ -67,20 +85,21 @@ function scanVisibleUrls(term: Terminal): UrlHit[] {
     }
 
     URL_RE.lastIndex = 0;
+    const urlRanges: [number, number][] = [];
     let m: RegExpExecArray | null;
     while ((m = URL_RE.exec(text))) {
       const url = m[0].replace(TRAILING, "");
       if (url.length < 8) continue; // shorter than "http://x"
       const start = m.index;
-      const end = start + url.length;
-      // Split the [start, end) range across the physical rows it spans.
-      for (let i = start; i < end; ) {
-        const segRow = startRow + Math.floor(i / cols);
-        const segCol = i % cols;
-        const segWidth = Math.min(end - i, cols - segCol);
-        hits.push({ row: segRow, col: segCol, width: segWidth });
-        i += segWidth;
-      }
+      urlRanges.push([start, start + url.length]);
+      pushSegments(hits, startRow, start, start + url.length, cols);
+    }
+
+    // File paths, skipping any that overlap a URL (its path segment isn't a
+    // standalone file). Underlined identically to URLs; the click provider in
+    // `pathLinks.ts` handles activation (#255).
+    for (const p of matchPaths(text, urlRanges)) {
+      pushSegments(hits, startRow, p.index, p.index + p.text.length, cols);
     }
   }
   return hits;
@@ -146,8 +165,8 @@ export function attachLinkHighlighter(term: Terminal, getColor: () => string): L
     const color = getColor();
     const cursorAbs = buf.baseY + buf.cursorY;
 
-    const wanted = new Map<string, UrlHit>();
-    for (const hit of scanVisibleUrls(term)) wanted.set(hitKey(hit), hit);
+    const wanted = new Map<string, LinkHit>();
+    for (const hit of scanVisibleLinks(term)) wanted.set(hitKey(hit), hit);
 
     // Drop decorations whose link has scrolled out of view or changed.
     for (const [key, entry] of active) {

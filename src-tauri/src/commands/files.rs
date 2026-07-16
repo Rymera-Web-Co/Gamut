@@ -461,6 +461,122 @@ pub fn resolve_path(state: State<AppState>, repo_id: i64, rel_path: String) -> A
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// A terminal-output path resolved against the tracked repos, for the
+/// integrated terminal's clickable file paths (issue #255). `repo_id` /
+/// `rel_path` are `Some` when the resolved path falls under a tracked repo's
+/// root, so the click can open it in the in-app editor; otherwise they're `None`
+/// and the caller opens `abs_path` with the OS default app. The whole result is
+/// `None` when the candidate doesn't resolve to something that exists on disk —
+/// terminal path detection is heuristic, so a non-existent candidate is inert.
+#[derive(Serialize)]
+pub struct ResolvedTermPath {
+    /// Canonical absolute path (symlinks resolved).
+    pub abs_path: String,
+    pub is_dir: bool,
+    pub repo_id: Option<i64>,
+    /// Repo-relative, `/`-separated path, set alongside `repo_id`.
+    pub rel_path: Option<String>,
+}
+
+/// Expand a leading `~` (bare, or `~/…`) to the user's home directory, mirroring
+/// what the shell already did before printing the path. Anything else — including
+/// `~user` forms, which need passwd lookups we don't do — is returned unchanged.
+fn expand_tilde(path: &str) -> PathBuf {
+    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    if path == "~" {
+        if let Some(h) = home() {
+            return PathBuf::from(h);
+        }
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(h) = home() {
+            return PathBuf::from(h).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
+/// Resolve a file path seen in terminal output to an absolute path and, when it
+/// lives inside a tracked repo, that repo + its repo-relative path (issue #255).
+/// Expands `~`, resolves relative paths against the pane's working directory, and
+/// canonicalizes — which both normalizes `..`/symlinks and confirms the path
+/// exists. When several tracked repos contain the path (nested repos / worktrees)
+/// the deepest (longest-root) match wins, so the file maps to the most specific
+/// repo.
+#[tauri::command]
+pub fn resolve_terminal_path(
+    state: State<AppState>,
+    path: String,
+    cwd: String,
+) -> AppResult<Option<ResolvedTermPath>> {
+    let expanded = expand_tilde(&path);
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        Path::new(&cwd).join(expanded)
+    };
+    // Canonicalize doubles as an existence check: a candidate that doesn't
+    // resolve is inert, so the heuristic linkifier never opens a bogus path.
+    let Ok(abs) = joined.canonicalize() else {
+        return Ok(None);
+    };
+    let is_dir = abs.is_dir();
+
+    let repos: Vec<(i64, String)> = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+        let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+
+    let (repo_id, rel_path) = match repo_for_path(&abs, &repos) {
+        Some((id, rel)) => (Some(id), Some(rel)),
+        None => (None, None),
+    };
+    Ok(Some(ResolvedTermPath {
+        abs_path: abs.to_string_lossy().into_owned(),
+        is_dir,
+        repo_id,
+        rel_path,
+    }))
+}
+
+/// Find the tracked repo whose (canonical) root contains `abs`, returning its id
+/// and the repo-relative, `/`-separated path. When several repos match (nested
+/// repos / worktrees) the deepest — longest-root — one wins, so the file maps to
+/// the most specific repo. Roots that don't exist on disk are skipped.
+fn repo_for_path(abs: &Path, repos: &[(i64, String)]) -> Option<(i64, String)> {
+    let mut best: Option<(i64, PathBuf, String)> = None;
+    for (id, root) in repos {
+        let Ok(canon_root) = Path::new(root).canonicalize() else {
+            continue;
+        };
+        let Ok(rel) = abs.strip_prefix(&canon_root) else {
+            continue;
+        };
+        let deeper = best
+            .as_ref()
+            .is_none_or(|(_, r, _)| canon_root.as_os_str().len() > r.as_os_str().len());
+        if deeper {
+            // Repo-relative tree paths are `/`-separated app-wide (see `safe_join`).
+            let rel_str = rel
+                .components()
+                .filter_map(|c| match c {
+                    Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            best = Some((*id, canon_root, rel_str));
+        }
+    }
+    best.map(|(id, _, rel)| (id, rel))
+}
+
 /// Reveal the repo (or a file within it) in the OS file manager — Finder on
 /// macOS, Explorer on Windows, the default manager on Linux.
 #[tauri::command]
@@ -523,6 +639,66 @@ mod tests {
         rename_at(&root, "b.txt", "sub/c.txt").unwrap();
         assert!(!root.join("b.txt").exists());
         assert_eq!(fs::read_to_string(root.join("sub/c.txt")).unwrap(), "hi");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn expand_tilde_resolves_home() {
+        std::env::set_var("HOME", "/home/tester");
+        assert_eq!(expand_tilde("~"), PathBuf::from("/home/tester"));
+        assert_eq!(
+            expand_tilde("~/src/foo.ts"),
+            PathBuf::from("/home/tester/src/foo.ts")
+        );
+        // Non-tilde and `~user` forms are returned unchanged.
+        assert_eq!(expand_tilde("/etc/hosts"), PathBuf::from("/etc/hosts"));
+        assert_eq!(expand_tilde("src/foo.ts"), PathBuf::from("src/foo.ts"));
+        assert_eq!(expand_tilde("~other/x"), PathBuf::from("~other/x"));
+    }
+
+    #[test]
+    fn repo_for_path_maps_in_repo_files_and_skips_outsiders() {
+        let root = scratch("repo_map");
+        let repo_a = root.join("repo_a");
+        let outside = root.join("outside");
+        fs::create_dir_all(repo_a.join("src")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(repo_a.join("src/foo.ts"), "x").unwrap();
+        fs::write(outside.join("bar.ts"), "y").unwrap();
+
+        let repos = vec![(1, repo_a.to_string_lossy().into_owned())];
+        let in_repo = repo_a.join("src/foo.ts").canonicalize().unwrap();
+        assert_eq!(
+            repo_for_path(&in_repo, &repos),
+            Some((1, "src/foo.ts".to_string()))
+        );
+
+        let out = outside.join("bar.ts").canonicalize().unwrap();
+        assert_eq!(repo_for_path(&out, &repos), None);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn repo_for_path_prefers_the_deepest_repo() {
+        // A repo nested inside another (or a worktree) — the file must map to the
+        // innermost repo, not the outer one.
+        let root = scratch("repo_nested");
+        let outer = root.join("outer");
+        let inner = outer.join("packages/inner");
+        fs::create_dir_all(inner.join("src")).unwrap();
+        fs::write(inner.join("src/app.rs"), "z").unwrap();
+
+        let repos = vec![
+            (1, outer.to_string_lossy().into_owned()),
+            (2, inner.to_string_lossy().into_owned()),
+        ];
+        let file = inner.join("src/app.rs").canonicalize().unwrap();
+        assert_eq!(
+            repo_for_path(&file, &repos),
+            Some((2, "src/app.rs".to_string()))
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }
