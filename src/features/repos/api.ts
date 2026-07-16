@@ -40,6 +40,20 @@ export function useLinkedWorktrees(repoId: number, enabled = true) {
   });
 }
 
+/**
+ * The browser-openable https URL of a repo's `origin` remote, resolved lazily
+ * for the repo sidebar's "Open remote repo" context-menu item. `null` when the
+ * repo has no resolvable remote, so the caller hides the item.
+ */
+export function useRepoRemoteUrl(repoId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: ["repo-remote-url", repoId],
+    queryFn: () => ipc.repoRemoteUrl(repoId!),
+    enabled: enabled && repoId != null,
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** Git-derived query keys that a fetch can make stale (ahead/behind, branches…). */
 const GIT_QUERY_KEYS = [
   "repo-statuses",
