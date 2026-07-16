@@ -187,9 +187,16 @@ export function HistoryView() {
     setViewRef(null);
     setSelectedSha(historySha);
     setQuery("");
+    // Only clear the signal once the commit is actually found and scrolled into
+    // view. Dropping the peek above triggers a HEAD refetch, so on the first run
+    // logQuery.data may still be the peeked ref's commits (which need not contain
+    // the target). Keeping historySha set lets this effect re-run when the HEAD
+    // history arrives and finish the scroll then.
     const idx = (logQuery.data?.commits ?? []).findIndex((c) => c.sha === historySha);
-    if (idx >= 0) listRef.current?.scrollToIndex(idx, { align: "center" });
-    setHistorySha(null);
+    if (idx >= 0) {
+      listRef.current?.scrollToIndex(idx, { align: "center" });
+      setHistorySha(null);
+    }
   }, [historySha, logQuery.data, setHistorySha]);
 
   // Drop the selection (and its detail pane) once the loaded log no longer holds
