@@ -85,6 +85,22 @@ pub(super) fn parse_owner_repo(url: &str) -> Option<(String, String)> {
     is_github_host(&host).then_some((owner, repo))
 }
 
+/// The `https://` web URL for a git remote, normalizing `git@…` / `ssh://` /
+/// `git://` forms to their browser-openable equivalent. GitHub SSH host aliases
+/// (`github.com-work`, `rymera.github.com`, …) canonicalize to `github.com`;
+/// every other host passes through verbatim so GitLab / Bitbucket / self-hosted
+/// remotes resolve to their own web host. Returns `None` when the URL can't be
+/// split into host/owner/repo.
+pub(super) fn remote_web_url(url: &str) -> Option<String> {
+    let (host, owner, repo) = split_remote(url)?;
+    let host = if is_github_host(&host) {
+        "github.com".to_string()
+    } else {
+        host
+    };
+    Some(format!("https://{host}/{owner}/{repo}"))
+}
+
 /// Resolve an SSH host alias to its effective `HostName` via `ssh -G`, returning
 /// true if that resolves to a GitHub host. This handles arbitrarily-named
 /// aliases (e.g. `Host mygit` → `HostName github.com`) that the `is_github_host`
@@ -137,7 +153,10 @@ pub(super) fn parse_pr_url(url: &str) -> Option<(String, String, i64)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{https_host, is_github_asset_host, parse_owner_repo, parse_pr_url, split_remote};
+    use super::{
+        https_host, is_github_asset_host, parse_owner_repo, parse_pr_url, remote_web_url,
+        split_remote,
+    };
 
     #[test]
     fn extracts_https_host() {
@@ -229,6 +248,43 @@ mod tests {
         assert_eq!(parse_owner_repo("https://gitlab.com/x/y.git"), None);
         assert_eq!(parse_owner_repo("git@gitlab.com:x/y.git"), None);
         assert_eq!(parse_owner_repo("rymera.gitlab.com:x/y.git"), None);
+    }
+
+    #[test]
+    fn builds_remote_web_urls() {
+        // GitHub remotes in every scp/ssh/https form normalize to the same
+        // browser URL, and SSH host aliases canonicalize to github.com.
+        for url in [
+            "https://github.com/rymera/gamut.git",
+            "https://github.com/rymera/gamut",
+            "git@github.com:rymera/gamut.git",
+            "ssh://git@github.com/rymera/gamut.git",
+            "rymera.github.com:rymera/gamut.git",
+            "git@rymera.github.com:rymera/gamut.git",
+            "github.com-work:rymera/gamut.git",
+        ] {
+            assert_eq!(
+                remote_web_url(url).as_deref(),
+                Some("https://github.com/rymera/gamut"),
+                "failed for {url}"
+            );
+        }
+        // Non-GitHub hosts pass through to their own web host.
+        assert_eq!(
+            remote_web_url("git@gitlab.com:group/proj.git").as_deref(),
+            Some("https://gitlab.com/group/proj")
+        );
+        assert_eq!(
+            remote_web_url("https://bitbucket.org/team/repo.git").as_deref(),
+            Some("https://bitbucket.org/team/repo")
+        );
+        assert_eq!(
+            remote_web_url("ssh://git@git.example.com:2222/owner/repo.git").as_deref(),
+            Some("https://git.example.com/owner/repo")
+        );
+        // Unparseable remotes yield nothing so the caller hides the menu item.
+        assert_eq!(remote_web_url("not a url"), None);
+        assert_eq!(remote_web_url(""), None);
     }
 
     #[test]

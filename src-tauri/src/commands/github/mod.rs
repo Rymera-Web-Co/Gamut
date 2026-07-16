@@ -27,7 +27,9 @@ pub use auth::*;
 pub use graphql::*;
 pub use rest::*;
 
-use remote::{parse_owner_repo, parse_pr_url, split_remote, ssh_alias_resolves_to_github};
+use remote::{
+    parse_owner_repo, parse_pr_url, remote_web_url, split_remote, ssh_alias_resolves_to_github,
+};
 
 const DEFAULT_API: &str = "https://api.github.com";
 const DEFAULT_GRAPHQL: &str = "https://api.github.com/graphql";
@@ -296,6 +298,20 @@ fn owner_repo_uncached(state: &State<AppState>, repo_id: i64) -> AppResult<(Stri
     } else {
         Err(not_github())
     }
+}
+
+/// The `https://` web URL of the repo's `origin` remote (GitHub, GitLab,
+/// Bitbucket, self-hosted…), for the repo sidebar's "Open remote repo" action.
+/// `git@…` / `ssh://` remotes are normalized to their browser-openable form.
+/// Returns `None` when the repo has no `origin` remote or its URL can't be
+/// parsed, so the caller hides the menu item rather than showing a dead entry.
+#[tauri::command]
+pub fn repo_remote_url(state: State<AppState>, repo_id: i64) -> AppResult<Option<String>> {
+    let repo = open_repo(&state, repo_id)?;
+    let Ok(remote) = repo.find_remote("origin") else {
+        return Ok(None);
+    };
+    Ok(remote.url().and_then(remote_web_url))
 }
 
 /// A tracked PR resolved from a web URL: which app repo it belongs to and its

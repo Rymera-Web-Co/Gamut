@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  Copy,
   Folder,
   FolderGit2,
   GitBranch,
+  Globe,
   GripVertical,
   Link as LinkIcon,
   Loader2,
@@ -40,6 +43,7 @@ import {
   useRegisterRepo,
   useRemoveRepo,
   useReorderRepos,
+  useRepoRemoteUrl,
   useRepoStatuses,
   useRepos,
   useSetRepoGroups,
@@ -386,6 +390,15 @@ export function RepoSidebar() {
     | null
   >(null);
 
+  // "Open remote repo" only makes sense for a present git repo, and is hidden
+  // unless the origin remote resolves — so resolve it lazily for the repo the
+  // context menu is currently open on.
+  const menuRepo = menu?.kind === "repo" ? menu.repo : null;
+  const { data: remoteUrl } = useRepoRemoteUrl(
+    menuRepo?.id ?? null,
+    !!menuRepo && menuRepo.is_git_repo && !menuRepo.missing,
+  );
+
   const allRepos = repos.data ?? [];
   const allGroups = groups.data ?? [];
   const activeGroup = allGroups.find((g) => g.id === activeGroupId);
@@ -661,6 +674,29 @@ export function RepoSidebar() {
               <LinkIcon />
               Copy path
             </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                void copy(menu.repo.name, "Copied name");
+                setMenu(null);
+              }}
+            >
+              <Copy />
+              Copy repo name
+            </ContextMenuItem>
+            {/* Hidden unless the repo has a resolvable origin remote (see the
+                useRepoRemoteUrl call above), matching how "Open terminal here"
+                hides rather than showing a dead entry. */}
+            {remoteUrl && (
+              <ContextMenuItem
+                onClick={() => {
+                  openUrl(remoteUrl).catch(() => {});
+                  setMenu(null);
+                }}
+              >
+                <Globe />
+                Open remote repo
+              </ContextMenuItem>
+            )}
             <div className="my-1 border-t border-[var(--color-border)]" />
             <ContextMenuItem
               className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"

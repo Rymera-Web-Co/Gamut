@@ -739,6 +739,8 @@ export const ipc = {
    * integrated terminal in-app rather than the browser (issue #51).
    */
   githubResolvePrUrl: (url: string) => invoke<PrRef | null>("github_resolve_pr_url", { url }),
+  /** Browser-openable https URL of the repo's `origin` remote, or null if none. */
+  repoRemoteUrl: (repoId: number) => invoke<string | null>("repo_remote_url", { repoId }),
   githubPrDiff: (repoId: number, number: number) =>
     invoke<string>("github_pr_diff", { repoId, number }),
   /**

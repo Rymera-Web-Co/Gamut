@@ -152,6 +152,7 @@ pub fn run() {
             commands::github::github_device_poll,
             commands::github::github_list_prs,
             commands::github::github_resolve_pr_url,
+            commands::github::repo_remote_url,
             commands::github::github_pr_diff,
             commands::github::github_commit_avatar,
             commands::github::github_fetch_image,
