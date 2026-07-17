@@ -140,6 +140,17 @@ fn walk(
     if dir.join(".git").exists() {
         // It's a repo — record it and don't descend further.
         if let Ok(repo) = open(dir) {
+            // A linked worktree (its `.git` is a gitlink file, not a dir) is a
+            // *view* of another repo's checkout, not a repo in its own right —
+            // worktrees are surfaced inside their parent repo, never as their
+            // own sidebar entry. Registering one would also strand a dangling
+            // entry once the worktree is removed on disk: folder-sync is
+            // add-only and never prunes a discovered repo whose path vanished.
+            // Report it as repo-like (so its container, e.g. `worktrees/`, isn't
+            // surfaced as a browsable folder) but don't record or descend.
+            if repo.is_worktree() {
+                return Walk::HasRepo;
+            }
             out.push(Discovered {
                 name: repo_name(dir),
                 default_branch: current_branch(&repo),
@@ -260,6 +271,44 @@ mod tests {
             "an empty folder has nothing to browse and is skipped"
         );
         assert!(!by_name.contains_key("c"), "node_modules should be pruned");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn skips_linked_worktrees() {
+        let root = std::env::temp_dir().join("gamut_discover_worktree_test");
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A real repo needs a commit before `git worktree add` will attach a
+        // linked worktree (an unborn HEAD can't be checked out elsewhere).
+        let repo = Repository::init(root.join("main")).unwrap();
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        // A linked worktree under a `worktrees/` container, exactly how a
+        // parallel checkout lands on disk. Its `.git` is a gitlink file.
+        // (`git worktree add` won't create the intermediate container dir.)
+        std::fs::create_dir_all(root.join("worktrees")).unwrap();
+        repo.worktree("wt-1", &root.join("worktrees/wt-1"), None)
+            .unwrap();
+
+        let found = discover(&root, 6, &default_prune_dirs());
+        let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
+
+        assert!(names.contains(&"main"), "the main repo is still discovered");
+        assert!(
+            !names.contains(&"wt-1"),
+            "a linked worktree must not surface as its own sidebar entry"
+        );
+        assert!(
+            !names.contains(&"worktrees"),
+            "the worktrees container isn't a browsable folder"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }
