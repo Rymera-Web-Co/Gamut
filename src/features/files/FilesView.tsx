@@ -23,6 +23,7 @@ import { useFileContent, useWorktreeStatus } from "./api";
 import { ImageView } from "./ImageView";
 import { RepoTree, type TreeChanges } from "./RepoTree";
 import { SearchPanel } from "./SearchPanel";
+import { useIdeSelectionSync } from "./useIdeSelectionSync";
 
 type CodeEditor = Parameters<OnMount>[0];
 
@@ -125,6 +126,11 @@ export function FilesView() {
   const editorRef = useRef<CodeEditor | null>(null);
   const [editorReady, setEditorReady] = useState(false);
   const [pendingReveal, setPendingReveal] = useState<RevealTarget | null>(null);
+
+  // Mirror the open file's selection to any `claude` running in an integrated
+  // terminal (Claude Code IDE integration), so highlighting lines here feeds
+  // them in as ambient context.
+  useIdeSelectionSync(editorRef, editorReady, repoId, selectedPath);
 
   // Images get their own preview path (loaded as a data: URL), so skip the
   // text read for them — it would only report them as binary.

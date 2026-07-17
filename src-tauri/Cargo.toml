@@ -59,6 +59,14 @@ portable-pty = "0.8"
 # backs the case-sensitive / whole-word / regex toggles.
 ignore = "0.4"
 regex = "1"
+# Editor-side of Claude Code's IDE integration: a loopback WebSocket server a
+# `claude` process launched in an integrated terminal auto-connects to, so the
+# current editor selection flows in as ambient context. The sync `tungstenite`
+# API (blocking accept + framing over a std TcpStream) mirrors the threaded
+# loopback pattern the control channel already uses — no async runtime needed.
+tungstenite = "0.24"
+# Real UUIDs for the IDE lockfile's auth token (v4, random).
+uuid = { version = "1", features = ["v4"] }
 # Native playback of terminal notification cues. Done in the host process rather
 # than the webview's Web Audio API: WebKit idle-suspends an AudioContext when the
 # app is backgrounded/idle, and a background event (the cue's only trigger) isn't

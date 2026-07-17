@@ -296,6 +296,30 @@ export interface ResolvedTermPath {
   rel_path: string | null;
 }
 
+/**
+ * An editor selection pushed to connected `claude` clients via the Claude Code
+ * IDE integration. Line/character are **zero-based** (the protocol's LSP-style
+ * coordinates) — Monaco's 1-based line/column must be converted before sending.
+ * Field names are snake_case to match the backend `Selection` struct.
+ */
+export interface IdeSelection {
+  text: string;
+  /** Absolute path of the file the selection is in. */
+  file_path: string;
+  start_line: number;
+  start_char: number;
+  end_line: number;
+  end_char: number;
+  is_empty: boolean;
+}
+
+/** Status of the Claude Code IDE WebSocket server. */
+export interface IdeStatus {
+  running: boolean;
+  port: number | null;
+  connected: number;
+}
+
 /** An inline review comment anchored to a line (or range) of the diff. */
 export interface DraftComment {
   path: string;
@@ -886,6 +910,12 @@ export const ipc = {
   diagnostics: () => invoke<Diagnostics>("diagnostics_snapshot"),
   diagnosticsWrite: (path: string) => invoke<void>("diagnostics_write", { path }),
   recordStall: (gapMs: number) => invoke<void>("diagnostics_record_stall", { gapMs }),
+
+  // Claude Code IDE integration: push the current editor selection to any
+  // `claude` running in an integrated terminal, so it lands as ambient context.
+  ideStatus: () => invoke<IdeStatus>("ide_status"),
+  ideSelectionChanged: (selection: IdeSelection) =>
+    invoke<void>("ide_selection_changed", { selection }),
 };
 
 /** Open the native save dialog. Returns the chosen path, or null if cancelled. */
