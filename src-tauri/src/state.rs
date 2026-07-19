@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 use tokio::sync::Semaphore;
 
+use crate::claude_ide::IdeHandle;
 use crate::commands::diagnostics::OpTiming;
 use crate::commands::terminal::{Session, TerminalInfo};
 use crate::watch::RepoWatcher;
@@ -76,4 +77,8 @@ pub struct AppState {
     /// Rolling in-memory log of git operation timings for diagnostics (#90);
     /// capped at `commands::diagnostics::OP_LOG_CAP`.
     pub op_log: Mutex<VecDeque<OpTiming>>,
+    /// Handle to the Claude Code IDE WebSocket server, once started (best-effort:
+    /// `None` if the bind failed). Terminals read its port to advertise
+    /// `CLAUDE_CODE_SSE_PORT`; the frontend pushes editor selections through it.
+    pub ide: Mutex<Option<IdeHandle>>,
 }

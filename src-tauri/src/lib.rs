@@ -1,3 +1,6 @@
+// `pub` so the `ide_probe` example can drive the server standalone for a live
+// handshake check against a real `claude`, without launching the GUI.
+pub mod claude_ide;
 mod commands;
 mod control;
 mod db;
@@ -42,6 +45,7 @@ pub fn run() {
                 git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),
                 origin_slug_cache: Mutex::new(HashMap::new()),
                 op_log: Mutex::new(VecDeque::new()),
+                ide: Mutex::new(None),
             });
 
             // Watch registered repos' .git so external changes reflect live.
@@ -64,6 +68,31 @@ pub fn run() {
             // external local process. Best-effort: a bind failure just means
             // live UI navigation is unavailable, not that the app fails.
             control::start(app.handle().clone());
+
+            // Claude Code IDE integration: a loopback WebSocket server a
+            // `claude` launched in an integrated terminal auto-connects to, so
+            // the current editor selection flows in as context. Best-effort — a
+            // bind/lockfile failure just disables the integration. Seed
+            // `workspaceFolders` with the registered repo roots so the CLI scopes
+            // its IDE-backed file ops to the user's repos.
+            let workspace_folders = {
+                let state = app.state::<AppState>();
+                let paths = state
+                    .db
+                    .lock()
+                    .ok()
+                    .and_then(|conn| commands::repo::all_repo_paths(&conn).ok());
+                paths.unwrap_or_default()
+            };
+            match claude_ide::start_server(claude_ide::IdeConfig {
+                workspace_folders,
+                lockfile_dir: None,
+            }) {
+                Ok(handle) => {
+                    *app.state::<AppState>().ide.lock().unwrap() = Some(handle);
+                }
+                Err(e) => eprintln!("claude IDE server init failed: {e}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -180,6 +209,8 @@ pub fn run() {
             commands::diagnostics::diagnostics_snapshot,
             commands::diagnostics::diagnostics_write,
             commands::diagnostics::diagnostics_record_stall,
+            commands::ide::ide_status,
+            commands::ide::ide_selection_changed,
         ])
         .on_window_event(|window, event| {
             // Tear down all PTYs when the main window closes so no shell is left
@@ -192,6 +223,17 @@ pub fn run() {
                 // Drop the control-channel port file so a later client reports
                 // "app not running" instead of dialing a dead port.
                 control::cleanup(window.app_handle());
+                // Remove the IDE lockfile so a later `claude` doesn't dial a
+                // dead port.
+                if let Some(h) = window
+                    .state::<AppState>()
+                    .ide
+                    .lock()
+                    .ok()
+                    .and_then(|h| h.clone())
+                {
+                    h.cleanup();
+                }
             }
         })
         .build(tauri::generate_context!())
@@ -203,6 +245,12 @@ pub fn run() {
             // idempotent, so overlapping with those hooks is harmless.
             if let RunEvent::Exit = event {
                 control::cleanup(app_handle);
+                if let Some(h) = app_handle
+                    .try_state::<AppState>()
+                    .and_then(|s| s.ide.lock().ok().and_then(|h| h.clone()))
+                {
+                    h.cleanup();
+                }
             }
         });
 }

@@ -311,6 +311,18 @@ pub fn list_repos(state: State<AppState>) -> AppResult<Vec<Repo>> {
     list_repos_from_conn(&conn)
 }
 
+/// Absolute paths of every registered repo, used to seed the Claude Code IDE
+/// server's `workspaceFolders` at startup (see `crate::claude_ide`). Read once —
+/// repos added/removed later won't reflect until the app restarts, since a
+/// `claude` reads the lockfile only when it first connects.
+pub fn all_repo_paths(conn: &Connection) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM repos ORDER BY sort, name COLLATE NOCASE")?;
+    let paths = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(paths)
+}
+
 /// List every registered repo, ordered as the sidebar shows them. Split out of
 /// the [`list_repos`] command so the query core takes a plain `&Connection`.
 fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {

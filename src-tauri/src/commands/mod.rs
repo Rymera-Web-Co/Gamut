@@ -4,6 +4,7 @@ pub mod diagnostics;
 pub mod files;
 pub mod github;
 pub mod history;
+pub mod ide;
 pub mod repo;
 pub mod review;
 pub mod search;

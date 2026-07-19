@@ -233,6 +233,19 @@ pub fn terminal_spawn(
     cmd.cwd(resolve_cwd(&cwd));
     // Advertise a capable terminal so prompts, colors and full-screen apps work.
     cmd.env("TERM", "xterm-256color");
+    // If the Claude Code IDE server is up, point any `claude` launched in this
+    // shell at it: `CLAUDE_CODE_SSE_PORT` tells the CLI which loopback port to
+    // dial (it reads the auth token from the matching lockfile), and the flag
+    // opts the session into IDE features. See `crate::claude_ide`.
+    if let Some(port) = state
+        .ide
+        .lock()
+        .ok()
+        .and_then(|h| h.as_ref().map(|h| h.port()))
+    {
+        cmd.env("CLAUDE_CODE_SSE_PORT", port.to_string());
+        cmd.env("ENABLE_IDE_INTEGRATION", "true");
+    }
     let child = pair.slave.spawn_command(cmd).map_err(pty_err)?;
 
     let mut reader = pair.master.try_clone_reader().map_err(pty_err)?;
