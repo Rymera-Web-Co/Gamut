@@ -75,10 +75,16 @@ pub struct Selection {
 impl Selection {
     /// The protocol's `selection_changed` params (camelCase, LSP-style range).
     fn to_params(&self) -> Value {
+        // Build a proper RFC 8089 `file://` URL so Windows separators and paths
+        // with spaces / reserved characters are percent-encoded correctly;
+        // fall back to bare concatenation for a non-absolute path.
+        let file_url = url::Url::from_file_path(&self.file_path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", self.file_path));
         json!({
             "text": self.text,
             "filePath": self.file_path,
-            "fileUrl": format!("file://{}", self.file_path),
+            "fileUrl": file_url,
             "selection": {
                 "start": { "line": self.start_line, "character": self.start_char },
                 "end": { "line": self.end_line, "character": self.end_char },
@@ -476,6 +482,17 @@ mod tests {
         }
     }
 
+    /// A `Shared` with no clients, no selection, and no workspace — the fixture
+    /// the RPC-handling unit tests share.
+    fn empty_shared() -> Shared {
+        Shared {
+            token: "t".into(),
+            clients: Mutex::new(HashMap::new()),
+            last_selection: Mutex::new(None),
+            workspace_folders: vec![],
+        }
+    }
+
     #[test]
     fn selection_to_params_is_camelcase_lsp_range() {
         let p = sample_selection().to_params();
@@ -506,12 +523,7 @@ mod tests {
 
     #[test]
     fn rpc_initialize_echoes_protocol_and_advertises_tools() {
-        let shared = Shared {
-            token: "t".into(),
-            clients: Mutex::new(HashMap::new()),
-            last_selection: Mutex::new(None),
-            workspace_folders: vec![],
-        };
+        let shared = empty_shared();
         let req = json!({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": { "protocolVersion": "2025-03-26" }
@@ -535,12 +547,7 @@ mod tests {
 
     #[test]
     fn rpc_prompts_list_returns_empty_not_an_error() {
-        let shared = Shared {
-            token: "t".into(),
-            clients: Mutex::new(HashMap::new()),
-            last_selection: Mutex::new(None),
-            workspace_folders: vec![],
-        };
+        let shared = empty_shared();
         let req = json!({ "jsonrpc": "2.0", "id": 2, "method": "prompts/list" }).to_string();
         let reply: Value = serde_json::from_str(&handle_rpc(&req, &shared).unwrap()).unwrap();
         assert!(reply["result"]["prompts"].is_array());
@@ -549,24 +556,14 @@ mod tests {
 
     #[test]
     fn rpc_notification_gets_no_reply() {
-        let shared = Shared {
-            token: "t".into(),
-            clients: Mutex::new(HashMap::new()),
-            last_selection: Mutex::new(None),
-            workspace_folders: vec![],
-        };
+        let shared = empty_shared();
         let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }).to_string();
         assert!(handle_rpc(&note, &shared).is_none());
     }
 
     #[test]
     fn unknown_method_returns_method_not_found() {
-        let shared = Shared {
-            token: "t".into(),
-            clients: Mutex::new(HashMap::new()),
-            last_selection: Mutex::new(None),
-            workspace_folders: vec![],
-        };
+        let shared = empty_shared();
         let req = json!({ "jsonrpc": "2.0", "id": 7, "method": "bogus" }).to_string();
         let reply: Value = serde_json::from_str(&handle_rpc(&req, &shared).unwrap()).unwrap();
         assert_eq!(reply["error"]["code"], -32601);
@@ -606,8 +603,7 @@ mod tests {
             .send(Message::Text(
                 json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
                         "params": { "protocolVersion": "2025-06-18" } })
-                .to_string()
-                .into(),
+                .to_string(),
             ))
             .unwrap();
         let init: Value = read_json(&mut client);

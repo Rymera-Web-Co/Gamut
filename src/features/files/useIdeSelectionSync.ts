@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type { OnMount } from "@monaco-editor/react";
 
 import { ipc, type IdeSelection } from "@/lib/ipc";
@@ -47,14 +47,13 @@ export function toIdeSelection(
  * cheap when the integration is idle.
  */
 export function useIdeSelectionSync(
-  editorRef: React.RefObject<CodeEditor | null>,
+  editorRef: RefObject<CodeEditor | null>,
   editorReady: boolean,
   repoId: number | null,
   selectedPath: string | null,
 ) {
-  // Live values for the listener, which is bound once when the editor mounts.
-  const repoIdRef = useRef(repoId);
-  repoIdRef.current = repoId;
+  // The open file's path, mirrored in a ref so the async path-resolve below can
+  // discard a result that lands after the user has switched files.
   const pathRef = useRef(selectedPath);
   pathRef.current = selectedPath;
 
