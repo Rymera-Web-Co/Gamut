@@ -9,6 +9,7 @@ import {
   FolderPlus,
   Link as LinkIcon,
   Pencil,
+  SquareTerminal,
   TerminalSquare,
   Trash2,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import { useUiStore } from "@/store/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { useDirChildren } from "./api";
+import { useRepos } from "../repos/api";
 import {
   basename,
   flattenVisible,
@@ -474,6 +476,11 @@ export function RepoTree({
   const compareSelection = useUiStore((s) => s.compareSelection);
   const setCompareSelection = useUiStore((s) => s.setCompareSelection);
   const openCompare = useUiStore((s) => s.openCompare);
+  // "Open Terminal Here" roots a new tab in the active group at a folder's
+  // absolute path; the repo name (if loaded) prefixes the tab title.
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const repoName = useRepos().data?.find((r) => r.id === repoId)?.name;
   // Expansion is lifted here so a create can force the target dir open and the
   // new entry becomes visible immediately.
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
@@ -1042,6 +1049,28 @@ export function RepoTree({
               <TerminalSquare />
               Send to Terminal
             </ContextMenuItem>
+            {/* Open a new terminal rooted at this folder. Directories only — a
+                file has no cwd of its own — and only when a group is active to
+                host the tab. */}
+            {menu.kind === "dir" && activeGroupId != null && (
+              <ContextMenuItem
+                className="text-xs"
+                onClick={() => {
+                  const path = menu.path;
+                  const groupId = activeGroupId;
+                  setMenu(null);
+                  ipc
+                    .resolvePath(repoId, path)
+                    .then((abs) =>
+                      addTerminalTab(groupId, abs, repoName ? `${repoName}/${path}` : path),
+                    )
+                    .catch((e) => toast.error(String(e)));
+                }}
+              >
+                <SquareTerminal />
+                Open Terminal Here
+              </ContextMenuItem>
+            )}
             {menu.kind === "file" && (
               <>
                 <div className="my-1 border-t border-[var(--color-border)]" />
