@@ -382,7 +382,9 @@ pub fn terminal_write(state: State<AppState>, request: Request<'_>) -> AppResult
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| AppError::Other("terminal_write: missing session-id header".into()))?;
     let InvokeBody::Raw(data) = request.body() else {
-        return Err(AppError::Other("terminal_write: expected a raw request body".into()));
+        return Err(AppError::Other(
+            "terminal_write: expected a raw request body".into(),
+        ));
     };
     let mut sessions = lock(&state)?;
     if let Some(s) = sessions.get_mut(session_id) {
