@@ -125,12 +125,16 @@ export function FilesView() {
   // The live Monaco instance, plus a pending jump-to-match from a search result.
   const editorRef = useRef<CodeEditor | null>(null);
   const [editorReady, setEditorReady] = useState(false);
+  // The live Monaco instance as state (not just the ref) so consumers that must
+  // re-run when the editor is remounted — e.g. the IDE selection sync — observe
+  // the new instance instead of a stale ref.
+  const [editor, setEditor] = useState<CodeEditor | null>(null);
   const [pendingReveal, setPendingReveal] = useState<RevealTarget | null>(null);
 
   // Mirror the open file's selection to any `claude` running in an integrated
   // terminal (Claude Code IDE integration), so highlighting lines here feeds
   // them in as ambient context.
-  useIdeSelectionSync(editorRef, editorReady, repoId, selectedPath);
+  useIdeSelectionSync(editor, repoId, selectedPath);
 
   // Images get their own preview path (loaded as a data: URL), so skip the
   // text read for them — it would only report them as binary.
@@ -537,6 +541,7 @@ export function FilesView() {
               onMount={(editor) => {
                 editorRef.current = editor;
                 setEditorReady(true);
+                setEditor(editor);
                 // Right-click → "Send to Terminal": stage a GitHub-style
                 // `path#Lstart-Lend` reference for the current selection in the
                 // active terminal (#199). No selection → path with no lines.
