@@ -311,6 +311,12 @@ export function isWindows(): boolean {
   return /win/i.test(getPlatform());
 }
 
+/** Best-effort Linux detection. Used to default the terminal off the WebGL
+ * renderer, whose WebKitGTK path renders stale cells on some GPU drivers. */
+export function isLinux(): boolean {
+  return /linux/i.test(getPlatform());
+}
+
 /** The concrete modifier booleans a binding requires on the current platform. */
 function resolved(b: Binding, mac: boolean) {
   return {

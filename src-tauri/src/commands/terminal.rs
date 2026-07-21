@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::ipc::{Channel, Response};
+use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::settings;
@@ -148,11 +148,13 @@ fn resolve_cwd(cwd: &str) -> String {
     }
 }
 
-/// How long to accumulate PTY reads before emitting them as one IPC message.
-/// Bursty output (a build, `tail -f`, a progress bar) arrives across many 8 KB
-/// reads within a few milliseconds of each other; batching them cuts the
-/// per-chunk IPC/JS overhead roughly in proportion to burst size while staying
-/// well under human perception for interactive typing echo.
+/// How long to keep accumulating PTY reads once a burst is already in flight,
+/// before emitting them as one IPC message. Bursty output (a build, `tail -f`, a
+/// progress bar) arrives across many 8 KB reads within a few milliseconds of
+/// each other; batching them cuts the per-chunk IPC/JS overhead roughly in
+/// proportion to burst size. This window is only entered *after* more than one
+/// chunk is seen back-to-back — interactive echo (a lone keystroke) never waits
+/// it out (see [`next_coalesced_batch`]).
 const COALESCE_WINDOW: Duration = Duration::from_millis(8);
 
 /// Cap on bytes buffered before a forced flush, so a sustained firehose (e.g.
@@ -162,26 +164,53 @@ const COALESCE_WINDOW: Duration = Duration::from_millis(8);
 /// chunk has been appended, not mid-chunk.
 const COALESCE_MAX_BYTES: usize = 256 * 1024;
 
-/// Blocks for the next chunk, then greedily drains whatever else arrives
-/// within `COALESCE_WINDOW` of it (or until `COALESCE_MAX_BYTES` is hit),
-/// returning the concatenation as one batch. Returns `None` once the sender
-/// is dropped and no chunk is pending, signalling the PTY reader has exited.
+/// Blocks for the next chunk, then coalesces bursty follow-up output into one
+/// batch — while keeping interactive echo latency-free. Returns `None` once the
+/// sender is dropped and no chunk is pending, signalling the PTY reader exited.
+///
+/// The strategy is *leading-edge*: after the first chunk we drain everything
+/// **already queued** without waiting. For a lone keystroke echo nothing else is
+/// queued, so we return immediately — no artificial 8 ms delay on every typed
+/// character. Only when that non-blocking drain finds more than the first chunk
+/// (a genuine burst: a build, `tail -f`, a firehose) do we fall into the timed
+/// [`COALESCE_WINDOW`] to keep batching the continuing stream and spare the
+/// per-8 KB IPC overhead. Either path stops early at [`COALESCE_MAX_BYTES`].
 fn next_coalesced_batch(rx: &mpsc::Receiver<Vec<u8>>) -> Option<Vec<u8>> {
     let mut pending = rx.recv().ok()?;
-    let deadline = Instant::now() + COALESCE_WINDOW;
-    loop {
-        if pending.len() >= COALESCE_MAX_BYTES {
-            break;
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            break;
-        }
-        match rx.recv_timeout(deadline - now) {
-            Ok(more) => pending.extend_from_slice(&more),
-            Err(_) => break, // timed out or sender gone; flush what we have
+
+    // Leading edge: absorb whatever the reader has *already* queued, without
+    // blocking. A single keystroke's echo has nothing behind it and falls
+    // straight through; a firehose has chunks piled up and gets batched here.
+    let mut bursting = false;
+    while pending.len() < COALESCE_MAX_BYTES {
+        match rx.try_recv() {
+            Ok(more) => {
+                pending.extend_from_slice(&more);
+                bursting = true; // more than the first chunk was waiting → a burst
+            }
+            Err(_) => break, // nothing else queued right now (or sender gone)
         }
     }
+
+    // Trailing coalesce: only once a burst is confirmed do we wait out the
+    // window for the stream to continue. Interactive echo skips this entirely.
+    if bursting {
+        let deadline = Instant::now() + COALESCE_WINDOW;
+        loop {
+            if pending.len() >= COALESCE_MAX_BYTES {
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match rx.recv_timeout(deadline - now) {
+                Ok(more) => pending.extend_from_slice(&more),
+                Err(_) => break, // timed out or sender gone; flush what we have
+            }
+        }
+    }
+
     Some(pending)
 }
 
@@ -338,11 +367,28 @@ pub fn terminal_registry_report(
 }
 
 /// Forward keystrokes (raw bytes) to a session's shell. No-op if the session is gone.
+///
+/// The bytes cross IPC as a raw request body rather than a JSON `number[]`,
+/// mirroring the output path (see the module docs): a paste of N bytes travels
+/// as N bytes instead of a `[104,101,…]`-expanded array that has to be
+/// re-parsed, and each keystroke skips the per-call array allocation + parse.
+/// Since the body is the payload, the target session id rides in the
+/// `session-id` header.
 #[tauri::command]
-pub fn terminal_write(state: State<AppState>, session_id: String, data: Vec<u8>) -> AppResult<()> {
+pub fn terminal_write(state: State<AppState>, request: Request<'_>) -> AppResult<()> {
+    let session_id = request
+        .headers()
+        .get("session-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::Other("terminal_write: missing session-id header".into()))?;
+    let InvokeBody::Raw(data) = request.body() else {
+        return Err(AppError::Other(
+            "terminal_write: expected a raw request body".into(),
+        ));
+    };
     let mut sessions = lock(&state)?;
-    if let Some(s) = sessions.get_mut(&session_id) {
-        s.writer.write_all(&data).map_err(pty_err)?;
+    if let Some(s) = sessions.get_mut(session_id) {
+        s.writer.write_all(data).map_err(pty_err)?;
         let _ = s.writer.flush();
     }
     Ok(())
@@ -409,20 +455,20 @@ mod tests {
         assert!(next_coalesced_batch(&rx).is_none());
     }
 
-    /// A lone chunk with no follow-up must still flush once the coalescing
-    /// window elapses, rather than waiting forever for more data that never
-    /// arrives (e.g. a shell prompt printed once, then idle for input).
+    /// A lone chunk with nothing queued behind it (interactive echo: one
+    /// keystroke, or a shell prompt printed once then idle) must flush
+    /// *immediately* — the leading-edge path never waits out the coalescing
+    /// window, so typed characters echo without the added per-keystroke delay.
     #[test]
-    fn flushes_a_lone_chunk_after_the_window() {
+    fn flushes_a_lone_chunk_immediately() {
         let (tx, rx) = mpsc::channel();
         tx.send(b"prompt$ ".to_vec()).unwrap();
 
         let start = Instant::now();
         let batch = next_coalesced_batch(&rx).expect("batch");
         assert_eq!(batch, b"prompt$ ");
-        // Flushed once the window elapsed, not held indefinitely.
-        assert!(start.elapsed() >= COALESCE_WINDOW);
-        assert!(start.elapsed() < COALESCE_WINDOW * 5);
+        // No burst behind it, so it returns without waiting out the window.
+        assert!(start.elapsed() < COALESCE_WINDOW);
     }
 
     /// Chunks that arrive spaced further apart than `COALESCE_WINDOW` must

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { ipc } from "@/lib/ipc";
+import { isLinux } from "@/lib/shortcuts";
 
 /**
  * Unified, DB-backed user preferences (issue #29).
@@ -56,6 +57,13 @@ export interface Settings {
   // Reopen the terminal layout (tabs/splits/cwds) on launch, respawning a fresh
   // shell per pane at its saved directory (#155). Off → start with a clean slate.
   terminalRestoreSessions: boolean;
+  // Render terminals with xterm's WebGL (GPU) renderer (#211). The DOM renderer
+  // is the fallback. Defaults on for macOS/Windows (where WKWebView/WebView2
+  // handle WebGL cleanly) but off on Linux, whose WebKitGTK + GPU-driver combos
+  // can leave stale cells (e.g. a deleted last character lingering on screen) or
+  // feel laggier than the DOM renderer. Applies to new terminals (restart a pane
+  // to switch it).
+  terminalGpuRenderer: boolean;
 
   // Terminal notifications (background-pane bell / process-exit; see #28)
   terminalNotifySound: boolean; // master on/off for the audible cue
@@ -159,6 +167,10 @@ export const DEFAULTS: Settings = {
   // On by default: reopening yesterday's terminal layout is the point of the
   // feature; opt out for a clean slate each launch.
   terminalRestoreSessions: true,
+  // On for macOS/Windows (preserves #211), off on Linux where the WebKitGTK
+  // WebGL path renders stale cells / lags on some GPU drivers. Users can flip
+  // it either way; this is only the default.
+  terminalGpuRenderer: !isLinux(),
 
   // Sound on by default for both discrete events; desktop notifications stay
   // off until the user opts in (they require an OS permission grant).

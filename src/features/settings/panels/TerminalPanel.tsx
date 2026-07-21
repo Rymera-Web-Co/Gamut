@@ -15,6 +15,7 @@ export function TerminalPanel() {
   const [terminalFontFamily, setFontFamily] = useSetting("terminalFontFamily");
   const [terminalCursorBlink, setCursorBlink] = useSetting("terminalCursorBlink");
   const [terminalScrollback, setScrollback] = useSetting("terminalScrollback");
+  const [terminalGpuRenderer, setGpuRenderer] = useSetting("terminalGpuRenderer");
   const [newTabDir, setNewTabDir] = useSetting("terminalNewTabDir");
   const [restoreSessions, setRestoreSessions] = useSetting("terminalRestoreSessions");
 
@@ -48,6 +49,12 @@ export function TerminalPanel() {
           step={100}
           suffix="lines"
         />
+      </Field>
+      <Field
+        label="GPU renderer"
+        hint="Draws terminals on the GPU (WebGL). Turn off to use the DOM renderer if you see lingering characters or lag. Applies to new terminals."
+      >
+        <Toggle checked={terminalGpuRenderer} onChange={setGpuRenderer} />
       </Field>
       <Divider />
       <Field
