@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 
+import type { ContextMenuPosition } from "@/components/ui/context-menu";
 import { fileIcon } from "@/lib/fileIcons";
 import type { FileChange } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -88,17 +89,27 @@ function FileRow({
   depth,
   selected,
   onOpen,
+  onContextMenu,
 }: {
   file: FileChange;
   name: string;
   depth: number;
   selected: boolean;
   onOpen: (f: FileChange) => void;
+  onContextMenu?: (f: FileChange, pos: ContextMenuPosition) => void;
 }) {
   const Icon = fileIcon(name);
   return (
     <button
       onClick={() => onOpen(file)}
+      onContextMenu={
+        onContextMenu
+          ? (e) => {
+              e.preventDefault();
+              onContextMenu(file, { x: e.clientX, y: e.clientY });
+            }
+          : undefined
+      }
       title={file.path}
       style={{ paddingLeft: depth * 14 + 8 }}
       className={cn(
@@ -132,6 +143,7 @@ function Nodes({
   toggle,
   selectedPath,
   onOpen,
+  onContextMenu,
 }: {
   nodes: TreeNode[];
   depth: number;
@@ -139,6 +151,7 @@ function Nodes({
   toggle: (path: string) => void;
   selectedPath?: string | null;
   onOpen: (f: FileChange) => void;
+  onContextMenu?: (f: FileChange, pos: ContextMenuPosition) => void;
 }) {
   return (
     <>
@@ -166,6 +179,7 @@ function Nodes({
                 toggle={toggle}
                 selectedPath={selectedPath}
                 onOpen={onOpen}
+                onContextMenu={onContextMenu}
               />
             )}
           </div>
@@ -177,6 +191,7 @@ function Nodes({
             depth={depth}
             selected={selectedPath === node.file.path}
             onOpen={onOpen}
+            onContextMenu={onContextMenu}
           />
         ),
       )}
@@ -188,10 +203,13 @@ export function FileTree({
   files,
   onOpen,
   selectedPath,
+  onContextMenu,
 }: {
   files: FileChange[];
   onOpen: (f: FileChange) => void;
   selectedPath?: string | null;
+  /** When set, right-clicking a file row opens a caller-owned context menu. */
+  onContextMenu?: (f: FileChange, pos: ContextMenuPosition) => void;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -213,6 +231,7 @@ export function FileTree({
       toggle={toggle}
       selectedPath={selectedPath}
       onOpen={onOpen}
+      onContextMenu={onContextMenu}
     />
   );
 }

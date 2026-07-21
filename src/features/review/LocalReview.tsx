@@ -3,6 +3,7 @@ import type * as Monaco from "monaco-editor";
 import { FileCheck2, Loader2, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { FileActionsMenu, type FileMenuTarget } from "@/components/FileActionsMenu";
 import { FileTree } from "@/components/FileTree";
 import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
@@ -35,6 +36,7 @@ export function LocalReview({
   const setView = useUiStore((s) => s.setView);
   const setFilesPath = useUiStore((s) => s.setFilesPath);
   const [selected, setSelected] = useState<FileChange | null>(null);
+  const [menu, setMenu] = useState<FileMenuTarget | null>(null);
 
   // Reset selection when the source or file set changes.
   useEffect(() => {
@@ -218,7 +220,12 @@ export function LocalReview({
           {data.files.length === 1 ? "" : "s"}
         </div>
         <div className="min-h-0 flex-1 overflow-auto py-1">
-          <FileTree files={data.files} onOpen={setSelected} selectedPath={selected?.path} />
+          <FileTree
+            files={data.files}
+            onOpen={setSelected}
+            selectedPath={selected?.path}
+            onContextMenu={(f, pos) => setMenu({ path: f.path, pos })}
+          />
         </div>
       </Panel>
 
@@ -297,6 +304,8 @@ export function LocalReview({
           </div>
         </div>
       </Panel>
+
+      <FileActionsMenu repoId={repoId} target={menu} onClose={() => setMenu(null)} />
     </PanelGroup>
   );
 }
