@@ -540,7 +540,9 @@ export function useTerminalSessions({
       spawned: false,
       disposed: false,
     };
-    loadWebglAddon(entry);
+    // GPU renderer is opt-out: on some Linux/WebKitGTK + GPU-driver combos it
+    // renders stale cells or lags, so users can fall back to the DOM renderer.
+    if (prefs.terminalGpuRenderer) loadWebglAddon(entry);
     sessionsRef.current.set(pane.id, entry);
     return entry;
   }

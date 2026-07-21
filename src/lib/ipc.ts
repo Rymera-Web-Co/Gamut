@@ -888,8 +888,15 @@ export const ipc = {
     };
     return { ready, dispose };
   },
+  /**
+   * Forward keystrokes to a session's shell. The bytes go over IPC as a raw
+   * request body (not a JSON `number[]`), matching the ArrayBuffer output path
+   * (#203): no 3-4x size expansion or per-keystroke `Array.from` + JSON parse,
+   * which matters most when pasting. The session id travels in a header since
+   * the body is the payload.
+   */
   terminalWrite: (sessionId: string, data: Uint8Array) =>
-    invoke<void>("terminal_write", { sessionId, data: Array.from(data) }),
+    invoke<void>("terminal_write", data, { headers: { "session-id": sessionId } }),
   terminalResize: (sessionId: string, cols: number, rows: number) =>
     invoke<void>("terminal_resize", { sessionId, cols, rows }),
   terminalKill: (sessionId: string) => invoke<void>("terminal_kill", { sessionId }),
