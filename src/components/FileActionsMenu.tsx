@@ -86,12 +86,13 @@ export function FileActionsMenu({
             <LinkIcon />
             Copy Relative Path
           </ContextMenuItem>
-          {groupRelativePrefix != null && (
+          {/* Empty prefix (repo path == group folder) would duplicate "Copy
+              Relative Path", so it's excluded along with null. */}
+          {groupRelativePrefix && (
             <ContextMenuItem
               className="text-xs"
               onClick={() => {
-                const rel = groupRelativePrefix ? `${groupRelativePrefix}/${path}` : path;
-                void copy(rel, "Copied group-relative path");
+                void copy(`${groupRelativePrefix}/${path}`, "Copied group-relative path");
                 onClose();
               }}
             >
