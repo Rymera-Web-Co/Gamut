@@ -83,6 +83,21 @@ export default function App() {
     checkForUpdatesOnLaunch();
   }, []);
 
+  // Suppress the webview's native right-click menu — this is a desktop app, so a
+  // browser context menu is out of place. Editable fields are exempt so their
+  // native copy/paste/cut menu is preserved. Our own cursor-anchored menus still
+  // open: they call preventDefault in their own handler and set state regardless
+  // of this listener.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   // Imperatively collapse/expand the terminal panel to match `terminalOpen`,
   // which can change from the keyboard shortcut, the close button, or opening a
   // group terminal. The guard avoids a feedback loop with onCollapse/onExpand.

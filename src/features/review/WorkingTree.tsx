@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { FileActionsMenu, type FileMenuTarget } from "@/components/FileActionsMenu";
+import type { ContextMenuPosition } from "@/components/ui/context-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
@@ -60,6 +62,7 @@ function ChangeRow({
   staged,
   onDiscard,
   discardPending,
+  onContextMenu,
 }: {
   file: FileChange;
   selected: boolean;
@@ -70,6 +73,7 @@ function ChangeRow({
   /** When set (unstaged rows), shows a discard button that confirms first. */
   onDiscard?: () => void;
   discardPending?: boolean;
+  onContextMenu: (pos: ContextMenuPosition) => void;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const slash = file.path.lastIndexOf("/");
@@ -80,6 +84,10 @@ function ChangeRow({
     <div
       role="button"
       onClick={onOpen}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu({ x: e.clientX, y: e.clientY });
+      }}
       title={file.path}
       className={cn(
         "group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-2 text-sm",
@@ -411,6 +419,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
   const setFilesPath = useUiStore((s) => s.setFilesPath);
   const diffPrefs = useDiffEditorPrefs();
   const [selected, setSelected] = useState<Selected | null>(null);
+  const [menu, setMenu] = useState<FileMenuTarget | null>(null);
 
   useEffect(() => {
     setSelected(null);
@@ -478,6 +487,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
                 unstage.mutate([f.path]);
                 setSelected({ file: f, staged: false });
               }}
+              onContextMenu={(pos) => setMenu({ path: f.path, pos })}
             />
           ))}
 
@@ -523,6 +533,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
                 discard.mutate([f.path]);
                 setSelected((s) => (s?.staged === false && s.file.path === f.path ? null : s));
               }}
+              onContextMenu={(pos) => setMenu({ path: f.path, pos })}
             />
           ))}
 
@@ -593,6 +604,8 @@ export function WorkingTree({ repoId }: { repoId: number }) {
           </div>
         </div>
       </Panel>
+
+      <FileActionsMenu repoId={repoId} target={menu} onClose={() => setMenu(null)} />
     </PanelGroup>
   );
 }
