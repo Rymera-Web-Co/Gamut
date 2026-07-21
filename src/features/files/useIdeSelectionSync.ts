@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef } from "react";
 import type { OnMount } from "@monaco-editor/react";
 
 import { ipc, type IdeSelection } from "@/lib/ipc";
@@ -38,17 +38,18 @@ export function toIdeSelection(
  * any `claude` running in an integrated terminal picks it up as ambient context
  * (the same behaviour as the VS Code / Neovim integrations).
  *
- * Wired once the editor is ready; reads the live repo/path through refs so the
- * single `onDidChangeCursorSelection` listener always reports the file that's
- * currently loaded. The selection is converted from Monaco's 1-based
- * line/column (UTF-16) to the protocol's zero-based LSP coordinates, and the
- * repo-relative path is resolved to an absolute one (cached per file). Pushes
- * are debounced. The backend no-ops when no `claude` is connected, so this stays
- * cheap when the integration is idle.
+ * Takes the live Monaco instance (not a ref) and re-binds the
+ * `onDidChangeCursorSelection` listener whenever that instance changes — Monaco
+ * is unmounted/remounted when the open file is cleared and reselected (e.g.
+ * switching repos), so a listener bound to a stale instance would silently stop
+ * firing. The selection is converted from Monaco's 1-based line/column (UTF-16)
+ * to the protocol's zero-based LSP coordinates, and the repo-relative path is
+ * resolved to an absolute one (cached per file). Pushes are debounced. The
+ * backend no-ops when no `claude` is connected, so this stays cheap when the
+ * integration is idle.
  */
 export function useIdeSelectionSync(
-  editorRef: RefObject<CodeEditor | null>,
-  editorReady: boolean,
+  editor: CodeEditor | null,
   repoId: number | null,
   selectedPath: string | null,
 ) {
@@ -78,8 +79,7 @@ export function useIdeSelectionSync(
   }, [repoId, selectedPath]);
 
   useEffect(() => {
-    const editor = editorRef.current;
-    if (!editorReady || !editor) return;
+    if (!editor) return;
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const push = () => {
@@ -101,5 +101,8 @@ export function useIdeSelectionSync(
       if (timer) clearTimeout(timer);
       disposable.dispose();
     };
-  }, [editorRef, editorReady]);
+    // Keyed on the editor *instance*: Monaco is unmounted/remounted when the
+    // open file is cleared and reselected (e.g. switching repos), so the listener
+    // must re-bind to the current editor rather than stay stuck on a disposed one.
+  }, [editor]);
 }

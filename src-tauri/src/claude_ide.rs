@@ -46,6 +46,10 @@ use tungstenite::Message;
 /// HTTP header the CLI sends carrying the token from the lockfile. Validated on
 /// the WebSocket upgrade; a mismatch is rejected 401 (CVE-2025-52882).
 const AUTH_HEADER: &str = "x-claude-code-ide-authorization";
+/// The WebSocket subprotocol the CLI negotiates. It offers this on the upgrade
+/// and requires the server to echo it back (see the handshake callback).
+const SUBPROTOCOL_HEADER: tungstenite::http::header::HeaderName =
+    tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
 /// How the editor names itself to the CLI (shown in `/ide`).
 const IDE_NAME: &str = "Gamut";
 /// Poll cadence for the per-connection loop: how long a blocking read waits
@@ -241,7 +245,7 @@ fn write_lockfile(cfg: &IdeConfig, port: u16, token: &str) -> std::io::Result<Pa
 fn serve_conn(stream: TcpStream, shared: Arc<Shared>) {
     let expected = shared.token.clone();
     let callback = |req: &tungstenite::handshake::server::Request,
-                    resp: tungstenite::handshake::server::Response| {
+                    mut resp: tungstenite::handshake::server::Response| {
         let ok = req
             .headers()
             .get(AUTH_HEADER)
@@ -249,6 +253,24 @@ fn serve_conn(stream: TcpStream, shared: Arc<Shared>) {
             .map(|v| v == expected)
             .unwrap_or(false);
         if ok {
+            // Echo the `mcp` subprotocol back when the client offers it. The
+            // CLI's `ws` client sends `Sec-WebSocket-Protocol: mcp` and, per RFC
+            // 6455 §4.1, aborts the upgrade ("Server sent no subprotocol") if the
+            // 101 response doesn't confirm a selected subprotocol. Without this
+            // echo the handshake completes at the HTTP layer but the CLI drops
+            // the socket, surfacing as "Failed to connect to Gamut".
+            let offered_mcp = req
+                .headers()
+                .get(SUBPROTOCOL_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.split(',').any(|p| p.trim().eq_ignore_ascii_case("mcp")))
+                .unwrap_or(false);
+            if offered_mcp {
+                resp.headers_mut().insert(
+                    SUBPROTOCOL_HEADER,
+                    tungstenite::http::HeaderValue::from_static("mcp"),
+                );
+            }
             Ok(resp)
         } else {
             let err = tungstenite::http::Response::builder()
@@ -596,7 +618,18 @@ mod tests {
             .unwrap();
         req.headers_mut()
             .insert(AUTH_HEADER, token.parse().unwrap());
-        let (mut client, _resp) = tungstenite::client(req, stream).unwrap();
+        // Offer the `mcp` subprotocol exactly as the CLI does; the server must
+        // echo it in the 101 or a real `ws` client aborts the upgrade.
+        req.headers_mut()
+            .insert(SUBPROTOCOL_HEADER, "mcp".parse().unwrap());
+        let (mut client, resp) = tungstenite::client(req, stream).unwrap();
+        assert_eq!(
+            resp.headers()
+                .get(SUBPROTOCOL_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some("mcp"),
+            "server must echo the negotiated subprotocol back to the CLI"
+        );
 
         // initialize → expect a result echoing our protocol version.
         client
