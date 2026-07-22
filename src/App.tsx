@@ -19,7 +19,7 @@ import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { DragGhost } from "@/lib/usePointerDnd";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
-import { checkForUpdatesOnLaunch } from "@/lib/updater";
+import { checkForUpdatesOnLaunch, startUpdatePolling } from "@/lib/updater";
 import { useActiveRepoIsGit, useNonGitViewGuard } from "@/lib/useActiveRepo";
 import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
@@ -77,10 +77,13 @@ export default function App() {
     void loadSettings();
   }, [loadSettings]);
 
-  // Check for an app update once on launch (silent — no toast if up to date or
-  // offline). A no-op outside the bundled desktop app.
+  // Check for an app update once on launch, then keep polling daily so a
+  // long-lived window still picks up a release cut after it opened. Both are
+  // silent (no toast if up to date or offline) and no-ops outside the bundled
+  // desktop app.
   useEffect(() => {
     checkForUpdatesOnLaunch();
+    return startUpdatePolling();
   }, []);
 
   // Suppress the webview's native right-click menu — this is a desktop app, so a
