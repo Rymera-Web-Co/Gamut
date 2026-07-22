@@ -164,3 +164,26 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
 export function checkForUpdatesOnLaunch() {
   void useUpdater.getState().check({ silent: true });
 }
+
+/** How often to silently re-check for updates while the app stays open. */
+const POLL_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Start a daily background poll for updates, layered on top of the launch check.
+ * A window left open for days would otherwise never learn about a release cut
+ * after it opened. The check is silent (no toast on failure / up to date) and
+ * skips while an update is already surfaced or installing, so it never clobbers
+ * a banner the user has seen (or dismissed) or an in-flight download.
+ *
+ * Returns a cleanup that stops the poll.
+ */
+export function startUpdatePolling(): () => void {
+  const id = setInterval(() => {
+    const { status } = useUpdater.getState();
+    if (status === "available" || status === "downloading" || status === "ready") {
+      return;
+    }
+    void useUpdater.getState().check({ silent: true });
+  }, POLL_INTERVAL_MS);
+  return () => clearInterval(id);
+}
