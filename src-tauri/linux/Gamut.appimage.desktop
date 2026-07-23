@@ -1,0 +1,14 @@
+# AppImage-only desktop entry. Overrides the entry the AppImage inherits from the
+# deb template (linux/Gamut.desktop), which uses an absolute Exec=/usr/bin/gamut that
+# is correct for the .deb/.rpm but wrong inside an AppImage (issue #272). Here Exec is
+# relative so AppRun resolves it under $APPDIR/usr/bin. Wired via bundle.linux.appimage.files
+# in tauri.conf.json — its map KEY must stay "<productName>.desktop" (currently Gamut.desktop),
+# or the override stops matching the generated file and the fix silently regresses.
+[Desktop Entry]
+Categories=
+Comment=Gamut — a local git app for reviewing PRs and browsing history
+Exec=gamut
+Icon=gamut
+Name=Gamut
+Terminal=false
+Type=Application

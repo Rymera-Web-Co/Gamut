@@ -42,6 +42,11 @@
       },
       "rpm": {
         "desktopTemplate": "linux/Gamut.desktop"
+      },
+      "appimage": {
+        "files": {
+          "/usr/share/applications/Gamut.desktop": "linux/Gamut.appimage.desktop"
+        }
       }
     }
   },
