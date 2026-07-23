@@ -8,6 +8,7 @@ import { CodeEditor as Editor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
+import { isModalOpen } from "@/lib/dom";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
@@ -230,6 +231,14 @@ export function FilesView() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        // Stand down while a modal dialog owns the interaction — e.g. the
+        // Compare dialog handles ⌘S on its own editor. Saving the backgrounded
+        // file here would hijack it (#276). Still preventDefault so the chord
+        // doesn't fall through to the webview's native "Save page as".
+        if (isModalOpen()) {
+          e.preventDefault();
+          return;
+        }
         e.preventDefault();
         void save();
       }

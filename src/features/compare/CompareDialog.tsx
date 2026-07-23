@@ -311,7 +311,7 @@ export function CompareDialog() {
   );
 }
 
-function ResultView({
+export function ResultView({
   result,
   lang,
   onSwap,
@@ -326,6 +326,9 @@ function ResultView({
   const diffPrefs = useDiffEditorPrefs();
   const origRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const modRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  // Disposables for the per-side ⌘S save actions, so they're torn down on
+  // remount and unmount (see handleMount).
+  const saveActionsRef = useRef<Monaco.IDisposable[]>([]);
   const [leftDirty, setLeftDirty] = useState(false);
   const [rightDirty, setRightDirty] = useState(false);
   const [saving, setSaving] = useState<"left" | "right" | null>(null);
@@ -341,6 +344,18 @@ function ResultView({
     setRightDirty(false);
   }, [result]);
 
+  // Dispose the ⌘S save actions when the dialog closes (this view unmounts).
+  // Monaco's editor.addAction returns a disposable that we own — unlike the old
+  // editor.addCommand, whose binding leaked into Monaco's global registry and
+  // kept firing a stale closure after the dialog was gone (#276).
+  useEffect(
+    () => () => {
+      saveActionsRef.current.forEach((d) => d.dispose());
+      saveActionsRef.current = [];
+    },
+    [],
+  );
+
   function handleMount(editor: Monaco.editor.IStandaloneDiffEditor, monaco: typeof Monaco) {
     const orig = editor.getOriginalEditor();
     const mod = editor.getModifiedEditor();
@@ -348,12 +363,27 @@ function ResultView({
     modRef.current = mod;
     orig.onDidChangeModelContent(() => setLeftDirty(orig.getValue() !== (result.left_text ?? "")));
     mod.onDidChangeModelContent(() => setRightDirty(mod.getValue() !== (result.right_text ?? "")));
-    // ⌘/Ctrl+S saves the focused side (Monaco has no default save binding).
-    // Registering on each sub-editor also stops the chord from bubbling to the
-    // Files view's window-level ⌘S handler behind the dialog.
+    // ⌘/Ctrl+S saves the focused side (Monaco has no default save binding). Use
+    // addAction, not addCommand: it returns an IDisposable we can tear down, so
+    // the binding is scoped to this dialog's lifetime instead of leaking into
+    // Monaco's global keybinding registry and hijacking ⌘S elsewhere (#276). A
+    // remount (new comparison/swap) disposes the previous actions first.
+    saveActionsRef.current.forEach((d) => d.dispose());
     const key = monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS;
-    orig.addCommand(key, () => void save("left"));
-    mod.addCommand(key, () => void save("right"));
+    saveActionsRef.current = [
+      orig.addAction({
+        id: "gamut.compare.save-left",
+        label: "Save left file",
+        keybindings: [key],
+        run: () => void save("left"),
+      }),
+      mod.addAction({
+        id: "gamut.compare.save-right",
+        label: "Save right file",
+        keybindings: [key],
+        run: () => void save("right"),
+      }),
+    ];
   }
 
   async function save(side: "left" | "right") {
