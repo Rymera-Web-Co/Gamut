@@ -26,7 +26,11 @@ const h = vi.hoisted(() => {
       actions,
       getValue: () => "edited-content",
       onDidChangeModelContent: () => ({ dispose: () => {} }),
-      addAction(descriptor: { id: string; keybindings: number[]; run: (...a: unknown[]) => unknown }) {
+      addAction(descriptor: {
+        id: string;
+        keybindings: number[];
+        run: (...a: unknown[]) => unknown;
+      }) {
         const dispose = vi.fn();
         actions.push({ ...descriptor, dispose });
         return { dispose };
