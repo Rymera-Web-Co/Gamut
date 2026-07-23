@@ -311,6 +311,8 @@ export function CompareDialog() {
   );
 }
 
+/** The diff pane with the per-side save controls. Exported for unit tests
+ * (the ⌘S action lifecycle in `handleMount`); only `CompareDialog` renders it. */
 export function ResultView({
   result,
   lang,

@@ -139,4 +139,32 @@ describe("Compare dialog ⌘S action lifecycle (#276)", () => {
     });
     expect(writeCompareFile).toHaveBeenCalledWith("/tmp/current-left.txt", "edited-content");
   });
+
+  // The exact #276 scenario: compare A, then compare B, then ⌘S must write B —
+  // never A's stale path. The fix works by disposing A's keybinding (so ⌘S can
+  // no longer reach A's action), while the live action writes the current path.
+  it("after a new comparison, the live ⌘S writes the new path and the old action is disposed", async () => {
+    const { rerender } = renderResult(makeResult({ left_label: "/tmp/comparison-A.txt" }));
+    const oldLeftAction = h.state.orig.actions[0];
+
+    rerender(
+      <ResultView
+        result={makeResult({ left_label: "/tmp/comparison-B.txt" })}
+        lang="plaintext"
+        onSwap={() => {}}
+        editable
+      />,
+    );
+
+    // A's action is torn down — its ⌘S binding can never fire the stale path again.
+    expect(oldLeftAction.dispose).toHaveBeenCalledTimes(1);
+
+    // The live action saves the NEW comparison's path, not A's.
+    const liveLeftAction = h.state.orig.actions[h.state.orig.actions.length - 1];
+    await act(async () => {
+      await liveLeftAction.run();
+    });
+    expect(writeCompareFile).toHaveBeenCalledWith("/tmp/comparison-B.txt", "edited-content");
+    expect(writeCompareFile).not.toHaveBeenCalledWith("/tmp/comparison-A.txt", expect.anything());
+  });
 });

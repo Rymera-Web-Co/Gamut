@@ -51,6 +51,9 @@ fn classify(bytes: &[u8]) -> (Option<String>, bool) {
 /// a raw `os error 2` from the underlying `write`.
 #[tauri::command]
 pub fn write_compare_file(path: String, content: String) -> AppResult<()> {
+    if path.is_empty() {
+        return Err(AppError::Other("cannot save: no file path".to_string()));
+    }
     let parent = Path::new(&path).parent();
     if let Some(dir) = parent {
         if !dir.as_os_str().is_empty() && !dir.is_dir() {
@@ -259,6 +262,13 @@ mod tests {
             .to_string();
         assert!(err.contains("no longer exists"), "unexpected error: {err}");
         assert!(!err.contains("os error"), "leaked raw os error: {err}");
+
+        // An empty path yields a clear message, not a raw `writing : …` error.
+        let empty = write_compare_file(String::new(), "x".to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("no file path"), "unexpected error: {empty}");
+        assert!(!empty.contains("os error"), "leaked raw os error: {empty}");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
