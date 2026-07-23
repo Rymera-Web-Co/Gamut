@@ -8,6 +8,7 @@ import { CodeEditor as Editor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
+import { isModalOpen } from "@/lib/dom";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
@@ -230,7 +231,12 @@ export function FilesView() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        // Always claim the chord so it never falls through to the webview's
+        // native "Save page as". But stand down while a modal dialog owns the
+        // interaction — e.g. the Compare dialog handles ⌘S on its own editor;
+        // saving the backgrounded file here would hijack it (#276).
         e.preventDefault();
+        if (isModalOpen()) return;
         void save();
       }
     }
@@ -248,6 +254,10 @@ export function FilesView() {
       const key = e.key.toLowerCase();
       if (key !== "f" && key !== "h") return;
       if (e.shiftKey) return; // ⌘/Ctrl+⇧+F is repo-wide search (global shortcut)
+      // Stand down while a modal dialog is open — e.g. the Compare dialog owns
+      // find/replace on its own editor, so we must not steal focus back to the
+      // backgrounded Files editor (#276, same modal-hijack shape as ⌘S above).
+      if (isModalOpen()) return;
       const ed = editorRef.current;
       if (!editable || !ed) return;
       if (document.activeElement?.tagName === "INPUT") return;

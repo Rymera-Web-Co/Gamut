@@ -45,8 +45,24 @@ fn classify(bytes: &[u8]) -> (Option<String>, bool) {
 /// two-files comparison (#130) — those sides are real on-disk files (unlike the
 /// git-ref sides, which aren't writable). The path is the same one that was read
 /// for the comparison, so this is a user-intended save, not arbitrary traversal.
+///
+/// Defense-in-depth (#276): confirm the target's parent directory still exists
+/// before writing, so a stale path surfaces a clear, actionable error rather than
+/// a raw `os error 2` from the underlying `write`.
 #[tauri::command]
 pub fn write_compare_file(path: String, content: String) -> AppResult<()> {
+    if path.is_empty() {
+        return Err(AppError::Other("cannot save: no file path".to_string()));
+    }
+    let parent = Path::new(&path).parent();
+    if let Some(dir) = parent {
+        if !dir.as_os_str().is_empty() && !dir.is_dir() {
+            return Err(AppError::Other(format!(
+                "cannot save {path}: its folder {} no longer exists",
+                dir.display()
+            )));
+        }
+    }
     std::fs::write(&path, content).map_err(|e| AppError::Other(format!("writing {path}: {e}")))
 }
 
@@ -223,6 +239,36 @@ mod tests {
         assert!(binary.is_binary);
         assert!(!binary.identical);
         assert!(binary.right_text.is_none());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn write_compare_file_rejects_a_missing_parent_and_writes_a_valid_path() {
+        let dir = std::env::temp_dir().join(format!("gamut_write_compare_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A valid path round-trips the content.
+        let ok = dir.join("out.txt");
+        write_compare_file(ok.to_string_lossy().into_owned(), "hello\n".to_string()).unwrap();
+        assert_eq!(std::fs::read_to_string(&ok).unwrap(), "hello\n");
+
+        // A path whose parent folder no longer exists (#276: a stale comparison
+        // path) fails with a clear, path-naming error, not a raw `os error 2`.
+        let stale = dir.join("gone").join("readme.txt");
+        let err = write_compare_file(stale.to_string_lossy().into_owned(), "x".to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no longer exists"), "unexpected error: {err}");
+        assert!(!err.contains("os error"), "leaked raw os error: {err}");
+
+        // An empty path yields a clear message, not a raw `writing : …` error.
+        let empty = write_compare_file(String::new(), "x".to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("no file path"), "unexpected error: {empty}");
+        assert!(!empty.contains("os error"), "leaked raw os error: {empty}");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
