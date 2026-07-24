@@ -54,8 +54,18 @@ export function mergeVerdict(m: MergeInfo | undefined): MergeVerdict {
   if (mss === "BLOCKED" && reasons.length === 0)
     reasons.push("required checks or reviews are not satisfied");
 
-  // Authoritative mergeable state — enable the button.
-  if (MERGEABLE_STATES.has(mss)) return { canMerge: true, reason: null, computing: false };
+  // Draft and conflicts are absolute vetoes: GitHub's merge API rejects both
+  // regardless of mergeStateStatus, which reports CLEAN/UNSTABLE for a draft
+  // whose checks are green. They must override the MERGEABLE_STATES short-circuit
+  // below — otherwise a green draft would read as mergeable (#288). Review /
+  // branch-state blockers stay gated by mergeStateStatus so we're no stricter
+  // than GitHub, where an admin can bypass them.
+  const hardVeto =
+    m.is_draft || mss === "DRAFT" || m.mergeable === "CONFLICTING" || mss === "DIRTY";
+
+  // Authoritative mergeable state — enable the button (unless hard-vetoed).
+  if (!hardVeto && MERGEABLE_STATES.has(mss))
+    return { canMerge: true, reason: null, computing: false };
 
   // Known blocker(s) — disable with a reason.
   if (reasons.length > 0)
