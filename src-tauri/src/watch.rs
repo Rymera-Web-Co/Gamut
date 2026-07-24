@@ -84,6 +84,17 @@ pub struct RepoWatcher {
 /// `.git`, only the entries that reflect repo state count — `HEAD`, `refs/`,
 /// `packed-refs`, `index`, `worktrees` — so object/log churn (which fires
 /// constantly during fetches and gc) doesn't spam the frontend.
+///
+/// The one carve-out is `refs/remotes/*`: a fetch's remote-tracking writes only
+/// move ahead/behind counts, and both the background auto-fetch and the manual
+/// group fetch now refresh those explicitly (`useAutoFetch` / `useFetchGroup`),
+/// so remote-ref churn is treated as non-interesting to stop a fetch cycle from
+/// self-triggering a scan per repo (#275). Local refs (`refs/heads`,
+/// `refs/tags`, …) are real state changes and still count. The carve-out keys
+/// off a literal `.git` component, so a bare repo or separate git dir (no `.git`
+/// in the path) still treats its `refs/remotes` writes as working-tree paths and
+/// counts them — as it did before #275; those are uncommon and not the source of
+/// the scan cascade, so widening the path model is left out of scope.
 fn is_interesting(path: &Path, prune: &[String]) -> bool {
     let comps: Vec<Component> = path.components().collect();
     let git_at = comps.iter().position(|c| match c {
@@ -105,20 +116,22 @@ fn is_interesting(path: &Path, prune: &[String]) -> bool {
     match comps.get(i + 1) {
         // `.git` itself (HEAD/packed-refs swapped on a branch switch).
         None => true,
-        Some(Component::Normal(name)) => matches!(
-            name.to_str(),
+        Some(Component::Normal(name)) => match name.to_str() {
             // `worktrees/` holds linked-worktree metadata — entries appearing or
             // disappearing there is how `git worktree add/remove` shows up.
-            Some(
-                "HEAD"
-                    | "ORIG_HEAD"
-                    | "MERGE_HEAD"
-                    | "packed-refs"
-                    | "index"
-                    | "refs"
-                    | "worktrees"
-            )
-        ),
+            Some("HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "packed-refs" | "index" | "worktrees") => {
+                true
+            }
+            // `refs/*` is interesting EXCEPT `refs/remotes/*`: remote-tracking
+            // writes come from fetches, whose refresh is now driven explicitly
+            // (#275). Local refs (`refs/heads`, `refs/tags`) and the bare
+            // `refs` dir event (`i + 2 == None`) still count.
+            Some("refs") => !matches!(
+                comps.get(i + 2),
+                Some(Component::Normal(n)) if *n == OsStr::new("remotes")
+            ),
+            _ => false,
+        },
         Some(_) => false,
     }
 }
@@ -602,6 +615,42 @@ mod tests {
             prune
         ));
         assert!(!is_interesting(Path::new("/repo/.git/logs/HEAD"), prune));
+        // `FETCH_HEAD` is a fetch artifact, never a state change worth a scan.
+        // Pinned so a future match-arm edit can't silently re-arm the storm.
+        assert!(!is_interesting(Path::new("/repo/.git/FETCH_HEAD"), prune));
+    }
+
+    #[test]
+    fn is_interesting_ignores_remote_ref_churn_but_keeps_local_refs() {
+        // A fetch writes remote-tracking refs (`refs/remotes/*`); those only move
+        // ahead/behind, which the explicit post-fetch refresh covers, so they no
+        // longer wake the watcher (#275).
+        let prune: &[String] = &[];
+        assert!(!is_interesting(
+            Path::new("/repo/.git/refs/remotes/origin/main"),
+            prune
+        ));
+        // The per-remote dir and the `remotes` dir itself are also non-interesting.
+        assert!(!is_interesting(
+            Path::new("/repo/.git/refs/remotes/origin"),
+            prune
+        ));
+        assert!(!is_interesting(Path::new("/repo/.git/refs/remotes"), prune));
+        // Local refs are real state changes and still count.
+        assert!(is_interesting(
+            Path::new("/repo/.git/refs/heads/main"),
+            prune
+        ));
+        assert!(is_interesting(
+            Path::new("/repo/.git/refs/tags/v1.0"),
+            prune
+        ));
+        // A bare `refs` dir event (nothing under it) stays interesting — conservative.
+        assert!(is_interesting(Path::new("/repo/.git/refs"), prune));
+        // `packed-refs` stays interesting: a fetch --prune / gc can repack refs,
+        // but it is also how a branch pack or manual pack shows up, so it must
+        // stay live (accepted residual, see #275).
+        assert!(is_interesting(Path::new("/repo/.git/packed-refs"), prune));
     }
 
     #[test]
