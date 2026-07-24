@@ -89,6 +89,15 @@ describe("LocalReview in-view diff controls (#284)", () => {
     expect(captured.options?.renderSideBySide).toBe(true);
   });
 
+  it("side-by-side is honoured in a narrow pane (st_766)", () => {
+    openFile();
+    // Monaco silently collapses side-by-side to inline below its 900px
+    // breakpoint unless this is off — which made the toggle look broken in the
+    // review pane. Prove the option that disables that fallback is passed.
+    expect(captured.options?.renderSideBySide).toBe(true);
+    expect(captured.options?.useInlineViewWhenSpaceIsLimited).toBe(false);
+  });
+
   it("toggling word wrap in the pane reaches the diff editor (A5/A6)", () => {
     openFile();
     expect(captured.options?.wordWrap).toBe("off");

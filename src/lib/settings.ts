@@ -339,5 +339,15 @@ export function useEditorPrefs() {
 export function useDiffEditorPrefs() {
   const layout = useSettings((s) => s.values.diffLayout);
   const { fontSize, fontFamily, wordWrap } = useEditorPrefs();
-  return { renderSideBySide: layout === "side-by-side", fontSize, fontFamily, wordWrap };
+  return {
+    renderSideBySide: layout === "side-by-side",
+    // Honour the chosen layout even in a narrow pane: Monaco otherwise silently
+    // collapses side-by-side to inline below `renderSideBySideInlineBreakpoint`
+    // (900px), which the review pane's file-list sidebar routinely puts it under
+    // — making the "Side by side" toggle look broken. Inert when unified.
+    useInlineViewWhenSpaceIsLimited: false,
+    fontSize,
+    fontFamily,
+    wordWrap,
+  };
 }
