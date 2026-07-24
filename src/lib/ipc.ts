@@ -455,6 +455,9 @@ export interface StatusCheck {
 /** The PR's rolled-up merge requirements (review decision, mergeable state,
  * draft flag, and head-commit CI checks) — used to gate the merge button (#185). */
 export interface MergeInfo {
+  /** The PR's GraphQL node id, for the draft-state mutations (#288). Empty when
+   * the PR node couldn't be resolved. */
+  id: string;
   /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null. */
   review_decision?: string | null;
   /** MERGEABLE | CONFLICTING | UNKNOWN (UNKNOWN while GitHub is still computing). */
@@ -844,6 +847,12 @@ export const ipc = {
     invoke<void>("github_resolve_thread", { threadId, resolved }),
   githubMergePr: (repoId: number, number: number, method: MergeMethod) =>
     invoke<void>("github_merge_pr", { repoId, number, method }),
+  /** Flip a draft PR to "ready for review" by its GraphQL node id (#288). */
+  githubMarkPrReady: (pullRequestId: string) =>
+    invoke<void>("github_mark_pr_ready", { pullRequestId }),
+  /** Convert an open PR back to a draft by its GraphQL node id (#288). */
+  githubConvertPrToDraft: (pullRequestId: string) =>
+    invoke<void>("github_convert_pr_to_draft", { pullRequestId }),
   /** Whether a branch still exists on the repo's GitHub origin (#132). */
   githubRemoteBranchExists: (repoId: number, branch: string) =>
     invoke<boolean>("github_remote_branch_exists", { repoId, branch }),

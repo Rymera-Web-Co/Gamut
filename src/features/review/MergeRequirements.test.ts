@@ -5,6 +5,7 @@ import { mergeStatusSummary, mergeVerdict } from "./MergeRequirements";
 /** A clean, mergeable PR; override fields per case. */
 function info(overrides: Partial<MergeInfo> = {}): MergeInfo {
   return {
+    id: "PR_test",
     review_decision: "APPROVED",
     mergeable: "MERGEABLE",
     merge_state_status: "CLEAN",
@@ -33,6 +34,22 @@ describe("mergeVerdict", () => {
     const v = mergeVerdict(info({ is_draft: true, merge_state_status: "DRAFT" }));
     expect(v.canMerge).toBe(false);
     expect(v.reason).toMatch(/draft/i);
+  });
+
+  it("blocks a draft even when mergeStateStatus reports a mergeable state (#288)", () => {
+    // A draft whose checks are green: GitHub reports isDraft=true while
+    // mergeStateStatus reads CLEAN/UNSTABLE/HAS_HOOKS. The draft must still veto.
+    for (const mss of ["CLEAN", "UNSTABLE", "HAS_HOOKS"]) {
+      const v = mergeVerdict(info({ is_draft: true, merge_state_status: mss }));
+      expect(v.canMerge, `merge_state_status=${mss}`).toBe(false);
+      expect(v.reason).toMatch(/draft/i);
+    }
+  });
+
+  it("blocks conflicts even when mergeStateStatus reports a mergeable state (#288)", () => {
+    const v = mergeVerdict(info({ mergeable: "CONFLICTING", merge_state_status: "CLEAN" }));
+    expect(v.canMerge).toBe(false);
+    expect(v.reason).toMatch(/conflict/i);
   });
 
   it("blocks when the branch conflicts with the base", () => {

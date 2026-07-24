@@ -7,6 +7,7 @@ import {
   GitMerge,
   Github,
   GitPullRequestArrow,
+  GitPullRequestDraft,
   Link as LinkIcon,
   Loader2,
   RefreshCw,
@@ -25,8 +26,10 @@ import { useUiStore } from "@/store/ui";
 import { useDraftsFor, useReviewDrafts } from "@/store/reviewDrafts";
 import {
   useCheckoutPr,
+  useConvertToDraft,
   useGithubAuth,
   useGithubPrs,
+  useMarkReady,
   useMentionables,
   useMergePr,
   usePrDetails,
@@ -211,6 +214,8 @@ function MergeBar({
   headRef?: string;
 }) {
   const merge = useMergePr(repoId);
+  const markReady = useMarkReady(repoId);
+  const convertToDraft = useConvertToDraft(repoId);
   const details = usePrDetails(repoId, number);
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState<MergeMethod>(useSettings.getState().values.mergeStrategy);
@@ -234,6 +239,10 @@ function MergeBar({
   const verdict = mergeVerdict(mergeInfo);
   const blocked = !verdict.canMerge;
   const summary = mergeInfo ? mergeStatusSummary(mergeInfo) : null;
+  // Draft-state actions (#288). The PR node id comes with the merge info; the
+  // buttons stay disabled until it's loaded (empty id => the PR node was absent).
+  const isDraft = mergeInfo?.is_draft ?? false;
+  const prId = mergeInfo?.id;
 
   return (
     <div className="shrink-0">
@@ -310,6 +319,45 @@ function MergeBar({
               <MergeStatusBlock merge={mergeInfo} />
             </PopoverContent>
           </Popover>
+        )}
+        {mergeInfo && isDraft && (
+          <Button
+            size="sm"
+            className="shrink-0"
+            disabled={markReady.isPending || !prId}
+            title="Mark this draft pull request as ready for review"
+            onClick={() =>
+              markReady.mutate(
+                { number, pullRequestId: prId! },
+                { onSuccess: () => toast.success("Marked ready for review") },
+              )
+            }
+          >
+            {markReady.isPending ? <Loader2 className="animate-spin" /> : <GitPullRequestArrow />}
+            Ready for review
+          </Button>
+        )}
+        {mergeInfo && !isDraft && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            disabled={convertToDraft.isPending || !prId}
+            title="Convert this pull request back to a draft"
+            onClick={() =>
+              convertToDraft.mutate(
+                { number, pullRequestId: prId! },
+                { onSuccess: () => toast.success("Converted to draft") },
+              )
+            }
+          >
+            {convertToDraft.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <GitPullRequestDraft />
+            )}
+            Convert to draft
+          </Button>
         )}
       </div>
     </div>

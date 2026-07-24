@@ -245,6 +245,43 @@ interface MergePrVars {
   headRef?: string;
 }
 
+interface DraftStateVars {
+  /** PR number, for query invalidation on success. */
+  number: number;
+  /** The PR's GraphQL node id, which the mutation acts on. */
+  pullRequestId: string;
+}
+
+/** Refresh the PR list, detail, and thread after a draft-state change (#288) so
+ * the list badge, merge box, and merge-button gating all reflect the new state. */
+function invalidateDraftState(
+  qc: ReturnType<typeof useQueryClient>,
+  repoId: number,
+  number: number,
+) {
+  qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
+  qc.invalidateQueries({ queryKey: ["github-pr-details", repoId, number] });
+  qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
+}
+
+/** Flip a draft PR to "ready for review" (#288). */
+export function useMarkReady(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pullRequestId }: DraftStateVars) => ipc.githubMarkPrReady(pullRequestId),
+    onSuccess: (_d, { number }) => invalidateDraftState(qc, repoId, number),
+  });
+}
+
+/** Convert an open PR back to a draft (#288). */
+export function useConvertToDraft(repoId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pullRequestId }: DraftStateVars) => ipc.githubConvertPrToDraft(pullRequestId),
+    onSuccess: (_d, { number }) => invalidateDraftState(qc, repoId, number),
+  });
+}
+
 /**
  * Best-effort post-merge cleanup (#132): when enabled, check out the PR's base
  * branch and delete the merged local head branch — but only if GitHub already

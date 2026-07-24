@@ -314,6 +314,53 @@ pub async fn github_resolve_thread(
     Ok(())
 }
 
+// ---- Draft-state mutations (#288) ----
+
+const MARK_READY_MUTATION: &str =
+    "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id}}}";
+const CONVERT_DRAFT_MUTATION: &str =
+    "mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{id}}}";
+
+/// Flip a draft PR to "ready for review" by its GraphQL node id (#288).
+#[tauri::command]
+pub async fn github_mark_pr_ready(
+    state: State<'_, AppState>,
+    pull_request_id: String,
+) -> AppResult<()> {
+    let token = require_token(&state)?;
+    let client = http()?;
+    let _: GqlIgnore = graphql(
+        &client,
+        &graphql_url(&state),
+        &token,
+        MARK_READY_MUTATION,
+        serde_json::json!({ "id": pull_request_id }),
+        "marking the pull request ready for review",
+    )
+    .await?;
+    Ok(())
+}
+
+/// Convert an open PR back to a draft by its GraphQL node id (#288).
+#[tauri::command]
+pub async fn github_convert_pr_to_draft(
+    state: State<'_, AppState>,
+    pull_request_id: String,
+) -> AppResult<()> {
+    let token = require_token(&state)?;
+    let client = http()?;
+    let _: GqlIgnore = graphql(
+        &client,
+        &graphql_url(&state),
+        &token,
+        CONVERT_DRAFT_MUTATION,
+        serde_json::json!({ "id": pull_request_id }),
+        "converting the pull request to a draft",
+    )
+    .await?;
+    Ok(())
+}
+
 // ---- PR sidebar details (reviewers, assignees, labels, milestone, links) ----
 
 #[derive(Serialize)]
@@ -354,6 +401,9 @@ pub struct StatusCheck {
 /// status, draft flag, and the head commit's CI checks (#185).
 #[derive(Serialize)]
 pub struct MergeInfo {
+    /// The PR's GraphQL node id, for the draft-state mutations (#288). Empty when
+    /// the PR node couldn't be resolved (the buttons then stay disabled).
+    pub id: String,
     /// GraphQL reviewDecision: APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null.
     pub review_decision: Option<String>,
     /// MERGEABLE | CONFLICTING | UNKNOWN (UNKNOWN while GitHub is still computing).
@@ -380,6 +430,7 @@ const DETAILS_QUERY: &str = r#"
 query($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
+      id
       isDraft
       reviewDecision
       mergeable
@@ -413,6 +464,7 @@ struct GqlDetailsRepo {
 }
 #[derive(Deserialize)]
 struct GqlDetailsPr {
+    id: String,
     #[serde(rename = "isDraft", default)]
     is_draft: bool,
     #[serde(rename = "reviewDecision")]
@@ -572,6 +624,7 @@ pub async fn github_pr_details(
                 milestone: None,
                 linked_issues: vec![],
                 merge: MergeInfo {
+                    id: String::new(),
                     review_decision: None,
                     mergeable: "UNKNOWN".into(),
                     merge_state_status: "UNKNOWN".into(),
@@ -652,6 +705,7 @@ pub async fn github_pr_details(
     };
 
     let merge = MergeInfo {
+        id: pr.id,
         review_decision: pr.review_decision,
         mergeable: pr.mergeable.unwrap_or_else(|| "UNKNOWN".into()),
         merge_state_status: pr.merge_state_status.unwrap_or_else(|| "UNKNOWN".into()),
