@@ -36,6 +36,7 @@ import {
   useWorktreeFileDiff,
   useWorktreeStatus,
 } from "./api";
+import { DiffViewControls } from "./DiffViewControls";
 
 type Selected = { file: FileChange; staged: boolean };
 
@@ -555,6 +556,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
                 {selected.file.path}
               </span>
+              <DiffViewControls />
               {/* Deleted files no longer exist on disk, so there's nothing to edit. */}
               {selected.file.status !== "deleted" && (
                 <Button

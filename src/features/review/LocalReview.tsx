@@ -14,6 +14,7 @@ import { useDiffEditorPrefs } from "@/lib/settings";
 import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
 import { useUiStore } from "@/store/ui";
 import { useMentionables, usePrComment, useReviewFileDiff, useReviewFiles } from "./api";
+import { DiffViewControls } from "./DiffViewControls";
 import { InlineCommentBox } from "./InlineCommentBox";
 
 /** Context needed to attach PR review comments to the diff. */
@@ -242,6 +243,7 @@ export function LocalReview({
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-muted-foreground)]">
                 {selected.path}
               </span>
+              <DiffViewControls />
               {/* Deleted files no longer exist on disk, so there's nothing to edit. */}
               {selected.status !== "deleted" && (
                 <Button
