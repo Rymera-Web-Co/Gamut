@@ -8,6 +8,7 @@ import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { useUiStore, type ReviewMode } from "@/store/ui";
 import { useGithubAuth, useGithubPrs, useReviewFiles } from "./api";
+import { BaseBranchPicker } from "./BaseBranchPicker";
 import { ReviewPopover } from "./GitHubReview";
 import { LocalReview } from "./LocalReview";
 import { WorkingTree } from "./WorkingTree";
@@ -49,10 +50,31 @@ export function ReviewView() {
     enabled: repoId != null,
   });
 
-  // Peek at both sources so we can auto-pick the one with changes (these share
-  // the same query cache as the LocalReview below, so no extra fetches).
+  const currentBranch = branches.data?.find((b) => b.is_head)?.name;
+
+  // The branch the review diffs against. `null` = Auto: the matched PR's base
+  // (below), else the backend's default precedence (trunk/main/master). A user's
+  // explicit pick in the base picker overrides both (#281, subtask st_761).
+  const [baseOverride, setBaseOverride] = useState<string | null>(null);
+  // Reset the override when the repo or checked-out branch changes — a base
+  // pick is specific to the branch it was made against, so a new branch (whose
+  // Auto base may differ) should start from Auto rather than inherit the pick.
+  useEffect(() => {
+    setBaseOverride(null);
+  }, [repoId, currentBranch]);
+
+  const matchingPr =
+    currentBranch != null ? prs.data?.find((p) => p.head_ref === currentBranch) : undefined;
+  // Auto base = the matched PR's base branch (the #281 fix); the picker override
+  // wins when set. Undefined lets the backend fall back to default precedence.
+  const effectiveBase = baseOverride ?? matchingPr?.base_ref ?? undefined;
+
+  // Peek at both sources so we can auto-pick the one with changes. The working
+  // peek shares the LocalReview cache directly; the branch peek uses the same
+  // base as the review so their caches stay coherent (one extra branch fetch
+  // happens only when a matched PR's base arrives and changes the base).
   const working = useReviewFiles(repoId, "working");
-  const branchDiff = useReviewFiles(repoId, "branch");
+  const branchDiff = useReviewFiles(repoId, "branch", effectiveBase);
 
   // Once per repo: if the working tree is clean but the branch has changes,
   // default to "Branch vs base" — saves a click. Doesn't override the user
@@ -78,10 +100,6 @@ export function ReviewView() {
     );
   }
 
-  const currentBranch = branches.data?.find((b) => b.is_head)?.name;
-  const matchingPr =
-    currentBranch != null ? prs.data?.find((p) => p.head_ref === currentBranch) : undefined;
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
@@ -100,25 +118,35 @@ export function ReviewView() {
           </button>
         ))}
 
-        {mode === "branch" && matchingPr && (
+        {mode === "branch" && (
           <div className="ml-auto flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              title={`Open pull request #${matchingPr.number}`}
-              onClick={() => {
-                setSelectedPr(matchingPr.number);
-                setView("pulls");
-              }}
-            >
-              <GitPullRequestArrow />
-              View PR #{matchingPr.number}
-            </Button>
-            <ReviewPopover
+            <BaseBranchPicker
               repoId={repoId}
-              number={matchingPr.number}
-              headSha={matchingPr.head_sha}
+              value={baseOverride}
+              autoLabel={matchingPr?.base_ref}
+              onChange={setBaseOverride}
             />
+            {matchingPr && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  title={`Open pull request #${matchingPr.number}`}
+                  onClick={() => {
+                    setSelectedPr(matchingPr.number);
+                    setView("pulls");
+                  }}
+                >
+                  <GitPullRequestArrow />
+                  View PR #{matchingPr.number}
+                </Button>
+                <ReviewPopover
+                  repoId={repoId}
+                  number={matchingPr.number}
+                  headSha={matchingPr.head_sha}
+                />
+              </>
+            )}
           </div>
         )}
       </div>
@@ -131,6 +159,7 @@ export function ReviewView() {
             key={`${repoId}-${mode}`}
             repoId={repoId}
             source={mode}
+            base={effectiveBase}
             pr={
               matchingPr ? { number: matchingPr.number, headSha: matchingPr.head_sha } : undefined
             }

@@ -24,14 +24,18 @@ type Composer = { startLine: number; endLine: number };
 export function LocalReview({
   repoId,
   source,
+  base,
   pr,
 }: {
   repoId: number;
   source: ReviewSource;
+  /** Branch-vs-base override: which branch to diff against. Undefined = the
+   * backend's default precedence (trunk/main/master). Ignored in working mode. */
+  base?: string;
   /** When set (branch mode + matching PR), lines become commentable. */
   pr?: PrContext;
 }) {
-  const review = useReviewFiles(repoId, source);
+  const review = useReviewFiles(repoId, source, base);
   const diffPrefs = useDiffEditorPrefs();
   const setView = useUiStore((s) => s.setView);
   const setFilesPath = useUiStore((s) => s.setFilesPath);
@@ -43,7 +47,7 @@ export function LocalReview({
     setSelected(null);
   }, [source, repoId]);
 
-  const diff = useReviewFileDiff(repoId, source, selected?.path ?? null, selected?.old_path);
+  const diff = useReviewFileDiff(repoId, source, selected?.path ?? null, base, selected?.old_path);
 
   // ---- Inline PR comments (only meaningful when a PR matches) ----
   const mentionables = useMentionables(repoId, !!pr);
