@@ -280,6 +280,12 @@ interface UiState {
   /** Switch to the Files view's search panel and focus its input. */
   focusRepoSearch: () => void;
   toggleRepoSidebar: () => void;
+  /**
+   * Show the repo sidebar without persisting the choice — a transient reveal
+   * (used when entering an empty group, see useEmptyGroupSidebarReveal) that
+   * leaves the user's saved hidden/shown preference untouched.
+   */
+  revealRepoSidebar: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
   setTerminalMaximized: (max: boolean) => void;
@@ -418,6 +424,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     localStorage.setItem(REPO_SIDEBAR_KEY, repoSidebarHidden ? "1" : "0");
     set({ repoSidebarHidden });
   },
+  // In-memory only: no localStorage write, so the persisted preference survives.
+  revealRepoSidebar: () => set({ repoSidebarHidden: false }),
   setTerminalOpen: (open) => {
     localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
     // Hiding the pane drops the maximized state so reopening starts from the

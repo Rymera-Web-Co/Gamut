@@ -1,6 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { parseStoredTerminals } from "./ui";
+import { parseStoredTerminals, useUiStore } from "./ui";
+
+const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
+
+describe("repo sidebar store actions (#283)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useUiStore.setState({ repoSidebarHidden: true });
+  });
+
+  it("toggleRepoSidebar flips the flag and persists it (the ⌘B / button / menu action)", () => {
+    useUiStore.getState().toggleRepoSidebar();
+    expect(useUiStore.getState().repoSidebarHidden).toBe(false);
+    expect(localStorage.getItem(REPO_SIDEBAR_KEY)).toBe("0");
+    useUiStore.getState().toggleRepoSidebar();
+    expect(useUiStore.getState().repoSidebarHidden).toBe(true);
+    expect(localStorage.getItem(REPO_SIDEBAR_KEY)).toBe("1");
+  });
+
+  it("revealRepoSidebar shows the sidebar in-memory without persisting the preference", () => {
+    localStorage.setItem(REPO_SIDEBAR_KEY, "1"); // saved preference: hidden
+    useUiStore.getState().revealRepoSidebar();
+    expect(useUiStore.getState().repoSidebarHidden).toBe(false);
+    expect(localStorage.getItem(REPO_SIDEBAR_KEY)).toBe("1"); // preference untouched
+  });
+});
 
 /** A minimal well-formed persisted blob for one group with one tab/pane. */
 function blob(overrides?: Record<string, unknown>) {

@@ -49,6 +49,20 @@ export function TopTabs() {
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
+      {/* The repositories toggle sits at the left of the bar so it mirrors the
+          sidebar it controls (docked on the left edge of the window). */}
+      <div className="flex items-center pl-2">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          title={repoSidebarHidden ? "Show repositories (⌘B)" : "Hide repositories (⌘B)"}
+          onClick={toggleRepoSidebar}
+        >
+          {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
+        </Button>
+      </div>
+
       {tabs.map(({ view: v, label, icon: Icon }) => (
         <button
           key={v}
@@ -66,15 +80,6 @@ export function TopTabs() {
       ))}
 
       <div className="ml-auto flex items-center gap-1 pr-2">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          title={repoSidebarHidden ? "Show repositories (⌘B)" : "Hide repositories (⌘B)"}
-          onClick={toggleRepoSidebar}
-        >
-          {repoSidebarHidden ? <PanelLeft /> : <PanelLeftClose />}
-        </Button>
         <Button
           size="icon"
           variant="ghost"

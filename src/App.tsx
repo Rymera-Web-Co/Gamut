@@ -23,6 +23,7 @@ import { checkForUpdatesOnLaunch, startUpdatePolling } from "@/lib/updater";
 import { useActiveRepoIsGit, useNonGitViewGuard } from "@/lib/useActiveRepo";
 import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
+import { useEmptyGroupSidebarReveal } from "@/lib/useEmptyGroupSidebarReveal";
 import { useGitWatch } from "@/lib/useGitWatch";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import { useMainThreadWatchdog } from "@/lib/useMainThreadWatchdog";
@@ -68,6 +69,7 @@ export default function App() {
   useUiNav();
   useAutoFetch();
   useActiveRepoReconciler();
+  useEmptyGroupSidebarReveal();
   useNonGitViewGuard();
   useMainThreadWatchdog();
 
