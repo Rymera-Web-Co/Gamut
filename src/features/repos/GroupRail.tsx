@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Plus, Settings, SquareTerminal } from "lucide-react";
+import { Pencil, Plus, Settings, SquareTerminal, X } from "lucide-react";
 
 import {
   ContextMenu,
@@ -10,9 +10,9 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
 import { moveAdjacent } from "@/lib/dnd";
 import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
-import type { Group } from "@/lib/ipc";
+import { ipc, type Group } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { termTabLabel, useUiStore, type TermActivityKind } from "@/store/ui";
+import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
 import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
 import { useGroups, useReorderGroups, useSetRepoGroups } from "./api";
@@ -100,13 +100,14 @@ function GroupButton({
  *
  * `groups` is the rail's group list, used to label and order the entries.
  */
-function TerminalMenu({ groups }: { groups: Group[] }) {
+export function TerminalMenu({ groups }: { groups: Group[] }) {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
 
@@ -156,6 +157,18 @@ function TerminalMenu({ groups }: { groups: Group[] }) {
     setTerminalOpen(true);
     selectTerminalTab(groupId, tabId);
     setOpen(false);
+  }
+
+  // Close (kill) a terminal from the popup — same combined pattern as the tab
+  // strip's X (TerminalPane.handleCloseTab): kill each pane's backend PTY, then
+  // drop the tab from the store (which re-selects an active tab). The popup stays
+  // open so several strays can be cleared in one pass; when the last group empties
+  // it falls back to the "No terminals open" state via the `withTabs` filter.
+  function closeTab(groupId: number, tab: TermTab) {
+    tab.panes.forEach((pane) => {
+      ipc.terminalKill(pane.id).catch(() => {});
+    });
+    closeTerminalTab(groupId, tab.id);
   }
 
   return (
@@ -217,22 +230,39 @@ function TerminalMenu({ groups }: { groups: Group[] }) {
                 const activity = tabActivityKind(tab, termActivity);
                 const current = group.id === activeGroupId && gt.activeTabId === tab.id;
                 return (
-                  <button
+                  <div
                     key={tab.id}
-                    role="menuitem"
-                    onClick={() => jump(group.id, tab.id)}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors",
+                      "group flex items-center rounded-sm transition-colors",
                       "hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]",
-                      current
-                        ? "text-[var(--color-foreground)]"
-                        : "text-[var(--color-muted-foreground)]",
                     )}
                   >
-                    <SquareTerminal className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
-                    <span className="flex-1 truncate">{termTabLabel(tab)}</span>
-                    {activity && <ActivityDot kind={activity} />}
-                  </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => jump(group.id, tab.id)}
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm",
+                        current
+                          ? "text-[var(--color-foreground)]"
+                          : "text-[var(--color-muted-foreground)]",
+                      )}
+                    >
+                      <SquareTerminal className="size-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                      <span className="flex-1 truncate">{termTabLabel(tab)}</span>
+                      {activity && <ActivityDot kind={activity} />}
+                    </button>
+                    <button
+                      aria-label={`Close ${termTabLabel(tab)} terminal`}
+                      title="Close terminal"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(group.id, tab);
+                      }}
+                      className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] opacity-0 transition-opacity hover:bg-[var(--color-background)] hover:text-[var(--color-foreground)] group-hover:opacity-100 focus-visible:opacity-100"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
                 );
               })}
             </div>
