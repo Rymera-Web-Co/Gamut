@@ -41,18 +41,23 @@ pub struct ReviewDiff {
 
 /// Resolve the base commit + a human label for a "branch" review.
 /// The base is always trunk, main, or master (in that order), preferring a
-/// local branch then its `origin/` counterpart. An explicit `base` overrides.
+/// local branch then its `origin/` counterpart. An explicit `base` overrides —
+/// it too prefers a local branch of that name, then its `origin/` counterpart,
+/// so a PR base branch present only as a remote-tracking ref (e.g. the head is
+/// checked out but `playwright` itself never was) still resolves instead of
+/// erroring (#281).
 fn resolve_base(
     repo: &Repository,
     base: Option<&str>,
     precedence: &[String],
 ) -> AppResult<(Oid, String)> {
-    if let Some(name) = base {
-        let commit = repo.revparse_single(name)?.peel_to_commit()?;
-        return Ok((commit.id(), name.to_string()));
-    }
+    // The names to try, in order: an explicit override, else the precedence list.
+    let names: Vec<String> = match base {
+        Some(name) => vec![name.to_string()],
+        None => precedence.to_vec(),
+    };
 
-    for name in precedence {
+    for name in &names {
         for cand in [name.clone(), format!("origin/{name}")] {
             if let Ok(commit) = repo.revparse_single(&cand).and_then(|o| o.peel_to_commit()) {
                 return Ok((commit.id(), cand));
@@ -60,10 +65,10 @@ fn resolve_base(
         }
     }
 
-    Err(AppError::Other(format!(
-        "no base branch found (expected {})",
-        precedence.join(", ")
-    )))
+    Err(AppError::Other(match base {
+        Some(name) => format!("base branch not found: {name}"),
+        None => format!("no base branch found (expected {})", precedence.join(", ")),
+    }))
 }
 
 fn head_branch_label(repo: &Repository) -> String {
@@ -172,4 +177,104 @@ pub async fn review_file_diff(
         })
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Commit a file so the repo has a HEAD, returning the new commit's oid.
+    fn commit_file(repo: &Repository, name: &str, contents: &str) -> Oid {
+        let wd = repo.workdir().unwrap();
+        std::fs::write(wd.join(name), contents).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(name)).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, "msg", &tree, &parent_refs)
+            .unwrap()
+    }
+
+    fn temp_repo(suffix: &str) -> (std::path::PathBuf, Repository) {
+        let root = std::env::temp_dir().join(format!(
+            "gamut_resolve_base_{}_{}",
+            std::process::id(),
+            suffix
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = Repository::init(&root).unwrap();
+        (root, repo)
+    }
+
+    /// The default `["trunk","main","master"]` precedence used in these tests.
+    fn precedence() -> Vec<String> {
+        DEFAULT_BASE_PRECEDENCE
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn explicit_base_resolves_a_local_branch_by_name() {
+        let (root, repo) = temp_repo("local");
+        let base = commit_file(&repo, "a.txt", "hello\n");
+        repo.branch("playwright", &repo.find_commit(base).unwrap(), false)
+            .unwrap();
+
+        let (oid, label) = resolve_base(&repo, Some("playwright"), &precedence()).unwrap();
+        assert_eq!(oid, base);
+        assert_eq!(label, "playwright");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn explicit_base_falls_back_to_origin_remote_ref() {
+        let (root, repo) = temp_repo("remote");
+        let base = commit_file(&repo, "a.txt", "hello\n");
+        // The PR base branch exists only as a remote-tracking ref — the head was
+        // checked out but `playwright` itself never was (the #281 scenario).
+        repo.reference("refs/remotes/origin/playwright", base, true, "test")
+            .unwrap();
+
+        let (oid, label) = resolve_base(&repo, Some("playwright"), &precedence()).unwrap();
+        assert_eq!(oid, base);
+        assert_eq!(label, "origin/playwright");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_base_falls_back_to_precedence() {
+        let (root, repo) = temp_repo("precedence");
+        let base = commit_file(&repo, "a.txt", "hello\n");
+        repo.branch("main", &repo.find_commit(base).unwrap(), false)
+            .unwrap();
+
+        let (oid, label) = resolve_base(&repo, None, &precedence()).unwrap();
+        assert_eq!(oid, base);
+        assert_eq!(label, "main");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn missing_explicit_base_errors() {
+        let (root, repo) = temp_repo("missing");
+        commit_file(&repo, "a.txt", "hello\n");
+
+        assert!(resolve_base(&repo, Some("nope"), &precedence()).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -14,10 +14,10 @@ import { toast } from "@/store/toast";
 
 // ---- Local self-review ----
 
-export function useReviewFiles(repoId: number | null, source: ReviewSource) {
+export function useReviewFiles(repoId: number | null, source: ReviewSource, base?: string) {
   return useQuery({
-    queryKey: ["review-files", repoId, source],
-    queryFn: () => ipc.reviewFiles(repoId!, source),
+    queryKey: ["review-files", repoId, source, base ?? null],
+    queryFn: () => ipc.reviewFiles(repoId!, source, base),
     enabled: repoId != null,
   });
 }
@@ -26,11 +26,12 @@ export function useReviewFileDiff(
   repoId: number | null,
   source: ReviewSource,
   path: string | null,
+  base?: string,
   oldPath?: string | null,
 ) {
   return useQuery({
-    queryKey: ["review-file-diff", repoId, source, path],
-    queryFn: () => ipc.reviewFileDiff(repoId!, source, path!, undefined, oldPath ?? undefined),
+    queryKey: ["review-file-diff", repoId, source, path, base ?? null],
+    queryFn: () => ipc.reviewFileDiff(repoId!, source, path!, base, oldPath ?? undefined),
     enabled: repoId != null && path != null,
   });
 }
