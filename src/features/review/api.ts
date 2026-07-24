@@ -254,7 +254,11 @@ interface DraftStateVars {
 
 /** Refresh the PR list, detail, and thread after a draft-state change (#288) so
  * the list badge, merge box, and merge-button gating all reflect the new state. */
-function invalidateDraftState(qc: ReturnType<typeof useQueryClient>, repoId: number, number: number) {
+function invalidateDraftState(
+  qc: ReturnType<typeof useQueryClient>,
+  repoId: number,
+  number: number,
+) {
   qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
   qc.invalidateQueries({ queryKey: ["github-pr-details", repoId, number] });
   qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
