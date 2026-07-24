@@ -156,7 +156,10 @@ export const DEFAULTS: Settings = {
   mergeStrategy: "merge",
   autoCleanupAfterMerge: true,
   autoFetch: true,
-  autoFetchIntervalMinutes: 5,
+  // 15 min, not 5: across a large fleet, remote-tracking refs rarely need
+  // sub-15-minute freshness, and a longer interval means the background fetch
+  // burst runs far less often — much cheaper on battery (#274).
+  autoFetchIntervalMinutes: 15,
   showSyncedRoot: true,
 
   terminalShell: "",
