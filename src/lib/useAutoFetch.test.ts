@@ -9,11 +9,23 @@ vi.mock("@/lib/settings", () => ({
 }));
 
 const listRepos = vi.fn();
-const gitFetchMany = vi.fn().mockResolvedValue(undefined);
+// `git_fetch_many` returns a per-repo `FetchResult[]` (`{repo_id, ok, error}`).
+const gitFetchMany = vi.fn().mockResolvedValue([{ repo_id: 1, ok: true, error: null }]);
+const repoStatusesFor = vi.fn().mockResolvedValue([]);
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     listRepos: (...args: unknown[]) => listRepos(...args),
     gitFetchMany: (...args: unknown[]) => gitFetchMany(...args),
+    repoStatusesFor: (...args: unknown[]) => repoStatusesFor(...args),
+  },
+}));
+
+const invalidateQueries = vi.fn();
+const setQueryData = vi.fn();
+vi.mock("@/lib/queryClient", () => ({
+  queryClient: {
+    invalidateQueries: (...args: unknown[]) => invalidateQueries(...args),
+    setQueryData: (...args: unknown[]) => setQueryData(...args),
   },
 }));
 
@@ -57,8 +69,13 @@ describe("useAutoFetch (issue #273 — pause while unfocused)", () => {
     focusListener = undefined;
     isFocused.mockResolvedValue(true);
     listRepos.mockResolvedValue([{ id: 1, missing: false, is_git_repo: true }]);
+    gitFetchMany.mockResolvedValue([{ repo_id: 1, ok: true, error: null }]);
+    repoStatusesFor.mockResolvedValue([]);
     gitFetchMany.mockClear();
     listRepos.mockClear();
+    repoStatusesFor.mockClear();
+    invalidateQueries.mockClear();
+    setQueryData.mockClear();
     unlisten.mockClear();
   });
 
@@ -169,5 +186,91 @@ describe("useAutoFetch (issue #273 — pause while unfocused)", () => {
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(INTERVAL_MS * 2);
     expect(gitFetchMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAutoFetch (issue #275 — drive post-fetch refresh directly)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    settingsValues = { autoFetch: true, autoFetchIntervalMinutes: 5 };
+    focusListener = undefined;
+    isFocused.mockResolvedValue(true);
+    listRepos.mockResolvedValue([
+      { id: 1, missing: false, is_git_repo: true },
+      { id: 2, missing: false, is_git_repo: true },
+    ]);
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: true, error: null },
+      { repo_id: 2, ok: true, error: null },
+    ]);
+    repoStatusesFor.mockResolvedValue([]);
+    gitFetchMany.mockClear();
+    listRepos.mockClear();
+    repoStatusesFor.mockClear();
+    invalidateQueries.mockClear();
+    setQueryData.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("A9: patches repo-statuses for the repos that fetched successfully", async () => {
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(repoStatusesFor).toHaveBeenCalledTimes(1);
+    expect(repoStatusesFor).toHaveBeenCalledWith([1, 2]);
+    // Scoped (patch) path, not a full-fleet invalidation, on the happy path.
+    expect(setQueryData).toHaveBeenCalledWith(["repo-statuses"], expect.any(Function));
+    expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["repo-statuses"] });
+  });
+
+  it("A10: excludes repos whose fetch failed from the refresh", async () => {
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: true, error: null },
+      { repo_id: 2, ok: false, error: "boom" },
+    ]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(repoStatusesFor).toHaveBeenCalledWith([1]);
+  });
+
+  it("A11: does not refresh when no repo fetched successfully", async () => {
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: false, error: "boom" },
+      { repo_id: 2, ok: false, error: "boom" },
+    ]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(repoStatusesFor).not.toHaveBeenCalled();
+    expect(invalidateQueries).not.toHaveBeenCalled();
+    expect(setQueryData).not.toHaveBeenCalled();
+  });
+
+  it("A12: invalidates the per-repo scoped queries for the succeeded repos", async () => {
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["branches", 1] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["branches", 2] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["sync-status", 1] });
   });
 });

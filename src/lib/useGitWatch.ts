@@ -2,8 +2,18 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { ipc, type RepoStatus } from "@/lib/ipc";
 import { queryClient } from "@/lib/queryClient";
+import {
+  invalidateRepoStatuses,
+  patchRepoStatuses,
+  REPO_SCOPED_KEYS,
+  refreshScopedRepos,
+} from "@/lib/repoStatusRefresh";
+
+// Re-exported for back-compat: `useRefreshOnFocus` and this module's test import
+// `REPO_SCOPED_KEYS` from here. Its canonical home is `repoStatusRefresh`, which
+// both the watcher round and the background auto-fetch share (#275).
+export { REPO_SCOPED_KEYS };
 
 /**
  * How long to wait after the last `repos-changed` event before invalidating
@@ -15,30 +25,6 @@ import { queryClient } from "@/lib/queryClient";
  * scans from stampeding (issue #89).
  */
 const COALESCE_MS = 250;
-
-/**
- * Query keys that carry a repo id as their second element (`[key, repoId]`),
- * so invalidation can be scoped to just the repos the watcher says changed
- * instead of every repo (#206).
- */
-export const REPO_SCOPED_KEYS = [
-  "branches",
-  "git-tags",
-  "log",
-  "review-files",
-  "worktree-status",
-  "worktree-file-diff",
-  "linked-worktrees",
-  "stash-list",
-  "sync-status",
-  // Files tab: directory listings, open-file contents, and image previews.
-  // Invalidation refetches only *active* queries, so just the displayed file
-  // (or image) and the expanded dir listings actually reload; everything else
-  // is merely marked stale for its next mount.
-  "dir",
-  "file",
-  "image",
-];
 
 /**
  * Listen for the backend's `repos-changed` event (emitted when a watched repo's
@@ -77,14 +63,6 @@ export function useGitWatch() {
     // A live `onFocusChanged` event can arrive before the initial `isFocused()`
     // query resolves; once one has, it wins over the stale mount-time snapshot.
     let sawFocusEvent = false;
-    // All writes to the aggregate `repo-statuses` cache are chained behind the
-    // previous round, so they apply in submission order. Without this, a second
-    // flush could start while an earlier scoped fetch is still in flight, and
-    // the older response — resolving last — would overwrite the fresher patch.
-    // Chaining (rather than dropping superseded responses) also keeps updates
-    // for repos that only appeared in the earlier round. Rounds never reject:
-    // each round's failure is handled inside it.
-    let aggregateChain: Promise<unknown> = Promise.resolve();
 
     const flush = () => {
       timer = null;
@@ -93,37 +71,19 @@ export function useGitWatch() {
       repoIds = new Set();
       fullInvalidate = false;
 
+      // All `repo-statuses` cache writes are serialized inside `repoStatusRefresh`
+      // (a module-level chain shared with the background auto-fetch, #275), so an
+      // older scan response can't clobber a fresher one.
       if (full) {
-        aggregateChain = aggregateChain.then(() =>
-          queryClient.invalidateQueries({ queryKey: ["repo-statuses"] }),
-        );
+        void invalidateRepoStatuses();
         for (const key of REPO_SCOPED_KEYS) {
           queryClient.invalidateQueries({ queryKey: [key] });
         }
         return;
       }
 
-      aggregateChain = aggregateChain.then(() =>
-        ipc
-          .repoStatusesFor(ids)
-          .then((fresh) => {
-            queryClient.setQueryData<RepoStatus[]>(["repo-statuses"], (prev) => {
-              // No cached aggregate yet — leave it to the full query.
-              if (!prev) return prev;
-              const byId = new Map(fresh.map((s) => [s.id, s]));
-              return prev.map((s) => byId.get(s.id) ?? s);
-            });
-          })
-          .catch(() => {
-            // Scoped refresh failed; fall back to the full scan.
-            return queryClient.invalidateQueries({ queryKey: ["repo-statuses"] });
-          }),
-      );
-      for (const id of ids) {
-        for (const key of REPO_SCOPED_KEYS) {
-          queryClient.invalidateQueries({ queryKey: [key, id] });
-        }
-      }
+      void patchRepoStatuses(ids);
+      refreshScopedRepos(ids);
     };
 
     // Schedule a coalesced flush — but only while focused. When unfocused we

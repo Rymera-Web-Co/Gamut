@@ -2,16 +2,33 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
 import { ipc } from "@/lib/ipc";
+import { patchRepoStatuses, refreshScopedRepos } from "@/lib/repoStatusRefresh";
 import { useSettings } from "@/lib/settings";
 
 /**
  * Periodically fetch every registered repo in the background so ahead/behind
  * counts and remote branch lists stay current without manual action (issue #41).
  *
- * The fetch only updates `.git/refs/remotes` + `FETCH_HEAD`, which the
- * filesystem watcher (`watch.rs` → `repos-changed`) already treats as
- * interesting — so `useGitWatch` invalidates the git-derived queries and the UI
- * refreshes naturally; this hook deliberately doesn't touch the query cache.
+ * After each batch fetch this hook drives the refresh **directly** — it patches
+ * `repo-statuses` for the repos that fetched successfully and invalidates their
+ * scoped git-derived queries (issue #275). It used to rely on the filesystem
+ * watcher noticing the fetch's `refs/remotes` writes, but a sequential fetch
+ * lands those refs more than the watcher's coalesce window apart, so each repo
+ * became its own `repos-changed` round and one fetch cycle fanned out into
+ * ~one status scan per repo. The watcher now treats `refs/remotes` writes as
+ * non-interesting (`watch.rs::is_interesting`), so remote-ref churn no longer
+ * wakes it; this explicit refresh replaces it, collapsing the cascade into a
+ * single scoped round.
+ *
+ * A consequence: a *pure* `git fetch` run in a terminal no longer live-refreshes
+ * ahead/behind, since its only filesystem signal is now-ignored remote-ref
+ * writes. The backstop depends on where it runs: an external terminal leaves the
+ * Gamut window unfocused, so `useRefreshOnFocus` (30s-stale) refreshes on the
+ * next focus regain; an *integrated* terminal keeps the window focused, so the
+ * next auto-fetch tick (this hook's interval) is what catches it up. Either way a
+ * terminal `git pull`/commit/branch-switch touches local refs/HEAD/the working
+ * tree and still refreshes live, and the group-header fetch button
+ * (`useFetchGroup`) refetches `repo-statuses` itself.
  *
  * Missing repos are skipped (the backend also guards this). Fetches run on a
  * configurable interval; the first one fires after the interval, not on mount,
@@ -59,7 +76,16 @@ export function useAutoFetch() {
         const repos = await ipc.listRepos();
         // Skip missing folders and non-git entries (nothing to fetch).
         const ids = repos.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
-        if (ids.length > 0) await ipc.gitFetchMany(ids);
+        if (ids.length === 0) return;
+        const results = await ipc.gitFetchMany(ids);
+        // Refresh the repos that actually fetched — patch their ahead/behind into
+        // the `repo-statuses` aggregate and invalidate their scoped queries. This
+        // drives the post-fetch refresh directly instead of via the watcher (#275).
+        const succeeded = results.filter((r) => r.ok).map((r) => r.repo_id);
+        if (succeeded.length > 0) {
+          void patchRepoStatuses(succeeded);
+          refreshScopedRepos(succeeded);
+        }
       } catch {
         // Background fetch failures are non-fatal and stay silent — the manual
         // group fetch surfaces errors when the user explicitly asks for one.
