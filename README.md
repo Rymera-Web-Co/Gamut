@@ -1,110 +1,126 @@
 # Gamut
 
-A local git desktop app for **reviewing changes** and **browsing history**, built with Tauri 2 (Rust) + React + TypeScript.
+**A desktop app for reviewing code changes and exploring git history — built for the pace of AI-assisted development.**
 
-> **Gamut** comes from the Cebuano word *gamut*, meaning "root of a tree" — a nod to digging through a repository's roots and history.
+[![status](https://img.shields.io/badge/status-beta-orange)](https://github.com/Rymera-Web-Co/Gamut/releases)
+[![release](https://img.shields.io/github/v/release/Rymera-Web-Co/Gamut?label=release&color=blue)](https://github.com/Rymera-Web-Co/Gamut/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Rymera-Web-Co/Gamut/ci.yml?branch=main&label=CI)](https://github.com/Rymera-Web-Co/Gamut/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/Rymera-Web-Co/Gamut?color=blue)](LICENSE)
+[![platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df)](https://github.com/Rymera-Web-Co/Gamut/releases/latest)
+
+<p align="center">
+  <img src="docs/images/hero-review.png" alt="Gamut reviewing a branch — side-by-side diff with changed-file tree" width="900" />
+</p>
+
+> The name **Gamut** carries a double meaning. In English, a *gamut* is the complete range of something — here, the whole span of your repositories, branches, and history in one place. In Cebuano, *gamut* means the "root of a tree" — a nod to digging through a repository's roots and history.
+
+## Why Gamut?
+
+Writing code used to be the slow part. Now that coding assistants produce a meaningful share of the changes in a codebase, the bottleneck has moved: the hard part is **reading** all that code — carefully, quickly, across many branches and repositories at once — before it ships.
+
+Most git apps are built around *making* commits, with review bolted on. Gamut flips that. It was built at [Rymera](https://rymera.com.au) because our own review load outgrew the tools we had, and it puts the reviewing workflow first:
+
+- **Review before you push.** See every uncommitted change, or your whole branch against its base, as clean side-by-side diffs — then stage and commit from the same screen (and comment inline when the branch has an open PR).
+- **Review pull requests properly.** Read a GitHub PR's conversation and review threads in one place — and check the branch out to read its full diff in the Review tab; reply, approve, request changes, or merge without opening a browser.
+- **Keep every repo in reach.** Register all your repositories once, organise them into groups, and jump between them — each with its own terminal, sync buttons, and history.
+
+Everything runs locally on your machine — your code is read straight from disk. The only network traffic is git talking to your own remotes (including a background auto-fetch you can turn off in Settings), the GitHub API calls the app makes on your behalf, and a periodic check for app updates.
 
 ## What it does
 
-- **[Files](docs/features/files.md)** — browse the repo's full working tree, open any file in an editor with syntax highlighting, and save edits in place (⌘/Ctrl+S). Reveal files in Finder/Explorer or jump straight to their changes.
-- **[Code review](docs/features/review.md)** — self-review the current branch's local changes (working tree + branch-vs-base diff) and review GitHub pull requests, with inline diffs and comments.
-- **[History](docs/features/history.md)** — browse the commit graph with branch/tag refs, inspect commits, view per-file diffs, file history, and blame.
-- **[Repositories](docs/features/repositories.md)** — register local repos, auto-detect repos under a directory, and organise them with groups and tags.
-- **[Sync](docs/features/sync.md)** · **[GitHub](docs/features/github.md)** · **[Terminal](docs/features/terminal.md)** — one-click fetch/pull/push, connect a GitHub account, and an integrated per-group terminal.
+| | Feature | In plain terms |
+|---|---|---|
+| 🔍 | **[Code review](docs/features/review.md)** | Check your own work before it goes out, and review teammates' (or your AI assistant's) pull requests — conversation, comments, approvals, and merging in one view, with one-click checkout to read the full diff locally. |
+| 🕘 | **[History](docs/features/history.md)** | A visual map of every commit: who changed what, when, and why — with per-file diffs and line-by-line blame. |
+| 📁 | **[Files](docs/features/files.md)** | Browse and edit any file in the repo with syntax highlighting, plus project-wide find & replace. |
+| 🗂️ | **[Repositories](docs/features/repositories.md)** | Register repos by hand or auto-discover a whole folder of them; organise with groups and tags. |
+| 🔄 | **[Sync](docs/features/sync.md)** | One-click fetch, pull, and push with live "ahead/behind" counts on every repo. |
+| 🐙 | **[GitHub](docs/features/github.md)** | Connect your account securely (token stored in the OS keychain) to unlock the PR workflow. |
+| ⌨️ | **[Terminal](docs/features/terminal.md)** | A built-in terminal with tabs and splits, opened right at any repo — long-running commands keep going in the background and ping you when they finish. |
+| ⬆️ | **[Updates](docs/features/updates.md)** | The app checks for new versions on launch and installs them in place when you accept. |
 
-Full feature docs live in [`docs/`](docs/README.md).
+<p align="center">
+  <img src="docs/images/history.png" alt="Gamut's History tab — commit graph with branch labels and a file diff" width="900" />
+</p>
 
-## Install (macOS)
+Full feature docs live in [`docs/`](docs/README.md), written so you don't need to be a git expert to follow them.
 
-### Homebrew (recommended)
+## Install
+
+### macOS
+
+**Homebrew (recommended):**
 
 ```bash
 brew install --cask rymera-web-co/gamut/gamut
 xattr -dr com.apple.quarantine /Applications/Gamut.app
 ```
 
-The second command is required because Gamut isn't yet signed with an Apple Developer ID or notarized. Homebrew quarantines downloaded apps (Homebrew 6 removed the old `--no-quarantine` opt-out), so on first launch Gatekeeper reports:
+Gamut isn't code-signed or notarized yet, so macOS quarantines the download — the second command clears that flag once, and the app opens normally from then on.
 
-> "Gamut" is damaged and can't be opened. You should move it to the Trash.
+**Or manually:** download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), drag **Gamut** to Applications, then run the same `xattr` command above.
 
-It isn't damaged — that's just Gatekeeper reacting to the quarantine flag on an unsigned app. The `xattr` command clears it once and the app launches normally. (`brew install` also prints this command as a caveat after installing.) Upgrade later with `brew upgrade --cask gamut`.
+<details>
+<summary>More on the <code>xattr</code> step ("Gamut is damaged and can't be opened")</summary>
 
-The install command also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut); afterwards you can refer to the cask as just `gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
+Because Gamut isn't yet signed with an Apple Developer ID or notarized, macOS Gatekeeper reports the quarantined app as *"damaged"* on first launch. It isn't — the `xattr` command clears the quarantine flag once. (`brew install` prints this command as a caveat too, and right-click → Open does **not** bypass this particular case on Apple Silicon.) A notarized build will remove this step — tracked in [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3).
 
-> Homebrew is the recommended path for easy upgrades/removal, but on an unsigned build it doesn't avoid the `xattr` step — a notarized build would (see [#3](https://github.com/Rymera-Web-Co/Gamut/issues/3)).
+The install also taps [`Rymera-Web-Co/homebrew-gamut`](https://github.com/Rymera-Web-Co/homebrew-gamut), so afterwards you can refer to the cask as just `gamut` — upgrade later with `brew upgrade --cask gamut`. See [`homebrew/README.md`](homebrew/README.md) for how the tap is maintained.
 
-### Manual `.dmg`
+</details>
 
-Prefer not to use Homebrew? Download the `.dmg` from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases), open it, and drag **Gamut** to Applications.
+### Windows
 
-Because the build is unsigned, this needs the same one-time step:
+Download either installer from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases) — `Gamut_<version>_x64-setup.exe` (NSIS) or `Gamut_<version>_x64_en-US.msi` (MSI). Both install the same app.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Gamut.app
-```
+Because the build isn't code-signed yet, SmartScreen shows *"Windows protected your PC"* — click **More info → Run anyway**, then follow the installer.
 
-Then open Gamut normally. (Right-click → Open does **not** work for this "damaged" case on Apple Silicon — the `xattr` command above is required.)
+> Fetch / pull / push use the `git` command-line tool, so install [Git for Windows](https://git-scm.com/download/win) and make sure `git` is on your `PATH`. Browsing history and reviewing local changes work without it.
 
-## Install (Windows)
+### Linux
 
-Download the installer from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases) — either `Gamut_<version>_x64-setup.exe` (NSIS) or `Gamut_<version>_x64_en-US.msi` (MSI). Both install the same app; pick whichever you prefer.
-
-Because the build isn't signed with a code-signing certificate, Windows SmartScreen shows:
-
-> Windows protected your PC
-
-Click **More info → Run anyway** to continue. Then follow the installer and launch **Gamut** from the Start menu.
-
-> Network operations (fetch / pull / push) shell out to the `git` CLI, so install [Git for Windows](https://git-scm.com/download/win) and make sure `git` is on your `PATH`. Browsing history and reviewing local changes work without it.
-
-## Install (Linux)
-
-Download the package that matches your distro from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases).
-
-### AppImage (any distro)
+Download the package for your distro from the [latest release](https://github.com/Rymera-Web-Co/Gamut/releases):
 
 ```bash
-chmod +x Gamut_<version>_amd64.AppImage
-./Gamut_<version>_amd64.AppImage
-```
+# AppImage (any distro — needs FUSE; on newer distros install libfuse2 if it won't launch)
+chmod +x Gamut_<version>_amd64.AppImage && ./Gamut_<version>_amd64.AppImage
 
-The AppImage is self-contained and needs FUSE (preinstalled on most desktops; on newer distros install `libfuse2` if it won't launch).
-
-### Debian / Ubuntu (`.deb`)
-
-```bash
+# Debian / Ubuntu
 sudo apt install ./Gamut_<version>_amd64.deb
-```
 
-### Fedora / RHEL (`.rpm`)
-
-```bash
+# Fedora / RHEL
 sudo dnf install ./Gamut-<version>-1.x86_64.rpm
 ```
 
-The `.deb`/`.rpm` packages declare their runtime dependencies (WebKitGTK 4.1, GTK 3), so your package manager pulls them in. For the AppImage you may need WebKitGTK installed yourself — e.g. `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora.
+The `.deb`/`.rpm` packages pull in their dependencies (WebKitGTK 4.1, GTK 3) automatically. For the AppImage you may need WebKitGTK yourself — `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora. As on Windows, install `git` from your package manager for fetch / pull / push.
 
-> As on Windows, fetch / pull / push shell out to the `git` CLI — install `git` from your package manager if it isn't already present.
+### Nightly builds
 
-## Nightly builds
+Want the newest changes before they're released? Open **Settings → About** in the app and set **Update channel → Nightly**. Nightlies are automated, **unstable**, and unsigned on macOS — stay on **Stable** unless you want bleeding-edge. Details in [docs/features/updates.md](docs/features/updates.md).
 
-Gamut publishes automated **nightly** builds alongside the regular releases. To
-opt in, open **Settings → About** in the app and set **Update channel → Nightly**;
-the in-app updater then tracks the latest nightly. These builds carry the newest
-changes but are **unstable** (and unsigned on macOS, like the alpha builds), so
-stay on the default **Stable** channel unless you want bleeding-edge. See
-[`docs/features/updates.md`](docs/features/updates.md) for details.
+## Keyboard-first
 
-## Stack
+Everything important has a shortcut:
 
-- **Backend:** Rust / Tauri 2 — owns all git operations, the GitHub API, persistence (SQLite via `rusqlite`), and secrets (OS keychain). Frontend never touches a token or the filesystem directly.
+- `⌘/Ctrl+1…4` switch between Files · History · Review · Pull Requests
+- `⌘/Ctrl+S` save the open file · `⌘/Ctrl+Enter` commit
+- `⌘/Ctrl+B` toggle the repo sidebar · <code>⌘/Ctrl+&#96;</code> toggle the terminal · `⌘/Ctrl+J` toggle light/dark
+- `⌘/Ctrl+⇧+P` pull · `⌘/Ctrl+⇧+K` push · `Ctrl+Tab` cycle repos
+
+The full list is in [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md).
+
+## Under the hood
+
+- **Backend:** Rust / [Tauri 2](https://v2.tauri.app) — owns all git operations, the GitHub API, persistence (SQLite via `rusqlite`), and secrets (OS keychain). The UI never touches a token or the filesystem directly.
 - **Frontend:** React 19 + TypeScript + Vite, Tailwind v4 + shadcn/ui, TanStack Query, Zustand.
+
+How it all fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
 ```bash
 pnpm install
-pnpm tauri dev      # launches the desktop app with HMR
+pnpm tauri dev      # launches the desktop app with hot reload
 ```
 
 Other useful commands:
@@ -113,37 +129,14 @@ Other useful commands:
 pnpm build          # typecheck + build the frontend
 pnpm typecheck      # tsc --noEmit
 cd src-tauri && cargo build   # compile the Rust backend
+pnpm tauri build    # release bundle (.app/.dmg/.exe/.deb/…) under src-tauri/target/release/bundle/
 ```
 
-The SQLite database is created at the platform app-data dir on first run
-(e.g. `~/Library/Application Support/com.rymera.gamut/gamut.db` on macOS).
-
-## Build a release
-
-```bash
-pnpm tauri build    # produces Gamut.app and a .dmg under src-tauri/target/release/bundle/
-```
-
-## Keyboard shortcuts
-
-- `⌘/Ctrl+1` Files · `⌘/Ctrl+2` History · `⌘/Ctrl+3` Review · `⌘/Ctrl+4` Pull Requests
-- `⌘/Ctrl+S` save the open file (Files tab) · `⌘/Ctrl+Enter` commit (Review working tree)
-- `⌘/Ctrl+B` toggle repo sidebar · `⌘/Ctrl+J` toggle theme · <code>⌘/Ctrl+&#96;</code> toggle terminal
-- `⌘/Ctrl+⇧+P` pull · `⌘/Ctrl+⇧+K` push · `⌘/Ctrl+⌥+F` fetch group · `Ctrl+Tab` cycle repos
-- `⌘/Ctrl+T` new terminal tab · `⌘/Ctrl+W` close tab · `⌘/Ctrl+D` split · `⌘/Ctrl+⌥+1…9` jump to tab
-
-See [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md) for the full list.
-
-## Status
-
-Milestones: **M0 scaffold** ✅ · **M1 repos** ✅ · **M2 history** ✅ · **M3 review** ✅ · **M4 polish** ✅
+The SQLite database is created in the platform app-data directory on first run (e.g. `~/Library/Application Support/com.rymera.gamut/gamut.db` on macOS).
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up
-your environment, the project layout, and coding conventions. For a deeper tour of how
-the app is wired together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the
-[documentation hub](docs/README.md) for per-feature docs.
+Contributions are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers environment setup, project layout, and conventions. For a tour of how the app is wired together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the [documentation hub](docs/README.md) for per-feature docs.
 
 ## License
 
