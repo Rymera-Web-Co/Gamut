@@ -8,13 +8,9 @@
 [![license](https://img.shields.io/github/license/Rymera-Web-Co/Gamut?color=blue)](LICENSE)
 [![platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df)](https://github.com/Rymera-Web-Co/Gamut/releases/latest)
 
-<!-- SCREENSHOT: hero — the Review tab showing a side-by-side diff of a branch
-     vs base, with the file tree on the left and the repo sidebar visible.
-     Save as docs/images/hero-review.png, then uncomment:
 <p align="center">
   <img src="docs/images/hero-review.png" alt="Gamut reviewing a branch — side-by-side diff with changed-file tree" width="900" />
 </p>
--->
 
 > The name **Gamut** carries a double meaning. In English, a *gamut* is the complete range of something — here, the whole span of your repositories, branches, and history in one place. In Cebuano, *gamut* means the "root of a tree" — a nod to digging through a repository's roots and history.
 
@@ -43,12 +39,9 @@ Everything runs locally on your machine — your code is read straight from disk
 | ⌨️ | **[Terminal](docs/features/terminal.md)** | A built-in terminal with tabs and splits, opened right at any repo — long-running commands keep going in the background and ping you when they finish. |
 | ⬆️ | **[Updates](docs/features/updates.md)** | The app checks for new versions on launch and installs them in place when you accept. |
 
-<!-- SCREENSHOT: secondary — the History tab with the commit graph and a
-     commit's file diffs open. Save as docs/images/history.png, then uncomment:
 <p align="center">
   <img src="docs/images/history.png" alt="Gamut's History tab — commit graph with branch labels and a file diff" width="900" />
 </p>
--->
 
 Full feature docs live in [`docs/`](docs/README.md), written so you don't need to be a git expert to follow them.
 
