@@ -16,7 +16,7 @@
 </p>
 -->
 
-> **Gamut** comes from the Cebuano word *gamut*, meaning "root of a tree" — a nod to digging through a repository's roots and history.
+> The name **Gamut** carries a double meaning. In English, a *gamut* is the complete range of something — here, the whole span of your repositories, branches, and history in one place. In Cebuano, *gamut* means the "root of a tree" — a nod to digging through a repository's roots and history.
 
 ## Why Gamut?
 
