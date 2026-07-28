@@ -1,8 +1,11 @@
 # Terminal
 
-Gamut has an integrated terminal pane backed by real PTYs. Sessions are organised
-per group and survive tab/group switches — a long-running build or `tail -f` keeps going
-while the terminal is hidden.
+Gamut has a terminal built into the app, so you can run commands right next to your
+code instead of switching to a separate terminal window. Each pane is backed by a real
+PTY — a genuine terminal session, not just a box that echoes command output — so colors
+and full-screen programs behave exactly as they would in your regular terminal app.
+Sessions are organised per group and survive tab/group switches — a long-running build
+or `tail -f` keeps going while the terminal is hidden.
 
 ## Opening & toggling
 
@@ -14,8 +17,8 @@ while the terminal is hidden.
   bound folder. The title defaults to the repo or group name.
 - **From a repo** — `⌘/Ctrl+click` a repo name (or its hover terminal icon) opens a
   terminal at that repo.
-- **From a group** — the terminal icon in the sidebar header opens one at a folder-bound
-  group's folder.
+- **From a group** — the terminal icon in the sidebar header opens a terminal at a
+  folder-bound group's own folder.
 
 ## Maximize & restore
 
@@ -45,10 +48,13 @@ while the terminal is hidden.
 
 ## Shell & behaviour
 
-- Spawns your login shell (`$SHELL` on Unix, `cmd.exe` on Windows) with
-  `TERM=xterm-256color`, so colors and full-screen apps work.
-- Rendered with [xterm.js](https://xtermjs.org/): 256-color, copy/paste, selection, 5000
-  lines of scrollback, and theme-aware colors.
+- Opens your normal login shell — the same one you'd get from Terminal.app or your
+  usual terminal (`$SHELL` on Unix, `cmd.exe` on Windows) — with `TERM=xterm-256color`
+  set, so colors and full-screen apps work correctly.
+- Rendered with [xterm.js](https://xtermjs.org/), the same terminal library many other
+  apps use: 256-color support, copy/paste, text selection, 5000 lines of scrollback
+  (the history of earlier output you can scroll up to revisit), and colors that adapt
+  to your theme.
 - Panes are kept alive across tab/group switches, so running processes aren't
   interrupted. When a shell exits, the pane shows **[process exited]** with a **Restart**
   button. All sessions are killed on app close.
@@ -74,8 +80,8 @@ resume).
 
 Because hidden panes keep running, Gamut surfaces background activity so you don't have to
 hunt for it. A pane is flagged with unseen activity when — *while you're not looking at it*
-— it emits output, rings the terminal bell (`\a`), or its shell process exits. The flag
-shows as a small dot:
+— it prints output, rings the terminal bell (the beep some programs trigger, `\a`), or its
+shell process exits. The flag shows as a small dot:
 
 - on the pane's **tab**, while that tab is inactive;
 - on each **split pane** that changed, so a split tab shows *which* pane has activity;
@@ -110,6 +116,8 @@ Configure it under **Settings → Notifications** (⌘,):
   clicking the notification focuses Gamut and reveals the originating group, tab and pane.
 
 ## Behind the scenes
+
+*For contributors — where this feature lives in the code.*
 
 `src/features/terminal/TerminalPane.tsx` talks to the terminal commands in the Rust
 backend. IPC commands: `terminalSpawn`, `terminalWrite`, `terminalResize`,
