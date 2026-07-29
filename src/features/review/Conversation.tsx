@@ -145,6 +145,7 @@ export function Conversation({
         <div className="px-3 py-2">
           <Markdown
             issueBaseUrl={issueBaseUrl}
+            hardBreaks
             onToggleTask={(index) =>
               update.mutate({
                 number,
