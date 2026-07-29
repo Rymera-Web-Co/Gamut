@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
+import remarkGemoji from "remark-gemoji";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -239,6 +241,7 @@ export function Markdown({
   onToggleTask,
   className,
   issueBaseUrl,
+  hardBreaks,
 }: {
   children: string;
   /** When provided, task-list checkboxes become interactive. */
@@ -246,15 +249,30 @@ export function Markdown({
   className?: string;
   /** When set, `#123` references link to `${issueBaseUrl}/123`. */
   issueBaseUrl?: string;
+  /**
+   * Render single newlines as hard `<br>` breaks, matching how GitHub renders
+   * PR/issue/comment bodies (where soft breaks would otherwise collapse to
+   * spaces). Leave off for repo `.md` files, which GitHub renders with standard
+   * GFM soft-break reflow.
+   */
+  hardBreaks?: boolean;
 }) {
   // Reset on every render; the `input` override increments it in document order
   // so each checkbox knows its ordinal among the task items.
   const taskIndex = useRef(0);
   taskIndex.current = 0;
 
-  const remarkPlugins = (
-    issueBaseUrl ? [remarkGfm, [remarkIssueRefs, issueBaseUrl]] : [remarkGfm]
-  ) as ComponentProps<typeof ReactMarkdown>["remarkPlugins"];
+  // `remark-gemoji` renders `:shortcode:` emoji the way GitHub does everywhere
+  // (including repo `.md` files), so it runs unconditionally. `remark-breaks` is
+  // gated on `hardBreaks` because GitHub only turns newlines into `<br>` in
+  // comment/PR/issue bodies — applying it to repo `.md` previews would wrongly
+  // break their reflowed prose.
+  const remarkPlugins = [
+    remarkGfm,
+    remarkGemoji,
+    ...(hardBreaks ? [remarkBreaks] : []),
+    ...(issueBaseUrl ? [[remarkIssueRefs, issueBaseUrl]] : []),
+  ] as ComponentProps<typeof ReactMarkdown>["remarkPlugins"];
 
   const { frontmatter, body } = splitFrontmatter(children);
   const frontmatterRows = frontmatter != null ? parseFrontmatterRows(frontmatter) : null;

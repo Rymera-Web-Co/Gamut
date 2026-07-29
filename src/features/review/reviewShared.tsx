@@ -176,7 +176,7 @@ export function CommentCard({
 
       {comment.body && (
         <div className="px-3 py-2">
-          <Markdown onToggleTask={onToggleTask} issueBaseUrl={issueBaseUrl}>
+          <Markdown onToggleTask={onToggleTask} issueBaseUrl={issueBaseUrl} hardBreaks>
             {comment.body}
           </Markdown>
         </div>
@@ -204,7 +204,9 @@ export function ThreadCommentRow({
           <CopyLinkButton url={comment.url} label="Copy link to this comment" className="ml-auto" />
         )}
       </div>
-      <Markdown issueBaseUrl={issueBaseUrl}>{comment.body}</Markdown>
+      <Markdown issueBaseUrl={issueBaseUrl} hardBreaks>
+        {comment.body}
+      </Markdown>
     </div>
   );
 }

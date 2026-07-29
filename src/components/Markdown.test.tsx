@@ -31,6 +31,32 @@ describe("Markdown sanitization", () => {
   });
 });
 
+// GitHub renders PR/issue/comment bodies with GFM extensions that plain
+// CommonMark lacks: with `hardBreaks`, single newlines become `<br>` (matching
+// GitHub comment fields), and `:shortcode:` text always renders as emoji. The
+// renderer must match so remote content displays as authored.
+describe("Markdown GitHub-flavored rendering", () => {
+  it("renders single newlines as hard <br> breaks when hardBreaks is set", () => {
+    const src = `Project dependency: default\nThird-party dependency: none\nWC version: latest`;
+    const { container } = render(<Markdown hardBreaks>{src}</Markdown>);
+    // remark-breaks turns each soft newline into a <br>, so a 3-line block has 2.
+    expect(container.querySelectorAll("br")).toHaveLength(2);
+  });
+
+  it("keeps standard GFM soft-break reflow when hardBreaks is not set", () => {
+    const src = `line one\nline two\nline three`;
+    const { container } = render(<Markdown>{src}</Markdown>);
+    // Repo .md previews render like github.com: single newlines reflow, no <br>.
+    expect(container.querySelectorAll("br")).toHaveLength(0);
+  });
+
+  it("renders :shortcode: emoji as unicode everywhere (no hardBreaks needed)", () => {
+    const { container } = render(<Markdown>{`Ship it :rocket:`}</Markdown>);
+    expect(container.textContent).toContain("🚀");
+    expect(container.textContent).not.toContain(":rocket:");
+  });
+});
+
 // Skill/agent files start with a YAML frontmatter block fenced by `---`. Without
 // special handling react-markdown renders it as an <hr> plus a mashed-together
 // paragraph, so we peel it off and render it as a small key/value table.

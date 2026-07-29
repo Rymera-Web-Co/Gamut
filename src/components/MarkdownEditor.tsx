@@ -265,7 +265,7 @@ export function MarkdownEditor({
       ) : (
         <div className={cn("overflow-auto p-2", minHeight)}>
           {value.trim() ? (
-            <Markdown>{value}</Markdown>
+            <Markdown hardBreaks>{value}</Markdown>
           ) : (
             <p className="text-sm text-[var(--color-muted-foreground)]">Nothing to preview.</p>
           )}
