@@ -23,6 +23,7 @@ const LANG: Record<string, string> = {
   scss: "scss",
   less: "less",
   html: "html",
+  htm: "html",
   vue: "html",
   json: "json",
   jsonc: "json",
@@ -60,19 +61,42 @@ const FILENAME_LANG: Record<string, string> = {
   ".env": "shell",
 };
 
+/** Lowercased final path segment, for both of the lookups below. */
+function basenameOf(path: string): string {
+  return (path.split(/[/\\]/).pop() ?? "").toLowerCase();
+}
+
+/** Extension after the last dot in a basename, `""` when there is none. A
+ * leading dot (index 0) is a dotfile, not an extension, so require dot > 0. */
+function extensionOf(base: string): string {
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1) : "";
+}
+
 /** Monaco language id for a file path, by basename then extension. */
 export function languageFor(path: string): string {
-  const base = (path.split(/[/\\]/).pop() ?? "").toLowerCase();
+  const base = basenameOf(path);
   // Filename match first: handles dotfiles (`.eslintrc`) and extensionless
   // files (`Dockerfile`) whose trailing dot-segment isn't a useful extension.
   if (FILENAME_LANG[base]) return FILENAME_LANG[base];
   // `.env.local`, `.env.production`, etc. share the `.env` shell-ish syntax.
   if (base.startsWith(".env.")) return "shell";
-  // Otherwise resolve by the extension after the last dot in the basename. A
-  // leading dot (index 0) is a dotfile, not an extension, so require dot > 0.
-  const dot = base.lastIndexOf(".");
-  const ext = dot > 0 ? base.slice(dot + 1) : "";
-  return LANG[ext] ?? "plaintext";
+  return LANG[extensionOf(base)] ?? "plaintext";
+}
+
+/**
+ * Whether a path is a standalone HTML document — the gate for the Files view's
+ * sandboxed HTML preview (#296).
+ *
+ * Deliberately narrower than `languageFor(path) === "html"`, which also matches
+ * `.vue`: a single-file component is *highlighted* as HTML but isn't a document
+ * you can render, so it keeps the plain editor with no preview toggle. Keeping
+ * this predicate next to the `LANG` table is what stops that distinction from
+ * drifting away from a second matcher elsewhere.
+ */
+export function isHtmlPath(path: string): boolean {
+  const ext = extensionOf(basenameOf(path));
+  return ext === "html" || ext === "htm";
 }
 
 /** Whether the current document is in dark mode (for Monaco theming). */

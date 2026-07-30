@@ -6,6 +6,7 @@ mod control;
 mod db;
 mod error;
 mod git;
+mod preview;
 mod process;
 mod state;
 mod watch;
@@ -26,6 +27,14 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Origin the Files view's HTML preview iframe loads (#296). A custom
+        // scheme — rather than `srcdoc`/`blob:`/`data:` — is what gives the frame
+        // its own empty policy container, so a previewed page's own scripts run
+        // instead of being refused by the app's `script-src 'self'`. See
+        // `preview.rs` for the isolation model.
+        .register_uri_scheme_protocol(preview::SCHEME, |_ctx, request| {
+            preview::handle_request(&request)
+        })
         .setup(|app| {
             // Database lives in the platform app-data directory, e.g.
             // ~/Library/Application Support/com.rymera.gamut/gamut.db on macOS.

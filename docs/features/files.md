@@ -41,6 +41,8 @@ With no repository selected, the view prompts you to choose one from the sidebar
 
 - Text files open with syntax highlighting that recognizes the file's language and
   follows your theme.
+- Markdown (`.md`) and HTML (`.html` / `.htm`) files get an **Edit / Preview** switch in
+  the header — see [Previewing markdown and HTML](#previewing-markdown-and-html).
 - An unsaved file shows a **•** next to its path in the header. Switching away from
   unsaved edits prompts *"Discard unsaved changes?"*
 - Save with the **Save** button or `⌘/Ctrl+S` (works even when the editor isn't focused).
@@ -53,6 +55,59 @@ Some files are read-only on purpose:
 | Larger than 2 MB | *File is too large to edit here (over 2 MB).* |
 | Binary | *Binary file — not shown.* |
 | Not valid UTF-8 | *Not a UTF-8 text file — not shown to avoid corrupting it on save.* |
+
+## Previewing markdown and HTML
+
+For the two file types that are meant to be *looked at* rather than only read as source,
+the header shows an **Edit / Preview** switch:
+
+- **Markdown** (`.md`) — *Preview* renders it the same way the [Review](review.md) tab
+  renders a pull-request description.
+- **HTML** (`.html` / `.htm`) — *Preview* renders the page itself, as a browser would.
+
+Both previews show the file **as it currently stands in the editor**, including edits you
+haven't saved yet, so you can flip to Preview to check a change before saving. The switch
+is per file: pick *Preview* for one file and the next file you open still follows your
+default. Which side a file opens on is set in Settings → Appearance → *Open markdown in
+preview* and *Open HTML in preview* (both off by default, so files open in the editor).
+
+Only these two types have a preview — every other file opens in the editor.
+
+### How the HTML preview is isolated
+
+A previewed page is real HTML with real scripts, and it may well have come from somewhere
+you don't control, so it is rendered in a locked-down frame rather than as part of the app:
+
+- It runs in its own **sandbox** with only scripting enabled, on an anonymous origin of its
+  own. It gets no cookies or site storage, cannot read or touch anything in Gamut itself,
+  and has no access to the app's own internals — so a previewed page can't reach your
+  repositories, settings or files.
+- It **cannot get out of its pane** — it can't replace the Gamut window, open pop-ups, or
+  submit forms out of the frame. It *can* try to load a different page into itself, but
+  Gamut's own content policy allows only the preview's origin inside a frame, so there is
+  nowhere for it to go: it can't pull in a page from the web, and it can't load Gamut's
+  own interface either.
+- **Links behave sensibly.** An in-page `#anchor` link scrolls within the preview. A normal
+  `http`/`https` link opens in your real web browser (the same as clicking a link in the
+  markdown preview), never inside the app.
+- Nothing is written to disk to make the preview work — the page's current text is handed
+  straight to the frame.
+- **It can still reach the network, though.** The point of the preview is that the page
+  renders for real, scripts and all, so — exactly like a browser tab — it can load remote
+  images, fonts and scripts, and send requests out. The sandbox stops it reaching *Gamut*,
+  not the internet. Treat previewing HTML you don't trust the way you'd treat opening it in
+  your browser.
+- **Only the file itself is rendered.** A preview is one self-contained document, so a page
+  that pulls in its own separate assets (`<img src="logo.png">`, a linked stylesheet) will
+  show those as missing — nothing on disk is served to the frame. Pages that carry their
+  styles and scripts inline, which is what most standalone HTML does, render in full.
+
+You don't type in the preview — the editor lives on the *Edit* side — but the preview does
+follow the file: whenever its text changes underneath you (it was edited on disk outside
+Gamut, for instance), the page is re-rendered from scratch a moment later rather than
+patched, so a preview never carries anything over from the previous version. If the preview
+ever fails to start, the pane says so instead of sitting blank — switch to *Edit* to see the
+source.
 
 ## Find & replace
 
@@ -107,7 +162,9 @@ Right-click any tree entry:
   Settings → Appearance → *Editor word wrap* and the wrap button in the
   [Review](review.md) tab, so flipping it here changes all of them and the choice sticks
   across restarts. Off by default. Only shown while a file is open in the editor — not for
-  the markdown preview, images, or files that can't be edited here.
+  the markdown or HTML preview, images, or files that can't be edited here.
+- **Edit / Preview** — for markdown and HTML files only; see
+  [Previewing markdown and HTML](#previewing-markdown-and-html).
 - **View changes** — jumps to the [Review](review.md) tab in working-tree mode (showing
   your current uncommitted changes, rather than a specific past commit).
 - **Reveal** — opens the selected file (or the repo root) in Finder / Explorer.
@@ -123,6 +180,17 @@ and confirmed to stay inside the repo root — rejecting `..` traversal and syml
 
 Key IPC commands: `list_dir`, `read_file`, `write_file`, `create_file`, `create_dir`,
 `delete_path`, `resolve_path`, `reveal_in_file_manager`, `worktree_status`.
+
+The HTML preview is `src/features/files/HtmlPreview.tsx` plus
+`src-tauri/src/preview.rs`, which serves a fixed bootstrap document on a dedicated
+`gamut-preview://` URI scheme. The custom scheme is what gives the frame its own empty
+policy container: a `srcdoc` / `blob:` / `data:` frame would inherit the app window's CSP,
+and the app's `script-src 'self'` would then refuse the previewed page's own inline
+scripts — silently, and only in a shipped build, since `devCsp` allows inline script. The
+frame is sandboxed `allow-scripts` only (no `allow-same-origin`, no popup tokens), and the
+buffer reaches it over `postMessage`; both directions validate source identity plus a
+per-load token, and the external-link bridge additionally requires an `http(s)` URL before
+calling `openUrl`.
 
 Repo-wide search lives in `src-tauri/src/commands/search.rs` (`search_repo`,
 `replace_in_files`), a ripgrep-style walk via the [`ignore`](https://docs.rs/ignore) crate

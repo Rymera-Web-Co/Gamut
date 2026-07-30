@@ -10,7 +10,7 @@ import { WordWrapToggle } from "@/components/WordWrapToggle";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isModalOpen } from "@/lib/dom";
-import { isDarkTheme, languageFor } from "@/lib/lang";
+import { isDarkTheme, isHtmlPath, languageFor } from "@/lib/lang";
 import { GITHUB_DARK } from "@/lib/monacoTheme";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ import { repoPathRelativeToGroupFolder } from "@/lib/groupRepos";
 import { isImagePath } from "@/lib/images";
 import { fileReference, sendToActiveTerminal } from "@/features/terminal/sendToTerminal";
 import { useFileContent, useWorktreeStatus } from "./api";
+import { HtmlPreview } from "./HtmlPreview";
 import { ImageView } from "./ImageView";
 import { RepoTree, type TreeChanges } from "./RepoTree";
 import { SearchPanel } from "./SearchPanel";
@@ -144,19 +145,44 @@ export function FilesView() {
   const content = useFileContent(repoId, isImage ? null : selectedPath);
   const editable = content.data?.text != null;
   const dirty = editable && value !== baseline;
-  // Markdown files get a rendered-preview toggle (issue #121); `mdPreview` swaps
-  // the editor between raw source and the rendered view. Its initial state per
-  // file follows the "open markdown in preview" preference.
+  // Markdown (#121) and HTML (#296) files get a rendered-preview toggle;
+  // `preview` swaps the pane between raw source and the rendered view for
+  // whichever of the two is open. Its initial state per file follows that type's
+  // "open in preview" preference. `isHtmlPath` — not `languageFor` — is the HTML
+  // gate: `.vue` also highlights as html but isn't a previewable document.
   const isMarkdown = selectedPath != null && !isImage && languageFor(selectedPath) === "markdown";
+  const isHtml = selectedPath != null && !isImage && isHtmlPath(selectedPath);
   const markdownPreviewByDefault = useSettings((s) => s.values.markdownPreviewByDefault);
-  const [mdPreview, setMdPreview] = useState(markdownPreviewByDefault);
+  const htmlPreviewByDefault = useSettings((s) => s.values.htmlPreviewByDefault);
+  const previewByDefault = isHtml ? htmlPreviewByDefault : markdownPreviewByDefault;
+  const [preview, setPreview] = useState(previewByDefault);
+
+  // Reapply the preview default whenever the open file changes, so opening a
+  // markdown or HTML file lands on that type's preferred view rather than a stale
+  // per-file toggle.
+  //
+  // This is React's documented "adjust state when a prop changes" pattern and it
+  // is deliberately a render-phase reset, **not** a `useEffect` — please don't
+  // "clean it up" into one. React re-renders with the corrected state before any
+  // child commits, whereas an effect lets one whole commit through with the
+  // previous file's `preview`: switching from a markdown file shown in preview to
+  // an `.html` file whose default is Edit would mount `HtmlPreview` for that one
+  // commit, seeded with the *previous* file's buffer (nothing resets `value`
+  // until the content-load effect runs), firing a real request to the CSP-free
+  // preview origin for a file the user isn't previewing.
+  const [prevPath, setPrevPath] = useState(selectedPath);
+  if (prevPath !== selectedPath) {
+    setPrevPath(selectedPath);
+    setPreview(previewByDefault);
+  }
 
   // Whether Monaco (the right-pane render chain's final `else` branch, below)
   // is what's actually shown — gates the word-wrap toggle (#295), which only
   // makes sense while a Monaco editor is mounted. Mirrors that chain's clauses
   // exactly (file selected, not an image, not loading/errored, not
-  // too_large/is_binary/encoding_error, not the markdown preview pane) so the
-  // two can't silently drift; if a clause is added there, add it here too.
+  // too_large/is_binary/encoding_error, not the markdown preview pane, not the
+  // HTML preview pane) so the two can't silently drift; if a clause is added
+  // there, add it here too.
   const editorShown =
     selectedPath != null &&
     !isImage &&
@@ -165,7 +191,8 @@ export function FilesView() {
     !content.data?.too_large &&
     !content.data?.is_binary &&
     !content.data?.encoding_error &&
-    !(isMarkdown && mdPreview);
+    !(isMarkdown && preview) &&
+    !(isHtml && preview);
 
   // Map changed working-tree paths so the tree can highlight files (and the
   // directories that contain them).
@@ -186,12 +213,13 @@ export function FilesView() {
     return { files, dirs };
   }, [status.data]);
 
-  // Reapply the preview default whenever the open file changes, so opening a
-  // markdown file lands on the preferred view rather than a stale per-file
-  // toggle. Re-runs if the preference itself changes while a file is open.
+  // Flipping the preference itself while a file is open re-applies immediately
+  // (#121). The per-file reset lives in the render phase above; this covers only
+  // the "same file, preference changed" case, which no render-phase comparison
+  // can see.
   useEffect(() => {
-    setMdPreview(markdownPreviewByDefault);
-  }, [selectedPath, markdownPreviewByDefault]);
+    setPreview(previewByDefault);
+  }, [previewByDefault]);
 
   // Switching repos: drop the buffer and restore that repo's last-open file.
   useEffect(() => {
@@ -408,22 +436,22 @@ export function FilesView() {
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {isMarkdown && editable && (
+          {(isMarkdown || isHtml) && editable && (
             <div className="mr-1 flex items-center rounded-md border p-0.5">
               {(
                 [
                   ["Edit", false],
                   ["Preview", true],
                 ] as const
-              ).map(([label, preview]) => (
+              ).map(([label, wanted]) => (
                 <button
                   key={label}
                   type="button"
-                  aria-pressed={mdPreview === preview}
-                  onClick={() => setMdPreview(preview)}
+                  aria-pressed={preview === wanted}
+                  onClick={() => setPreview(wanted)}
                   className={cn(
                     "rounded px-2 py-1 text-xs font-medium",
-                    mdPreview === preview
+                    preview === wanted
                       ? "bg-[var(--color-accent)] text-[var(--color-foreground)]"
                       : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
                   )}
@@ -554,10 +582,14 @@ export function FilesView() {
             <div className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--color-muted-foreground)]">
               Not a UTF-8 text file — not shown to avoid corrupting it on save.
             </div>
-          ) : isMarkdown && mdPreview ? (
+          ) : isMarkdown && preview ? (
             <div className="h-full overflow-auto px-6 py-4">
               <Markdown>{value}</Markdown>
             </div>
+          ) : isHtml && preview ? (
+            // Keyed on the path so switching files gets a brand-new frame rather
+            // than showing the previous file's render until the debounce expires.
+            <HtmlPreview key={selectedPath} html={value} />
           ) : (
             <Editor
               height="100%"
