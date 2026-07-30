@@ -26,6 +26,7 @@ export interface Settings {
   terminalCursorBlink: boolean;
   toastTimeout: number; // ms
   markdownPreviewByDefault: boolean; // open .md files in rendered preview, not source
+  htmlPreviewByDefault: boolean; // open .html/.htm files in the sandboxed preview, not source
 
   // Diff & Review
   diffLayout: "side-by-side" | "unified";
@@ -144,6 +145,11 @@ export const DEFAULTS: Settings = {
   // Off → markdown opens in the editable source; the Files view's Edit/Preview
   // toggle still works per-file regardless.
   markdownPreviewByDefault: false,
+  // Off → HTML opens in the editable source. Separate from the markdown
+  // preference on purpose: the two file types are previewed by different
+  // renderers, and one switch labelled for markdown silently governing HTML too
+  // would make that label a lie.
+  htmlPreviewByDefault: false,
 
   diffLayout: "side-by-side",
   reviewMode: "working",

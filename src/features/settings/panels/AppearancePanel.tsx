@@ -21,6 +21,7 @@ export function AppearancePanel() {
   const [markdownPreviewByDefault, setMarkdownPreviewByDefault] = useSetting(
     "markdownPreviewByDefault",
   );
+  const [htmlPreviewByDefault, setHtmlPreviewByDefault] = useSetting("htmlPreviewByDefault");
   const [toastTimeout, setToastTimeout] = useSetting("toastTimeout");
 
   return (
@@ -69,6 +70,12 @@ export function AppearancePanel() {
         hint="Show .md files rendered by default. The Edit/Preview toggle still switches per file."
       >
         <Toggle checked={markdownPreviewByDefault} onChange={setMarkdownPreviewByDefault} />
+      </Field>
+      <Field
+        label="Open HTML in preview"
+        hint="Show .html/.htm files rendered in an isolated preview by default. The Edit/Preview toggle still switches per file."
+      >
+        <Toggle checked={htmlPreviewByDefault} onChange={setHtmlPreviewByDefault} />
       </Field>
       <Divider />
       <Field label="Toast auto-dismiss">
