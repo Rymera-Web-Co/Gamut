@@ -82,4 +82,20 @@ describe("DiffViewControls (#284)", () => {
     prefs.rerender();
     expect(prefs.result.current.wordWrap).toBe("off");
   });
+
+  it("word-wrap button carries the shared visual + a11y treatment (#295 A9b/A11)", () => {
+    render(<DiffViewControls />);
+    const wrap = screen.getByRole("button", { name: "Word wrap" });
+
+    // Unpressed: no active background, icon at the shared size, off tooltip.
+    expect(wrap.className).not.toContain("bg-[var(--color-secondary)]");
+    expect(wrap.querySelector("svg")).toHaveClass("size-3.5");
+    expect(wrap).toHaveAttribute("title", "Word wrap: off (applies to all editors)");
+
+    fireEvent.click(wrap);
+
+    // Pressed: active background applied, tooltip flips to on.
+    expect(wrap.className).toContain("bg-[var(--color-secondary)]");
+    expect(wrap).toHaveAttribute("title", "Word wrap: on (applies to all editors)");
+  });
 });

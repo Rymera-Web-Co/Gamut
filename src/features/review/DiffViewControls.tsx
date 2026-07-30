@@ -1,7 +1,5 @@
-import { WrapText } from "lucide-react";
-
+import { WordWrapToggle } from "@/components/WordWrapToggle";
 import { Segmented, useSetting } from "@/features/settings/controls";
-import { cn } from "@/lib/utils";
 
 /**
  * In-view diff controls for the Review tab (#284): a Side-by-side / Unified
@@ -12,11 +10,12 @@ import { cn } from "@/lib/utils";
  * already reads (`diffLayout`, `editorWordWrap`), so the mounted diff editor
  * updates instantly with no extra rendering code and the choice stays in lock-
  * step with the Settings → Diff & Review defaults (single source of truth). It
- * saves the round-trip into Settings just to flip a diff mid-review.
+ * saves the round-trip into Settings just to flip a diff mid-review. The wrap
+ * toggle is the shared `WordWrapToggle` (#295) — the Files tab header renders
+ * the same component so the two stay visually and behaviourally identical.
  */
 export function DiffViewControls() {
   const [diffLayout, setDiffLayout] = useSetting("diffLayout");
-  const [wordWrap, setWordWrap] = useSetting("editorWordWrap");
 
   return (
     <div className="flex shrink-0 items-center gap-1.5">
@@ -28,20 +27,7 @@ export function DiffViewControls() {
           { value: "unified", label: "Unified", title: "Single-column inline diff" },
         ]}
       />
-      <button
-        aria-label="Word wrap"
-        aria-pressed={wordWrap}
-        title={`Word wrap: ${wordWrap ? "on" : "off"} (applies to all editors)`}
-        onClick={() => setWordWrap(!wordWrap)}
-        className={cn(
-          "inline-flex h-7 items-center justify-center rounded-md px-2 transition-colors",
-          wordWrap
-            ? "bg-[var(--color-secondary)] text-[var(--color-secondary-foreground)]"
-            : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
-        )}
-      >
-        <WrapText className="size-3.5" />
-      </button>
+      <WordWrapToggle />
     </div>
   );
 }
