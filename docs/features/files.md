@@ -102,6 +102,12 @@ Right-click any tree entry:
 
 ## Header actions
 
+- **Word wrap** — wraps long lines at the viewport edge instead of scrolling sideways,
+  handy for a minified file or a long single-line log. It's the same global preference as
+  Settings → Appearance → *Editor word wrap* and the wrap button in the
+  [Review](review.md) tab, so flipping it here changes all of them and the choice sticks
+  across restarts. Off by default. Only shown while a file is open in the editor — not for
+  the markdown preview, images, or files that can't be edited here.
 - **View changes** — jumps to the [Review](review.md) tab in working-tree mode (showing
   your current uncommitted changes, rather than a specific past commit).
 - **Reveal** — opens the selected file (or the repo root) in Finder / Explorer.
