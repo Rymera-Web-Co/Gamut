@@ -6,6 +6,7 @@ import { Markdown } from "@/components/Markdown";
 // Lazy Monaco wrapper — aliased to `Editor` so the JSX below is unchanged (#141).
 import { CodeEditor as Editor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
+import { WordWrapToggle } from "@/components/WordWrapToggle";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isModalOpen } from "@/lib/dom";
@@ -149,6 +150,22 @@ export function FilesView() {
   const isMarkdown = selectedPath != null && !isImage && languageFor(selectedPath) === "markdown";
   const markdownPreviewByDefault = useSettings((s) => s.values.markdownPreviewByDefault);
   const [mdPreview, setMdPreview] = useState(markdownPreviewByDefault);
+
+  // Whether Monaco (the right-pane render chain's final `else` branch, below)
+  // is what's actually shown — gates the word-wrap toggle (#295), which only
+  // makes sense while a Monaco editor is mounted. Mirrors that chain's clauses
+  // exactly (file selected, not an image, not loading/errored, not
+  // too_large/is_binary/encoding_error, not the markdown preview pane) so the
+  // two can't silently drift; if a clause is added there, add it here too.
+  const editorShown =
+    selectedPath != null &&
+    !isImage &&
+    !content.isLoading &&
+    !content.isError &&
+    !content.data?.too_large &&
+    !content.data?.is_binary &&
+    !content.data?.encoding_error &&
+    !(isMarkdown && mdPreview);
 
   // Map changed working-tree paths so the tree can highlight files (and the
   // directories that contain them).
@@ -416,6 +433,7 @@ export function FilesView() {
               ))}
             </div>
           )}
+          {editorShown && <WordWrapToggle />}
           {repo?.is_git_repo !== false && selectedPath && (
             <Button
               size="sm"
