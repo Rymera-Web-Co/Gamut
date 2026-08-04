@@ -1,6 +1,14 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Auto-pull follows the global Auto-fetch setting (the one master switch for
+// background git work), read via selector: useSettings((s) => s.values.x).
+let settingsValues = { autoFetch: true };
+vi.mock("@/lib/settings", () => ({
+  useSettings: (selector: (s: { values: typeof settingsValues }) => unknown) =>
+    selector({ values: settingsValues }),
+}));
+
 const runAutoPull = vi.fn();
 vi.mock("@/lib/autoPull", () => ({
   runAutoPull: (...args: unknown[]) => runAutoPull(...args),
@@ -56,8 +64,8 @@ describe("useAutoPull (issue #299 — launch and focus triggers)", () => {
     nowMs = 0;
     vi.spyOn(performance, "now").mockImplementation(() => nowMs);
     focusListener = undefined;
-    isFocused.mockResolvedValue(true);
-    runAutoPull.mockResolvedValue([]);
+    settingsValues = { autoFetch: true };
+    // `clearAllMocks` wipes calls, not implementations — so seed them after it.
     vi.clearAllMocks();
     isFocused.mockResolvedValue(true);
     runAutoPull.mockResolvedValue([]);
@@ -163,6 +171,7 @@ describe("useAutoPull — refresh scoping (issue #299)", () => {
     nowMs = 0;
     vi.spyOn(performance, "now").mockImplementation(() => nowMs);
     focusListener = undefined;
+    settingsValues = { autoFetch: true };
     vi.clearAllMocks();
     isFocused.mockResolvedValue(true);
   });
@@ -206,5 +215,70 @@ describe("useAutoPull — refresh scoping (issue #299)", () => {
 
     expect(patchRepoStatuses).not.toHaveBeenCalled();
     expect(refreshScopedRepos).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAutoPull — gated on the global Auto-fetch setting (issue #299)", () => {
+  beforeEach(() => {
+    nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    focusListener = undefined;
+    settingsValues = { autoFetch: true };
+    vi.clearAllMocks();
+    isFocused.mockResolvedValue(true);
+    runAutoPull.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("A25: with Auto-fetch off, launch pulls nothing", async () => {
+    settingsValues = { autoFetch: false };
+    renderHook(() => useAutoPull());
+    await drain();
+
+    expect(runAutoPull).not.toHaveBeenCalled();
+  });
+
+  it("A25: with Auto-fetch off, a focus regain pulls nothing either", async () => {
+    settingsValues = { autoFetch: false };
+    renderHook(() => useAutoPull());
+    await drain();
+
+    nowMs = AUTO_PULL_MIN_GAP_MS * 2;
+    setFocused(true);
+    await drain();
+
+    expect(runAutoPull).not.toHaveBeenCalled();
+  });
+
+  it("A25: switching Auto-fetch back on pulls once, like coming back to the app", async () => {
+    settingsValues = { autoFetch: false };
+    const { rerender } = renderHook(() => useAutoPull());
+    await drain();
+    expect(runAutoPull).not.toHaveBeenCalled();
+
+    settingsValues = { autoFetch: true };
+    rerender();
+    await drain();
+
+    expect(runAutoPull).toHaveBeenCalledTimes(1);
+  });
+
+  it("A25: switching Auto-fetch off tears the triggers down", async () => {
+    const { rerender } = renderHook(() => useAutoPull());
+    await drain();
+    runAutoPull.mockClear();
+
+    settingsValues = { autoFetch: false };
+    rerender();
+    await drain();
+
+    nowMs = AUTO_PULL_MIN_GAP_MS * 3;
+    setFocused(true);
+    await drain();
+
+    expect(runAutoPull).not.toHaveBeenCalled();
   });
 });

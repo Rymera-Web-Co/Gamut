@@ -34,7 +34,13 @@ shows the current state (`Auto-pull: on` / `Auto-pull: off`); it's **off** for e
 until you switch it on, and it's remembered between launches. It's deliberately per repository
 rather than per group, because a group usually mixes repos you commit to with repos you don't.
 
-An enabled repository is brought up to date at these moments:
+Auto-pull runs only while the global **Auto-fetch repositories** setting (Settings → Git & Repos)
+is on — that toggle is the single master switch for *all* background git activity, so turning it
+off pauses auto-pull too. An opted-in repository then simply waits, and the context-menu item says
+so (`Auto-pull: on (paused — Auto-fetch is off)`). Switching Auto-fetch back on brings the
+opted-in repositories up to date straight away.
+
+While background sync is on, an enabled repository is brought up to date at these moments:
 
 - **When you come back to Gamut** — on launch, and when the window regains focus (at most once
   every 30 seconds, so flipping between apps doesn't cause a flurry of git activity).

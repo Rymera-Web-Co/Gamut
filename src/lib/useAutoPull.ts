@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { runAutoPull } from "@/lib/autoPull";
 import { patchRepoStatuses, refreshScopedRepos } from "@/lib/repoStatusRefresh";
+import { useSettings } from "@/lib/settings";
 
 /**
  * Shortest gap between two focus-driven auto-pull rounds. Mirrors
@@ -20,6 +21,12 @@ export const AUTO_PULL_MIN_GAP_MS = 30_000;
  *
  * Only repos the user opted in are touched, and only ever as a clean
  * fast-forward; `lib/autoPull.ts` and the backend own those rules.
+ *
+ * The global **Auto-fetch repositories** setting is the master switch for all of
+ * this: with it off, auto-pull is paused too, so one control turns off *all*
+ * background git activity rather than leaving a second kind of it running. The
+ * per-repo opt-in then means "keep this repo current whenever background sync is
+ * on", not "sync this repo regardless".
  *
  * Focus discipline matches auto-fetch (#273): nothing runs while the window is
  * unfocused, so the app can't be caught doing background git work behind the
@@ -40,7 +47,15 @@ export const AUTO_PULL_MIN_GAP_MS = 30_000;
  * exactly as an in-flight `useAutoFetch` tick does.
  */
 export function useAutoPull() {
+  const enabled = useSettings((s) => s.values.autoFetch);
+
   useEffect(() => {
+    // `Auto-fetch repositories` is the master switch for background git work
+    // (see the module comment): with it off, no trigger runs and an opted-in repo
+    // simply waits. Switching it back on re-runs this effect, which pulls once —
+    // the same "you came back" round as launch.
+    if (!enabled) return;
+
     let disposed = false;
     // Time of the last round this hook started. Initialised a full gap in the
     // past so the launch round isn't suppressed by its own throttle.
@@ -82,5 +97,5 @@ export function useAutoPull() {
       disposed = true;
       void unlistenPromise.then((off) => off()).catch(() => {});
     };
-  }, []);
+  }, [enabled]);
 }

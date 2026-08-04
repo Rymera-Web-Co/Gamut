@@ -2,6 +2,7 @@ import { ArrowDownToLine, Check } from "lucide-react";
 
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import type { Repo } from "@/lib/ipc";
+import { useSettings } from "@/lib/settings";
 
 import { useSetRepoAutoPull } from "./api";
 
@@ -17,7 +18,15 @@ import { useSetRepoAutoPull } from "./api";
  */
 export function AutoPullMenuItem({ repo, onDone }: { repo: Repo; onDone: () => void }) {
   const setAutoPull = useSetRepoAutoPull();
-  const label = repo.auto_pull ? "Auto-pull: on" : "Auto-pull: off";
+  // Auto-pull follows the global Auto-fetch setting (it is the one master switch
+  // for background git work). Saying so *here* is what keeps that dependency from
+  // being invisible: otherwise turning this on with Auto-fetch off looks broken.
+  const backgroundSyncOn = useSettings((s) => s.values.autoFetch);
+  const label = repo.auto_pull
+    ? backgroundSyncOn
+      ? "Auto-pull: on"
+      : "Auto-pull: on (paused — Auto-fetch is off)"
+    : "Auto-pull: off";
   return (
     <ContextMenuItem
       onClick={() => {

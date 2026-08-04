@@ -77,7 +77,7 @@ export function GitPanel() {
       <Divider />
       <Field
         label="Auto-fetch repositories"
-        hint="Periodically fetch all repos in the background so ahead/behind counts and branches stay current."
+        hint="Periodically fetch all repos in the background so ahead/behind counts and branches stay current. Also the master switch for per-repo auto-pull — with this off, no background git work runs at all."
       >
         <Toggle checked={autoFetch} onChange={setAutoFetch} />
       </Field>

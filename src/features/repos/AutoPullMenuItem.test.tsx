@@ -10,6 +10,13 @@ vi.mock("@/lib/ipc", () => ({ ipc: { setRepoAutoPull } }));
 const error = vi.fn();
 vi.mock("@/store/toast", () => ({ toast: { error: (m: string) => error(m) } }));
 
+// Auto-pull follows the global Auto-fetch setting, and the item says so.
+let settingsValues = { autoFetch: true };
+vi.mock("@/lib/settings", () => ({
+  useSettings: (selector: (s: { values: typeof settingsValues }) => unknown) =>
+    selector({ values: settingsValues }),
+}));
+
 import { canAutoPull } from "@/lib/autoPull";
 
 import { AutoPullMenuItem } from "./AutoPullMenuItem";
@@ -50,6 +57,7 @@ describe("AutoPullMenuItem (issue #299)", () => {
     setRepoAutoPull.mockReset();
     setRepoAutoPull.mockResolvedValue(undefined);
     error.mockClear();
+    settingsValues = { autoFetch: true };
   });
 
   it("A19: shows the repo's current state — off", () => {
@@ -62,6 +70,24 @@ describe("AutoPullMenuItem (issue #299)", () => {
     const { item } = renderItem(repo({ auto_pull: true }));
 
     expect(item).toHaveTextContent("Auto-pull: on");
+  });
+
+  it("A25: an opted-in repo reads as paused while Auto-fetch is off", () => {
+    settingsValues = { autoFetch: false };
+    const { item } = renderItem(repo({ auto_pull: true }));
+
+    // The dependency has to be visible where the user acts on it, or turning
+    // auto-pull on with background sync off just looks broken.
+    expect(item).toHaveTextContent("paused");
+    expect(item).toHaveTextContent("Auto-fetch is off");
+  });
+
+  it("A25: an opted-out repo reads plainly regardless of Auto-fetch", () => {
+    settingsValues = { autoFetch: false };
+    const { item } = renderItem(repo({ auto_pull: false }));
+
+    expect(item).toHaveTextContent("Auto-pull: off");
+    expect(item).not.toHaveTextContent("paused");
   });
 
   it("the state icon is decorative — it isn't announced on top of the label", () => {
