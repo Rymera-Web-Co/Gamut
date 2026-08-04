@@ -54,6 +54,9 @@ pub fn run() {
                 git_gate: tokio::sync::Semaphore::new(state::GIT_STATUS_CONCURRENCY),
                 origin_slug_cache: Mutex::new(HashMap::new()),
                 op_log: Mutex::new(VecDeque::new()),
+                // Survive restarts (#301): seed the ring from whatever
+                // `errors.log` already holds in this data dir.
+                error_log: Mutex::new(commands::diagnostics::hydrate_error_log(&data_dir)),
                 ide: Mutex::new(None),
             });
 
@@ -220,6 +223,8 @@ pub fn run() {
             commands::diagnostics::diagnostics_snapshot,
             commands::diagnostics::diagnostics_write,
             commands::diagnostics::diagnostics_record_stall,
+            commands::diagnostics::errors_record,
+            commands::diagnostics::errors_clear,
             commands::ide::ide_status,
             commands::ide::ide_selection_changed,
         ])

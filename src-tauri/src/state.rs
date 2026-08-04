@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use tokio::sync::Semaphore;
 
 use crate::claude_ide::IdeHandle;
-use crate::commands::diagnostics::OpTiming;
+use crate::commands::diagnostics::{ErrorEntry, OpTiming};
 use crate::commands::terminal::{Session, TerminalInfo};
 use crate::watch::RepoWatcher;
 
@@ -77,6 +77,12 @@ pub struct AppState {
     /// Rolling in-memory log of git operation timings for diagnostics (#90);
     /// capped at `commands::diagnostics::OP_LOG_CAP`.
     pub op_log: Mutex<VecDeque<OpTiming>>,
+    /// Rolling in-memory log of captured error-toast messages (#301) — the
+    /// single source of truth for both the Diagnostics panel's "Recent
+    /// errors" section and the Copy/Save bundle. Mirrors `errors.log` in the
+    /// app data dir (hydrated on setup, appended to on every capture) and is
+    /// capped at `commands::diagnostics::ERROR_LOG_CAP`.
+    pub error_log: Mutex<VecDeque<ErrorEntry>>,
     /// Handle to the Claude Code IDE WebSocket server, once started (best-effort:
     /// `None` if the bind failed). Terminals read its port to advertise
     /// `CLAUDE_CODE_SSE_PORT`; the frontend pushes editor selections through it.

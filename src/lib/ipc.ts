@@ -570,6 +570,12 @@ export interface OpStat {
   avg_ms: number;
 }
 
+/** One captured error-toast message in the diagnostics log (#301). */
+export interface ErrorEntry {
+  at_ms: number;
+  message: string;
+}
+
 /** A point-in-time diagnostics bundle (#90). */
 export interface Diagnostics {
   app_version: string;
@@ -582,6 +588,9 @@ export interface Diagnostics {
   watch_failed_count: number;
   op_stats: OpStat[];
   recent_ops: OpTiming[];
+  /** Optional defensively: read as `?? []` so a partial payload renders the
+   * empty state instead of blanking the whole panel (#301). */
+  recent_errors?: ErrorEntry[];
 }
 
 export const ipc = {
@@ -926,6 +935,9 @@ export const ipc = {
   diagnostics: () => invoke<Diagnostics>("diagnostics_snapshot"),
   diagnosticsWrite: (path: string) => invoke<void>("diagnostics_write", { path }),
   recordStall: (gapMs: number) => invoke<void>("diagnostics_record_stall", { gapMs }),
+  // captured error log (#301)
+  recordError: (message: string) => invoke<void>("errors_record", { message }),
+  clearErrors: () => invoke<void>("errors_clear"),
 
   // Claude Code IDE integration: push the current editor selection to any
   // `claude` running in an integrated terminal, so it lands as ambient context.
