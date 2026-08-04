@@ -43,6 +43,7 @@ function repo(id: number, groupIds: number[]): Repo {
     missing: false,
     is_git_repo: true,
     has_worktrees: false,
+    auto_pull: false,
   };
 }
 
