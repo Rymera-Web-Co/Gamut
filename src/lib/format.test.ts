@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { GRAPH_COLORS, graphColor, relativeTime, relativeTimeSqlite } from "@/lib/format";
+import {
+  GRAPH_COLORS,
+  graphColor,
+  relativeTime,
+  relativeTimeSqlite,
+  formatTimestampMs,
+} from "@/lib/format";
 
 describe("graphColor", () => {
   it("returns the color at the given lane index", () => {
@@ -40,5 +46,19 @@ describe("relativeTimeSqlite", () => {
 
   it("returns an empty string for unparseable input", () => {
     expect(relativeTimeSqlite("not a date")).toBe("");
+  });
+});
+
+describe("formatTimestampMs (#301)", () => {
+  // vitest.config.ts pins TZ=UTC, so a known epoch-ms produces one exact
+  // expected string regardless of the runner's own local timezone.
+  it("renders exactly YYYY-MM-DD HH:MM:SS", () => {
+    // 2024-03-07T09:05:03.000Z
+    expect(formatTimestampMs(1_709_802_303_000)).toBe("2024-03-07 09:05:03");
+  });
+
+  it("zero-pads a single-digit month, day, and hour", () => {
+    // 2024-01-02T03:04:05.000Z
+    expect(formatTimestampMs(1_704_164_645_000)).toBe("2024-01-02 03:04:05");
   });
 });

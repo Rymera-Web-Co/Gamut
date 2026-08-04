@@ -4,9 +4,22 @@ import { Copy, Download, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { copy } from "@/lib/clipboard";
-import { ipc, pickSavePath, type Diagnostics } from "@/lib/ipc";
+import { formatTimestampMs } from "@/lib/format";
+import { ipc, pickSavePath, type Diagnostics, type ErrorEntry } from "@/lib/ipc";
 import { toast } from "@/store/toast";
 import { Divider, PanelTitle } from "../controls";
+
+/**
+ * Render an error entry's copy payload — shared by per-row and "Copy all".
+ *
+ * Uses an ISO-8601 UTC stamp rather than the row's local-time display format:
+ * this text is headed for a bug report, where a bare local time with no offset
+ * can't be correlated against a UTC log, a CI run, or another reporter's paste.
+ * The row itself still shows local time, which is what the user recognises.
+ */
+function errorRowText(entry: ErrorEntry): string {
+  return `${new Date(entry.at_ms).toISOString()}  ${entry.message}`;
+}
 
 export function DiagnosticsPanel() {
   const [data, setData] = useState<Diagnostics | null>(null);
@@ -37,6 +50,41 @@ export function DiagnosticsPanel() {
     try {
       await ipc.diagnosticsWrite(path);
       toast.success("Diagnostics saved");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  // Read defensively: an older/partial snapshot without the field must not
+  // blank the whole panel (#301).
+  const errors = data?.recent_errors ?? [];
+  // Newest-first by insertion order — never a timestamp sort, so entries
+  // recorded in the same millisecond keep a stable order.
+  const errorsNewestFirst = [...errors].reverse();
+
+  const onCopyErrorRow = async (entry: ErrorEntry) => {
+    await copy(errorRowText(entry), "Error copied to clipboard");
+  };
+
+  const onCopyAllErrors = async () => {
+    if (errorsNewestFirst.length === 0) return;
+    await copy(errorsNewestFirst.map(errorRowText).join("\n"), "Errors copied to clipboard");
+  };
+
+  const onClearErrors = async () => {
+    // Guarded: this permanently deletes both the ring and `errors.log`, which
+    // is the only copy of the errors the user most likely opened this panel to
+    // retrieve — and the button sits right next to a copy control.
+    const count = errorsNewestFirst.length;
+    if (
+      !window.confirm(`Delete ${count} recorded error${count === 1 ? "" : "s"}? Can't be undone.`)
+    )
+      return;
+    try {
+      await ipc.clearErrors();
+      // Re-read from the backend rather than optimistically emptying local
+      // state, so a rejected clear (below) leaves the list intact (#301).
+      refresh();
     } catch (e) {
       toast.error(String(e));
     }
@@ -127,6 +175,63 @@ export function DiagnosticsPanel() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          <Divider />
+          <div className="mb-1 flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+              Recent errors
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={errorsNewestFirst.length === 0}
+                onClick={() => void onCopyAllErrors()}
+              >
+                Copy all
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={errorsNewestFirst.length === 0}
+                onClick={() => void onClearErrors()}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+          {errorsNewestFirst.length === 0 ? (
+            <p className="text-xs text-[var(--color-muted-foreground)]">No errors recorded.</p>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {errorsNewestFirst.map((entry, i) => (
+                <li
+                  key={`${entry.at_ms}-${i}`}
+                  className="flex items-start justify-between gap-2 border-t pt-1"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[var(--color-muted-foreground)] tabular-nums">
+                      {formatTimestampMs(entry.at_ms)}
+                    </div>
+                    <div className="line-clamp-3 whitespace-pre-wrap break-words font-mono">
+                      {entry.message}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    aria-label={`Copy error from ${formatTimestampMs(entry.at_ms)}`}
+                    onClick={() => void onCopyErrorRow(entry)}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
           )}
         </>
       )}
