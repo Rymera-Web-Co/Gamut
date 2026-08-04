@@ -34,6 +34,11 @@ pub struct Repo {
     /// at all — repos with none skip it entirely. May lag reality until the
     /// next status scan; the live value rides on `RepoStatus`.
     pub has_worktrees: bool,
+    /// Opted into background auto-pull (#299): when the app notices this repo is
+    /// behind its upstream it fast-forwards the branch, without the user clicking
+    /// pull. Off by default, and only ever a clean fast-forward — the eligibility
+    /// rules and the skip-and-warn behaviour live in `sync::git_pull_ff_many`.
+    pub auto_pull: bool,
 }
 
 #[derive(Serialize)]
@@ -44,7 +49,7 @@ pub struct DiscoveredRepo {
     pub already_registered: bool,
 }
 
-fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
+pub(crate) fn lock(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
     state
         .db
         .lock()
@@ -74,22 +79,33 @@ fn id_map(conn: &Connection, sql: &str) -> AppResult<HashMap<i64, Vec<i64>>> {
 }
 
 fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
-    let (path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees) = conn
-        .query_row(
-            "SELECT path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees FROM repos WHERE id = ?1",
-            [id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, i64>(5)? != 0,
-                    row.get::<_, i64>(6)? != 0,
-                ))
-            },
-        )?;
+    let (
+        path,
+        name,
+        default_branch,
+        last_opened,
+        created_at,
+        is_git_repo,
+        has_worktrees,
+        auto_pull,
+    ) = conn.query_row(
+        "SELECT path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees,
+                auto_pull
+         FROM repos WHERE id = ?1",
+        [id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)? != 0,
+                row.get::<_, i64>(6)? != 0,
+                row.get::<_, i64>(7)? != 0,
+            ))
+        },
+    )?;
 
     let missing = !std::path::Path::new(&path).exists();
 
@@ -109,6 +125,7 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
         missing,
         is_git_repo,
         has_worktrees,
+        auto_pull,
     })
 }
 
@@ -333,7 +350,8 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
     let mut groups = id_map(conn, "SELECT repo_id, group_id FROM repo_groups")?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo, has_worktrees
+        "SELECT id, path, name, default_branch, last_opened, created_at, is_git_repo,
+                has_worktrees, auto_pull
          FROM repos ORDER BY sort, name COLLATE NOCASE",
     )?;
     let rows = stmt
@@ -347,6 +365,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)? != 0,
                 row.get::<_, i64>(7)? != 0,
+                row.get::<_, i64>(8)? != 0,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -363,6 +382,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                 created_at,
                 is_git_repo,
                 has_worktrees,
+                auto_pull,
             )| {
                 let missing = !std::path::Path::new(&path).exists();
                 Repo {
@@ -377,6 +397,7 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                     missing,
                     is_git_repo,
                     has_worktrees,
+                    auto_pull,
                 }
             },
         )
@@ -413,6 +434,25 @@ fn invalidate_origin_slug(state: &State<AppState>, id: i64) {
     if let Ok(mut cache) = state.origin_slug_cache.lock() {
         cache.remove(&id);
     }
+}
+
+/// Turn background auto-pull on or off for one repo (#299) — the per-repo opt-in
+/// behind the sidebar's context-menu toggle. Only this repo's flag changes; the
+/// pull itself stays fast-forward-only regardless (`sync::git_pull_ff_many`).
+#[tauri::command]
+pub fn set_repo_auto_pull(state: State<AppState>, repo_id: i64, enabled: bool) -> AppResult<()> {
+    let conn = lock(&state)?;
+    set_auto_pull(&conn, repo_id, enabled)
+}
+
+/// Query core of [`set_repo_auto_pull`], over a plain `&Connection` so a test can
+/// exercise the write (and its per-repo scoping) without a Tauri `State`.
+fn set_auto_pull(conn: &Connection, repo_id: i64, enabled: bool) -> AppResult<()> {
+    conn.execute(
+        "UPDATE repos SET auto_pull = ?1 WHERE id = ?2",
+        rusqlite::params![enabled as i64, repo_id],
+    )?;
+    Ok(())
 }
 
 /// Persist a new ordering for repos (drag-and-drop). `repo_ids` is the desired
@@ -457,12 +497,16 @@ pub struct RepoStatus {
 }
 
 /// Whether the repo's working tree has any uncommitted changes — staged,
-/// unstaged, or untracked. This is the cheap "is there *any* change?" check for
+/// unstaged, or untracked. Also the cleanliness predicate for auto-pull (#299),
+/// which skips a repo rather than fast-forwarding it when this is true; that is
+/// deliberately stricter than `git merge --ff-only` (which tolerates untracked
+/// files), so "clean" means the same thing to the sidebar dot and to auto-pull.
+/// This is the cheap "is there *any* change?" check for
 /// the sidebar dirty-dot, so it differs from `git_worktree_status`'s two-diff
 /// scan (#138): a single `statuses()` pass that stops at the first untracked
 /// *directory* rather than walking its files. HEAD may be unborn (a fresh
 /// repo) — then the index alone counts.
-fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
+pub(crate) fn has_uncommitted_changes(repo: &git2::Repository) -> bool {
     let mut opts = git2::StatusOptions::new();
     // A single status pass covers staged (HEAD→index) and unstaged (index→wd)
     // changes plus untracked files, instead of two full working-tree diffs
@@ -1070,5 +1114,55 @@ mod tests {
         assert_eq!(sync_folder_group(&conn, 1, &folder).unwrap(), 0);
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The auto-pull opt-in (#299) is per repo: flipping one repo's flag must not
+    /// enrol its neighbours, since the flag is what licenses a background write to
+    /// that repo's working tree. Also pins the read path (`list_repos_from_conn`)
+    /// and the default.
+    #[test]
+    fn set_auto_pull_writes_exactly_one_repo() {
+        let root = std::env::temp_dir().join(format!("gamut_auto_pull_db_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // The real migration runner, so the column under test is the shipped one.
+        let conn = crate::db::open(root.join("gamut.db")).unwrap();
+        conn.execute(
+            "INSERT INTO repos (id, path, name) VALUES (1, '/repos/a', 'a'), (2, '/repos/b', 'b')",
+            [],
+        )
+        .unwrap();
+
+        let flags = |conn: &Connection| -> Vec<(i64, bool)> {
+            list_repos_from_conn(conn)
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.id, r.auto_pull))
+                .collect()
+        };
+
+        assert_eq!(
+            flags(&conn),
+            vec![(1, false), (2, false)],
+            "every repo starts opted out"
+        );
+
+        set_auto_pull(&conn, 1, true).unwrap();
+        assert_eq!(
+            flags(&conn),
+            vec![(1, true), (2, false)],
+            "only the named repo is opted in"
+        );
+
+        set_auto_pull(&conn, 1, false).unwrap();
+        assert_eq!(flags(&conn), vec![(1, false), (2, false)], "and back off");
+
+        // An unknown id is a no-op, not an error — the row may have been removed
+        // between the menu click and the write.
+        assert!(set_auto_pull(&conn, 404, true).is_ok());
+        assert_eq!(flags(&conn), vec![(1, false), (2, false)]);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

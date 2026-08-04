@@ -26,6 +26,7 @@ import {
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
@@ -48,6 +49,7 @@ import {
   useRepos,
   useSetRepoGroups,
 } from "./api";
+import { AutoPullMenuItem } from "./AutoPullMenuItem";
 import { DiscoverDialog } from "./DiscoverDialog";
 import { GroupDialog } from "./GroupDialog";
 
@@ -683,6 +685,10 @@ export function RepoSidebar() {
               <Copy />
               Copy repo name
             </ContextMenuItem>
+            {/* Hidden for plain folders and missing repos — see canAutoPull. */}
+            {canAutoPull(menu.repo) && (
+              <AutoPullMenuItem repo={menu.repo} onDone={() => setMenu(null)} />
+            )}
             {/* Hidden unless the repo has a resolvable origin remote (see the
                 useRepoRemoteUrl call above), matching how "Open terminal here"
                 hides rather than showing a dead entry. */}

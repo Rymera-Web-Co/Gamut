@@ -246,6 +246,260 @@ pub async fn git_pull(state: State<'_, AppState>, repo_id: i64) -> AppResult<Str
     run_git(&dir.to_string_lossy(), &["pull"]).await
 }
 
+/// What auto-pull did (or deliberately didn't do) to one repo. Serialised in
+/// kebab-case so the frontend switches on stable string literals.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AutoPullStatus {
+    /// Fast-forwarded to the upstream commit.
+    Pulled,
+    /// Nothing to pull — not behind. A no-op, *not* something to warn about,
+    /// even if the working tree happens to be dirty.
+    UpToDate,
+    /// Behind, but the working tree has uncommitted changes. Skipped: auto-pull
+    /// never stashes.
+    SkippedDirty,
+    /// Behind *and* ahead — the branch has diverged, so a pull would merge or
+    /// rebase. Skipped: auto-pull never creates a merge commit.
+    SkippedDiverged,
+    /// No upstream to pull from (also covers a detached HEAD, which the shared
+    /// `sync_status_at` reports the same way).
+    SkippedNoUpstream,
+    /// There is nothing here to pull: the repo's folder is gone, the row isn't
+    /// opted in, or it isn't readable as a git repo. Distinct from
+    /// `SkippedNoUpstream` so the UI doesn't tell the user a *missing folder* has
+    /// "no upstream branch"; nothing is surfaced for this at all.
+    SkippedUnavailable,
+    /// The repo was eligible but `git pull --ff-only` failed (e.g. the network is
+    /// down, or the upstream moved on and diverged after the eligibility check).
+    Failed,
+}
+
+/// Outcome of auto-pulling one repo within a batch [`git_pull_ff_many`] call.
+#[derive(Serialize)]
+pub struct AutoPullResult {
+    pub repo_id: i64,
+    pub status: AutoPullStatus,
+    /// Raw `git pull` stdout for a `Pulled` repo, so the frontend can condense it
+    /// with the existing `summarizePull` (#76) instead of inventing its own copy.
+    pub output: Option<String>,
+    /// Why a `Failed` repo failed (git's stderr). Skips carry their reason in
+    /// `status` instead.
+    pub error: Option<String>,
+}
+
+/// Decide whether `path` may be auto-pulled right now, reusing the very same
+/// ahead/behind + upstream logic as [`git_sync_status`] and the same dirty check
+/// as the sidebar's dirty dot. Returns `None` when the repo is eligible for a
+/// fast-forward, or `Some(status)` for the outcome to report instead.
+///
+/// Order matters: "not behind" is decided **before** cleanliness, so a repo with
+/// local edits and nothing to pull reports `UpToDate` rather than `SkippedDirty`.
+/// Otherwise every fetch cycle would warn about a dirty repo that had nothing to
+/// pull anyway — the common case for a repo you're actively working in.
+fn auto_pull_eligibility(path: &std::path::Path) -> Option<AutoPullStatus> {
+    let status = match sync_status_at(path) {
+        Ok(s) => s,
+        // Not readable as a git repo at all — nothing to pull, and not something
+        // to describe to the user as an upstream problem.
+        Err(_) => return Some(AutoPullStatus::SkippedUnavailable),
+    };
+    if status.upstream.is_none() {
+        return Some(AutoPullStatus::SkippedNoUpstream);
+    }
+    if status.behind == 0 {
+        return Some(AutoPullStatus::UpToDate);
+    }
+    if status.ahead > 0 {
+        return Some(AutoPullStatus::SkippedDiverged);
+    }
+    match crate::git::open(path) {
+        Ok(repo) if crate::commands::repo::has_uncommitted_changes(&repo) => {
+            Some(AutoPullStatus::SkippedDirty)
+        }
+        Ok(_) => None,
+        // Only reachable if the repo went away between the two reads above.
+        Err(_) => Some(AutoPullStatus::SkippedUnavailable),
+    }
+}
+
+/// Fast-forward one repo if — and only if — it is eligible. The eligibility read
+/// runs on a blocking thread (git2, like every other status read here), and the
+/// pull itself is `--ff-only`: that flag, not the pre-check, is what makes the
+/// "never merge, never rebase" guarantee hold even if the upstream diverges in
+/// the window between the two.
+async fn auto_pull_one(repo_id: i64, dir: PathBuf) -> (AutoPullResult, Option<OpTiming>) {
+    let probe = dir.clone();
+    let skip = tokio::task::spawn_blocking(move || auto_pull_eligibility(&probe))
+        .await
+        // A panicked probe is treated as "don't touch this repo".
+        .unwrap_or(Some(AutoPullStatus::Failed));
+    if let Some(status) = skip {
+        return (
+            AutoPullResult {
+                repo_id,
+                status,
+                output: None,
+                error: None,
+            },
+            None,
+        );
+    }
+
+    let started = std::time::Instant::now();
+    let pulled = pull_ff_only(&dir).await;
+    let timing = OpTiming::finished(
+        "git_auto_pull",
+        Some(repo_id),
+        started,
+        pulled.is_ok(),
+        pulled.as_ref().err().map(|e| e.to_string()),
+    );
+    let result = match pulled {
+        Ok(out) => AutoPullResult {
+            repo_id,
+            status: AutoPullStatus::Pulled,
+            output: Some(out),
+            error: None,
+        },
+        Err(e) => AutoPullResult {
+            repo_id,
+            status: AutoPullStatus::Failed,
+            output: None,
+            error: Some(e.to_string()),
+        },
+    };
+    (result, Some(timing))
+}
+
+/// The one place auto-pull actually touches a working tree, and the only place
+/// the "never touch local work" promise is actually enforced. `--ff-only` makes
+/// git refuse anything but a fast-forward, so this can never produce a merge
+/// commit or a rebase no matter what the repo's state turned out to be —
+/// including the case where the upstream diverged *after*
+/// [`auto_pull_eligibility`] looked, and including a user whose config sets
+/// `pull.rebase = true` (the explicit flag wins and git aborts).
+///
+/// The `-c` overrides are not belt-and-braces, they close real holes in a
+/// *background* pull, because parts of a pull are still config-driven:
+///
+/// - **`merge.autoStash` / `rebase.autoStash`** — with either set (a common
+///   developer config), `git pull --ff-only` will stash the working tree, fast-
+///   forward, and pop. When the pop conflicts it leaves **conflict markers in the
+///   user's files** and a dangling `autostash` entry. That is precisely the "never
+///   stashes, never touches local work" guarantee this feature makes, and the
+///   eligibility pre-check cannot prevent it: the tree only has to become dirty
+///   during the pull's own network fetch (an editor save, a watcher, a build, or a
+///   Gamut terminal running something) for the window to open.
+/// - **`submodule.recurse`** — with it set, the pull also checks out submodules.
+///   A dirty submodule then makes git exit non-zero *after* the parent has
+///   fast-forwarded, and submodules are deliberately excluded from the
+///   cleanliness check (see `repo::has_uncommitted_changes`), so auto-pull would
+///   half-update a repo it believed to be clean. Submodule updates stay the user's
+///   explicit action.
+///
+/// It is a `pull`, not a `merge` against already-fetched refs, on purpose: the
+/// pull's own fetch is what makes the launch/focus rounds act on current remote
+/// state rather than on whatever the last session happened to have fetched. The
+/// cost is that a repo which the batch fetch just visited is fetched once more —
+/// only ever a repo that is genuinely behind and opted in, and it is what closes
+/// the window between the eligibility read and the fast-forward.
+async fn pull_ff_only(dir: &std::path::Path) -> AppResult<String> {
+    run_git(
+        &dir.to_string_lossy(),
+        &[
+            "-c",
+            "merge.autoStash=false",
+            "-c",
+            "rebase.autoStash=false",
+            "pull",
+            "--ff-only",
+            "--no-recurse-submodules",
+        ],
+    )
+    .await
+}
+
+/// Split `repo_ids` into the repos an auto-pull round may touch (opted in, folder
+/// present) and the ones it must report untouched — the query half of
+/// [`git_pull_ff_many`], over a plain `&Connection` so it is testable without a
+/// Tauri `State`.
+///
+/// **The `auto_pull = 1` filter is here, in the backend, on purpose.** The
+/// frontend already only asks about opted-in repos, but this command modifies
+/// working trees: a caller that got the filtering wrong would fast-forward
+/// branches the user never opted in. A repo that isn't opted in (or no longer
+/// exists as a row) is reported `SkippedUnavailable` rather than trusted.
+fn resolve_auto_pull_targets(
+    conn: &rusqlite::Connection,
+    repo_ids: &[i64],
+) -> (Vec<AutoPullResult>, Vec<(i64, PathBuf)>) {
+    let mut skipped: Vec<AutoPullResult> = Vec::new();
+    let mut pending: Vec<(i64, PathBuf)> = Vec::new();
+    for &repo_id in repo_ids {
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT path FROM repos WHERE id = ?1 AND auto_pull = 1 AND is_git_repo != 0",
+                [repo_id],
+                |row| row.get(0),
+            )
+            .ok();
+        match path.map(PathBuf::from) {
+            Some(dir) if dir.exists() => pending.push((repo_id, dir)),
+            // Not opted in, not a git repo, no such row, or the folder is gone:
+            // nothing to pull, and nothing worth telling the user about.
+            _ => skipped.push(AutoPullResult {
+                repo_id,
+                status: AutoPullStatus::SkippedUnavailable,
+                output: None,
+                error: None,
+            }),
+        }
+    }
+    (skipped, pending)
+}
+
+/// Fast-forward every eligible repo among `repo_ids` — the batch behind the
+/// per-repo auto-pull opt-in (#299). This command owns both halves of the safety
+/// decision: the **opt-in** check (see [`resolve_auto_pull_targets`]) and the
+/// **fast-forward eligibility** check, so an ineligible repo comes back with a
+/// `Skipped*` status rather than being touched.
+///
+/// Like [`git_fetch_many`], one repo's failure never aborts the batch and results
+/// are returned in input order, and the fan-out reuses [`FETCH_CONCURRENCY`]: an
+/// auto-pull round follows a fetch round over the same fleet, so the same
+/// "race to idle rather than trickle" reasoning applies (#274).
+#[tauri::command]
+pub async fn git_pull_ff_many(
+    state: State<'_, AppState>,
+    repo_ids: Vec<i64>,
+) -> AppResult<Vec<AutoPullResult>> {
+    // Resolve paths up front — `state` can't cross into the concurrent tasks.
+    let (mut resolved, pending) = {
+        let conn = crate::commands::repo::lock(&state)?;
+        resolve_auto_pull_targets(&conn, &repo_ids)
+    };
+
+    let pulled = bounded_map(pending, FETCH_CONCURRENCY, |(repo_id, dir)| {
+        auto_pull_one(repo_id, dir)
+    })
+    .await;
+    for (result, timing) in pulled {
+        // Only repos that actually ran a pull recorded a timing.
+        if let Some(timing) = timing {
+            crate::commands::diagnostics::record(&state, timing);
+        }
+        resolved.push(result);
+    }
+
+    let mut by_id: std::collections::HashMap<i64, AutoPullResult> =
+        resolved.into_iter().map(|r| (r.repo_id, r)).collect();
+    Ok(repo_ids
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
+}
+
 /// Check out a pull request branch. If a local branch with the PR's head ref
 /// already exists, just switch to it; otherwise fetch `pull/<n>/head` into a
 /// local branch (works for same-repo and fork PRs) and switch to it.
@@ -429,6 +683,426 @@ mod tests {
             }
         }
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---------------------------------------------------------------------
+    // Auto-pull (#299). These run against real temp repos rather than a mocked
+    // git, because the whole feature is a safety promise about what git is and
+    // isn't allowed to do to a working tree — a stubbed git would assert only
+    // that we call ourselves correctly.
+    // ---------------------------------------------------------------------
+
+    /// A scratch root unique per test *and* per process, so cases can't collide.
+    fn scratch(label: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("gamut_auto_pull_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// Bare remote + a seed clone holding one commit on `main`. The seed is how a
+    /// test advances the remote ("someone else pushed").
+    fn remote_with_seed(root: &Path) -> (PathBuf, PathBuf) {
+        let remote = root.join("remote.git");
+        git_cmd(root)
+            .args(["init", "--bare", "-b", "main"])
+            .arg(&remote)
+            .status()
+            .unwrap();
+        let seed = root.join("seed");
+        git(
+            root,
+            &["clone", remote.to_str().unwrap(), seed.to_str().unwrap()],
+        );
+        std::fs::write(seed.join("a.txt"), "one\n").unwrap();
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-m", "init"]);
+        git(&seed, &["push", "origin", "main"]);
+        (remote, seed)
+    }
+
+    /// Push another commit to the remote via the seed clone.
+    fn advance_remote(seed: &Path, contents: &str) {
+        std::fs::write(seed.join("a.txt"), contents).unwrap();
+        git(seed, &["commit", "-am", "upstream commit"]);
+        git(seed, &["push", "origin", "main"]);
+    }
+
+    /// A clone that knows it is one commit behind: cloned, then the remote moved
+    /// on, then fetched (so `refs/remotes/origin/main` is ahead of local `main`).
+    fn clone_that_is_behind(root: &Path, remote: &Path, seed: &Path, name: &str) -> PathBuf {
+        let clone = root.join(name);
+        git(
+            root,
+            &["clone", remote.to_str().unwrap(), clone.to_str().unwrap()],
+        );
+        advance_remote(seed, "one\ntwo\n");
+        git(&clone, &["fetch", "origin"]);
+        clone
+    }
+
+    fn rev(dir: &Path, spec: &str) -> String {
+        let out = git_cmd(dir)
+            .args(["rev-parse", spec])
+            .output()
+            .expect("git runs");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn commit_count(dir: &Path) -> String {
+        let out = git_cmd(dir)
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .expect("git runs");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A9-adjacent: a clean, behind-only repo with an upstream is fast-forwarded,
+    /// its branch really lands on the upstream commit, and the result carries the
+    /// raw git output the frontend's `summarizePull` is built to condense.
+    #[tokio::test]
+    async fn auto_pull_fast_forwards_a_clean_behind_repo() {
+        let root = scratch("ff");
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+
+        assert_eq!(
+            auto_pull_eligibility(&clone),
+            None,
+            "clean + behind-only + upstream must be eligible"
+        );
+
+        let (result, timing) = auto_pull_one(1, clone.clone()).await;
+        assert_eq!(result.status, AutoPullStatus::Pulled);
+        assert_eq!(
+            rev(&clone, "HEAD"),
+            rev(&clone, "refs/remotes/origin/main"),
+            "the branch must actually land on the upstream commit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(clone.join("a.txt")).unwrap(),
+            "one\ntwo\n",
+            "the working tree must carry the upstream content"
+        );
+        let out = result.output.expect("a pulled repo carries git's output");
+        assert!(!out.trim().is_empty(), "output must not be empty");
+        assert!(
+            out.contains("Fast-forward")
+                || out.contains("file changed")
+                || out.contains("Updating"),
+            "output must be the shape summarizePull parses, got: {out}"
+        );
+        assert!(timing.is_some(), "a real pull records a diagnostics timing");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every flavour of "dirty" blocks the pull: unstaged tracked edit, staged
+    /// change, and untracked-only. Untracked-only is the interesting one — plain
+    /// `git merge --ff-only` would happily proceed, but auto-pull reuses the same
+    /// cleanliness predicate as the sidebar's dirty dot, so what the user sees as
+    /// dirty is what auto-pull refuses to touch.
+    #[tokio::test]
+    async fn auto_pull_skips_a_dirty_tree_in_every_flavour() {
+        let root = scratch("dirty");
+        let (remote, seed) = remote_with_seed(&root);
+
+        for (name, dirty) in [("unstaged", 0usize), ("staged", 1), ("untracked", 2)] {
+            let clone = root.join(name);
+            git(
+                &root,
+                &["clone", remote.to_str().unwrap(), clone.to_str().unwrap()],
+            );
+            advance_remote(&seed, &format!("one\n{name}\n"));
+            git(&clone, &["fetch", "origin"]);
+
+            match dirty {
+                0 => std::fs::write(clone.join("a.txt"), "local edit\n").unwrap(),
+                1 => {
+                    std::fs::write(clone.join("a.txt"), "staged edit\n").unwrap();
+                    git(&clone, &["add", "a.txt"]);
+                }
+                _ => std::fs::write(clone.join("untracked.txt"), "new\n").unwrap(),
+            }
+
+            let head_before = rev(&clone, "HEAD");
+            let tree_before = std::fs::read_to_string(clone.join("a.txt")).unwrap();
+
+            let (result, timing) = auto_pull_one(7, clone.clone()).await;
+            assert_eq!(
+                result.status,
+                AutoPullStatus::SkippedDirty,
+                "{name}: a dirty tree that is behind must be skipped, not pulled"
+            );
+            assert_eq!(
+                rev(&clone, "HEAD"),
+                head_before,
+                "{name}: HEAD must not move"
+            );
+            assert_eq!(
+                std::fs::read_to_string(clone.join("a.txt")).unwrap(),
+                tree_before,
+                "{name}: local work must be untouched"
+            );
+            assert!(timing.is_none(), "{name}: no pull ran, so no timing");
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A diverged branch is skipped by the pre-check…
+    #[tokio::test]
+    async fn auto_pull_skips_a_diverged_branch() {
+        let root = scratch("diverged");
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+        // A local commit on top makes it ahead as well as behind.
+        std::fs::write(clone.join("local.txt"), "mine\n").unwrap();
+        git(&clone, &["add", "."]);
+        git(&clone, &["commit", "-m", "local work"]);
+
+        let head_before = rev(&clone, "HEAD");
+        let (result, _) = auto_pull_one(3, clone.clone()).await;
+
+        assert_eq!(result.status, AutoPullStatus::SkippedDiverged);
+        assert_eq!(rev(&clone, "HEAD"), head_before, "HEAD must not move");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// …and even if the pre-check is bypassed — which is what a repo that diverges
+    /// in the window between the eligibility read and the pull looks like — the
+    /// pull itself still refuses, because it is `--ff-only`. This is the assertion
+    /// that makes "never a merge commit" a property of the command rather than of
+    /// the check's timing.
+    #[tokio::test]
+    async fn pull_ff_only_refuses_to_merge_a_diverged_branch() {
+        let root = scratch("ffonly");
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+        std::fs::write(clone.join("local.txt"), "mine\n").unwrap();
+        git(&clone, &["add", "."]);
+        git(&clone, &["commit", "-m", "local work"]);
+
+        let before = commit_count(&clone);
+        let err = pull_ff_only(&clone).await;
+
+        assert!(err.is_err(), "a diverged pull must fail, not merge");
+        assert_eq!(
+            commit_count(&clone),
+            before,
+            "no merge commit may be created"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// No upstream (and its sibling, a detached HEAD) is a skip, never a pull.
+    #[tokio::test]
+    async fn auto_pull_skips_when_there_is_no_upstream() {
+        let root = scratch("noupstream");
+
+        // A standalone repo with a branch that tracks nothing.
+        let solo = root.join("solo");
+        std::fs::create_dir_all(&solo).unwrap();
+        git(&solo, &["init", "-b", "main"]);
+        std::fs::write(solo.join("a.txt"), "one\n").unwrap();
+        git(&solo, &["add", "."]);
+        git(&solo, &["commit", "-m", "init"]);
+        assert_eq!(
+            auto_pull_eligibility(&solo),
+            Some(AutoPullStatus::SkippedNoUpstream)
+        );
+
+        // A clone parked on a detached HEAD, which `sync_status_at` reports the
+        // same way (no upstream to compare against).
+        let (remote, seed) = remote_with_seed(&root);
+        let detached = clone_that_is_behind(&root, &remote, &seed, "detached");
+        git(&detached, &["checkout", "--detach", "HEAD"]);
+        let head_before = rev(&detached, "HEAD");
+        let (result, timing) = auto_pull_one(4, detached.clone()).await;
+        assert_eq!(result.status, AutoPullStatus::SkippedNoUpstream);
+        assert_eq!(rev(&detached, "HEAD"), head_before);
+        assert!(timing.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Nothing to pull is `up-to-date`, **including when the tree is dirty** —
+    /// the case that would otherwise raise a "skipped, you have local changes"
+    /// warning on every single fetch cycle for a repo you're working in.
+    #[tokio::test]
+    async fn auto_pull_reports_up_to_date_when_not_behind() {
+        let root = scratch("uptodate");
+        let (remote, _seed) = remote_with_seed(&root);
+
+        let clean = root.join("clean");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), clean.to_str().unwrap()],
+        );
+        assert_eq!(
+            auto_pull_eligibility(&clean),
+            Some(AutoPullStatus::UpToDate),
+            "a current repo is a no-op"
+        );
+
+        let dirty = root.join("dirty");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), dirty.to_str().unwrap()],
+        );
+        std::fs::write(dirty.join("a.txt"), "local edit\n").unwrap();
+        assert_eq!(
+            auto_pull_eligibility(&dirty),
+            Some(AutoPullStatus::UpToDate),
+            "dirty but not behind must be up-to-date, never skipped-dirty"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The safety promise has to survive a *hostile local config*, not just the
+    /// happy path. With `merge.autoStash`/`rebase.autoStash` set — a common
+    /// developer setting — a plain `git pull --ff-only` stashes the working tree,
+    /// fast-forwards, and pops; a conflicting pop then leaves conflict markers in
+    /// the user's files and a dangling autostash. This drives the exact race the
+    /// eligibility check cannot cover (the tree becomes dirty *after* the check,
+    /// as it would if an editor or a build wrote during the pull's fetch) and
+    /// asserts the pull refuses instead.
+    #[tokio::test]
+    async fn pull_ff_only_never_stashes_even_with_autostash_configured() {
+        let root = scratch("autostash");
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+        // Hostile config, set locally so the test is hermetic either way.
+        git(&clone, &["config", "merge.autoStash", "true"]);
+        git(&clone, &["config", "rebase.autoStash", "true"]);
+        // Dirty *after* the eligibility read — the window the pre-check can't close.
+        assert_eq!(auto_pull_eligibility(&clone), None, "clean at check time");
+        std::fs::write(clone.join("a.txt"), "LOCAL WORK\n").unwrap();
+
+        let outcome = pull_ff_only(&clone).await;
+
+        assert!(
+            outcome.is_err(),
+            "the pull must refuse a dirty tree, not stash it: {outcome:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(clone.join("a.txt")).unwrap(),
+            "LOCAL WORK\n",
+            "local work must be exactly as the user left it — no merged content, no markers"
+        );
+        let stashes = git_cmd(&clone)
+            .args(["stash", "list"])
+            .output()
+            .expect("git runs");
+        assert!(
+            String::from_utf8_lossy(&stashes.stdout).trim().is_empty(),
+            "auto-pull must never create a stash"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The batch is failure-isolating like the fetch batch: a pullable repo, a
+    /// skipped one, and a folder that isn't a git repo all yield exactly one
+    /// result each, and the pullable one still pulls.
+    #[tokio::test]
+    async fn auto_pull_batch_isolates_failures_and_covers_every_input() {
+        let root = scratch("batch");
+        let (remote, seed) = remote_with_seed(&root);
+
+        let good = clone_that_is_behind(&root, &remote, &seed, "good");
+        let dirty = root.join("dirty");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), dirty.to_str().unwrap()],
+        );
+        advance_remote(&seed, "one\ntwo\nthree\n");
+        git(&dirty, &["fetch", "origin"]);
+        std::fs::write(dirty.join("a.txt"), "local edit\n").unwrap();
+        let not_git = root.join("plain");
+        std::fs::create_dir_all(&not_git).unwrap();
+
+        let pending: Vec<(i64, PathBuf)> = vec![(1, good), (2, dirty), (3, not_git)];
+        let out = bounded_map(pending, FETCH_CONCURRENCY, |(id, dir)| {
+            auto_pull_one(id, dir)
+        })
+        .await;
+
+        assert_eq!(out.len(), 3, "one result per input, batch not aborted");
+        let by_id: std::collections::HashMap<i64, AutoPullStatus> =
+            out.iter().map(|(r, _)| (r.repo_id, r.status)).collect();
+        assert_eq!(by_id[&1], AutoPullStatus::Pulled);
+        assert_eq!(by_id[&2], AutoPullStatus::SkippedDirty);
+        assert_eq!(
+            by_id[&3],
+            AutoPullStatus::SkippedUnavailable,
+            "a non-git folder is unavailable, not a failure and not an upstream problem"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The opt-in is enforced **in the backend**, not just by the caller: a repo
+    /// that is registered but not opted in is never handed to the pull step, no
+    /// matter what ids the frontend asks about. Also covers the two other arms
+    /// that produce a user-visible outcome — folder gone, and an unknown id.
+    #[test]
+    fn resolve_auto_pull_targets_honours_the_opt_in() {
+        let root = scratch("targets");
+        let db_path = root.join("gamut.db");
+        let conn = crate::db::open(&db_path).unwrap();
+
+        // Two real directories, so "exists on disk" isn't what distinguishes them.
+        let opted = root.join("opted");
+        let not_opted = root.join("not-opted");
+        std::fs::create_dir_all(&opted).unwrap();
+        std::fs::create_dir_all(&not_opted).unwrap();
+
+        conn.execute(
+            "INSERT INTO repos (id, path, name, auto_pull) VALUES (1, ?1, 'opted', 1)",
+            [opted.to_str().unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO repos (id, path, name, auto_pull) VALUES (2, ?1, 'not-opted', 0)",
+            [not_opted.to_str().unwrap()],
+        )
+        .unwrap();
+        // Opted in, but its folder no longer exists.
+        conn.execute(
+            "INSERT INTO repos (id, path, name, auto_pull) VALUES (3, '/nope/gone', 'gone', 1)",
+            [],
+        )
+        .unwrap();
+
+        let (skipped, pending) = resolve_auto_pull_targets(&conn, &[1, 2, 3, 404]);
+
+        assert_eq!(
+            pending.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![1],
+            "only the opted-in, present repo may be pulled"
+        );
+        let statuses: std::collections::HashMap<i64, AutoPullStatus> =
+            skipped.iter().map(|r| (r.repo_id, r.status)).collect();
+        assert_eq!(statuses[&2], AutoPullStatus::SkippedUnavailable);
+        assert_eq!(statuses[&3], AutoPullStatus::SkippedUnavailable);
+        assert_eq!(
+            statuses[&404],
+            AutoPullStatus::SkippedUnavailable,
+            "an unknown id must not error the batch"
+        );
+        assert_eq!(
+            skipped.len() + pending.len(),
+            4,
+            "every input id yields exactly one outcome"
+        );
+
+        drop(conn);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

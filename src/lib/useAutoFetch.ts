@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
+import { runAutoPull } from "@/lib/autoPull";
 import { ipc } from "@/lib/ipc";
 import { patchRepoStatuses, refreshScopedRepos } from "@/lib/repoStatusRefresh";
 import { useSettings } from "@/lib/settings";
@@ -29,6 +30,11 @@ import { useSettings } from "@/lib/settings";
  * terminal `git pull`/commit/branch-switch touches local refs/HEAD/the working
  * tree and still refreshes live, and the group-header fetch button
  * (`useFetchGroup`) refetches `repo-statuses` itself.
+ *
+ * Each cycle also drives auto-pull (#299) for the repos that opted in: right
+ * after the batch fetch, any enabled repo the fetch left behind its upstream is
+ * fast-forwarded, and that happens *before* the refresh below so both land in the
+ * same round.
  *
  * Missing repos are skipped (the backend also guards this). Fetches run on a
  * configurable interval; the first one fires after the interval, not on mount,
@@ -78,11 +84,20 @@ export function useAutoFetch() {
         const ids = repos.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
         if (ids.length === 0) return;
         const results = await ipc.gitFetchMany(ids);
-        // Refresh the repos that actually fetched — patch their ahead/behind into
-        // the `repo-statuses` aggregate and invalidate their scoped queries. This
-        // drives the post-fetch refresh directly instead of via the watcher (#275).
         const succeeded = results.filter((r) => r.ok).map((r) => r.repo_id);
         if (succeeded.length > 0) {
+          // Auto-pull the opted-in repos this fetch found behind (#299) *before*
+          // the refresh below, so the fast-forward is already applied when the
+          // statuses are re-read. One refresh round then covers both the fetch
+          // and the pull, instead of the pull kicking off a second scan on top of
+          // this one (#206/#275). Awaited, not fired off: the `running` guard
+          // keeps the next tick from overlapping this round's pulls. `repos` is
+          // handed over so the round doesn't re-list them, and the `catch` keeps a
+          // pull problem from ever costing this cycle its status refresh.
+          await runAutoPull(succeeded, repos).catch(() => {});
+          // Refresh the repos that actually fetched — patch their ahead/behind into
+          // the `repo-statuses` aggregate and invalidate their scoped queries. This
+          // drives the post-fetch refresh directly instead of via the watcher (#275).
           void patchRepoStatuses(succeeded);
           refreshScopedRepos(succeeded);
         }

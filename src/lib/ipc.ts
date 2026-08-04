@@ -47,6 +47,12 @@ export interface Repo {
    * is on `RepoStatus.has_worktrees`.
    */
   has_worktrees: boolean;
+  /**
+   * Opted into background auto-pull (#299): when the app notices this repo is
+   * behind its upstream it fast-forwards the branch for you. Off by default, and
+   * only ever a clean fast-forward — see `lib/autoPull.ts`.
+   */
+  auto_pull: boolean;
 }
 
 /**
@@ -88,6 +94,31 @@ export interface RepoStatus {
   has_uncommitted_changes: boolean;
   /** Live "has any linked worktree" flag; refreshes the persisted Repo flag. */
   has_worktrees: boolean;
+}
+
+/**
+ * What auto-pull did to one repo (#299). Everything but `pulled` left the repo
+ * untouched; the `skipped-*` values are the safety rules refusing to act, and are
+ * what the non-blocking warnings are built from.
+ */
+export type AutoPullStatus =
+  | "pulled"
+  | "up-to-date"
+  | "skipped-dirty"
+  | "skipped-diverged"
+  | "skipped-no-upstream"
+  /** Folder gone, not a git repo, or not opted in — nothing to pull, nothing to say. */
+  | "skipped-unavailable"
+  | "failed";
+
+/** Per-repo outcome of one `git_pull_ff_many` call. */
+export interface AutoPullResult {
+  repo_id: number;
+  status: AutoPullStatus;
+  /** Raw `git pull` stdout for a pulled repo, condensed by `summarizePull`. */
+  output: string | null;
+  /** git's stderr when `status` is `failed`. */
+  error: string | null;
 }
 
 /** A local branch whose upstream tracking ref is gone (merged & deleted on remote). */
@@ -613,6 +644,9 @@ export const ipc = {
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
   removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
+  /** Turn this repo's background auto-pull opt-in on or off (#299). */
+  setRepoAutoPull: (repoId: number, enabled: boolean) =>
+    invoke<void>("set_repo_auto_pull", { repoId, enabled }),
   reorderRepos: (repoIds: number[]) => invoke<void>("reorder_repos", { repoIds }),
   discoverRepos: (root: string, maxDepth?: number) =>
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
@@ -632,6 +666,12 @@ export const ipc = {
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
   gitFetchMany: (repoIds: number[]) => invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
+  /**
+   * Fast-forward the auto-pull-enabled repos among `repoIds` (#299). The backend
+   * owns the safety decision: an ineligible repo (dirty, diverged, no upstream)
+   * comes back with a `skipped-*` status instead of being touched.
+   */
+  gitPullFfMany: (repoIds: number[]) => invoke<AutoPullResult[]>("git_pull_ff_many", { repoIds }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),

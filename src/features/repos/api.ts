@@ -126,6 +126,25 @@ export function useRemoveRepo() {
   });
 }
 
+/**
+ * Flip a repo's background auto-pull opt-in (#299). The flag lives on the repo
+ * row, so the repos query is invalidated to re-read it — that query is what the
+ * auto-pull engine and the sidebar's menu both read the flag from.
+ *
+ * A failed write is surfaced: the menu closes on click, so without a toast the
+ * toggle would appear to have taken effect when it hadn't — and this flag is what
+ * licenses background writes to the repo's working tree.
+ */
+export function useSetRepoAutoPull() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, enabled }: { repoId: number; enabled: boolean }) =>
+      ipc.setRepoAutoPull(repoId, enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.repos }),
+    onError: (e: unknown) => toast.error(`Could not change auto-pull: ${String(e)}`),
+  });
+}
+
 export function useCreateGroup() {
   const invalidate = useInvalidateTree();
   return useMutation({

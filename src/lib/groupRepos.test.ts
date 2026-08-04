@@ -15,6 +15,7 @@ function makeRepo(id: number, group_ids: number[]): Repo {
     missing: false,
     is_git_repo: true,
     has_worktrees: false,
+    auto_pull: false,
   };
 }
 

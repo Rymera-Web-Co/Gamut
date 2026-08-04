@@ -16,7 +16,10 @@ vi.mock("@/lib/ipc", () => ({
   ipc: {
     listRepos: (...args: unknown[]) => listRepos(...args),
     gitFetchMany: (...args: unknown[]) => gitFetchMany(...args),
-    repoStatusesFor: (...args: unknown[]) => repoStatusesFor(...args),
+    repoStatusesFor: (...args: unknown[]) => {
+      callOrder.push("repoStatusesFor");
+      return repoStatusesFor(...args);
+    },
   },
 }));
 
@@ -26,6 +29,18 @@ vi.mock("@/lib/queryClient", () => ({
   queryClient: {
     invalidateQueries: (...args: unknown[]) => invalidateQueries(...args),
     setQueryData: (...args: unknown[]) => setQueryData(...args),
+  },
+}));
+
+// Auto-pull rides on this hook's fetch cycle (#299). Recording its calls in the
+// same order log as the status refresh is what pins the ordering the perf issues
+// require: the pull lands *before* the post-fetch status read.
+const callOrder: string[] = [];
+const runAutoPull = vi.fn();
+vi.mock("@/lib/autoPull", () => ({
+  runAutoPull: (...args: unknown[]) => {
+    callOrder.push("autoPull");
+    return runAutoPull(...args);
   },
 }));
 
@@ -71,6 +86,9 @@ describe("useAutoFetch (issue #273 — pause while unfocused)", () => {
     listRepos.mockResolvedValue([{ id: 1, missing: false, is_git_repo: true }]);
     gitFetchMany.mockResolvedValue([{ repo_id: 1, ok: true, error: null }]);
     repoStatusesFor.mockResolvedValue([]);
+    runAutoPull.mockResolvedValue([]);
+    runAutoPull.mockClear();
+    callOrder.length = 0;
     gitFetchMany.mockClear();
     listRepos.mockClear();
     repoStatusesFor.mockClear();
@@ -206,6 +224,9 @@ describe("useAutoFetch (issue #275 — drive post-fetch refresh directly)", () =
       { repo_id: 2, ok: true, error: null },
     ]);
     repoStatusesFor.mockResolvedValue([]);
+    runAutoPull.mockResolvedValue([]);
+    runAutoPull.mockClear();
+    callOrder.length = 0;
     gitFetchMany.mockClear();
     listRepos.mockClear();
     repoStatusesFor.mockClear();
@@ -272,5 +293,115 @@ describe("useAutoFetch (issue #275 — drive post-fetch refresh directly)", () =
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["branches", 1] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["branches", 2] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["sync-status", 1] });
+  });
+});
+
+describe("useAutoFetch (issue #299 — auto-pull rides the fetch cycle)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    settingsValues = { autoFetch: true, autoFetchIntervalMinutes: 5 };
+    focusListener = undefined;
+    // `clearAllMocks` wipes calls, not implementations — so seed them after it.
+    vi.clearAllMocks();
+    callOrder.length = 0;
+    isFocused.mockResolvedValue(true);
+    listRepos.mockResolvedValue([
+      { id: 1, missing: false, is_git_repo: true },
+      { id: 2, missing: false, is_git_repo: true },
+    ]);
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: true, error: null },
+      { repo_id: 2, ok: true, error: null },
+    ]);
+    repoStatusesFor.mockResolvedValue([]);
+    runAutoPull.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("A14: auto-pulls the repos whose fetch succeeded", async () => {
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: true, error: null },
+      { repo_id: 2, ok: false, error: "boom" },
+    ]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(runAutoPull).toHaveBeenCalledTimes(1);
+    // The already-fetched repo list rides along so the round doesn't re-list.
+    expect(runAutoPull).toHaveBeenCalledWith(
+      [1],
+      [
+        { id: 1, missing: false, is_git_repo: true },
+        { id: 2, missing: false, is_git_repo: true },
+      ],
+    );
+  });
+
+  it("A14: the pull completes before the post-fetch status read", async () => {
+    runAutoPull.mockResolvedValue([1]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(callOrder).toEqual(["autoPull", "repoStatusesFor"]);
+  });
+
+  it("A15: one status round covers both the fetch and the pull", async () => {
+    runAutoPull.mockResolvedValue([1, 2]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    // The pull rode along inside the fetch's own refresh — not a second round.
+    expect(repoStatusesFor).toHaveBeenCalledTimes(1);
+    expect(repoStatusesFor).toHaveBeenCalledWith([1, 2]);
+  });
+
+  it("A14: no repo fetched successfully → no pull round at all", async () => {
+    gitFetchMany.mockResolvedValue([
+      { repo_id: 1, ok: false, error: "boom" },
+      { repo_id: 2, ok: false, error: "boom" },
+    ]);
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    expect(runAutoPull).not.toHaveBeenCalled();
+  });
+
+  it("a failing pull round never costs the fetch cycle its status refresh", async () => {
+    runAutoPull.mockRejectedValue(new Error("pull exploded"));
+    renderHook(() => useAutoFetch());
+    await drain();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+
+    // The fetch succeeded, so its own refresh must still happen — a rejected pull
+    // must not divert the tick into its catch and leave stale ahead/behind counts
+    // for a whole interval.
+    expect(repoStatusesFor).toHaveBeenCalledTimes(1);
+    expect(repoStatusesFor).toHaveBeenCalledWith([1, 2]);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["branches", 1] });
+
+    // …and the next tick still runs.
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await drain();
+    expect(runAutoPull).toHaveBeenCalledTimes(2);
   });
 });
