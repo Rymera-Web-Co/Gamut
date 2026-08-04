@@ -743,6 +743,14 @@ mod tests {
         clone
     }
 
+    /// Read a working-tree file with line endings normalised to `\n`. A checkout
+    /// goes through git's `core.autocrlf`, which on Windows rewrites `\n` to
+    /// `\r\n` — so a byte-for-byte comparison against a literal would assert the
+    /// platform's newline convention rather than the content that was pulled.
+    fn read_normalized(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+    }
+
     fn rev(dir: &Path, spec: &str) -> String {
         let out = git_cmd(dir)
             .args(["rev-parse", spec])
@@ -782,7 +790,7 @@ mod tests {
             "the branch must actually land on the upstream commit"
         );
         assert_eq!(
-            std::fs::read_to_string(clone.join("a.txt")).unwrap(),
+            read_normalized(&clone.join("a.txt")),
             "one\ntwo\n",
             "the working tree must carry the upstream content"
         );
