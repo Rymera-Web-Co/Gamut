@@ -418,13 +418,41 @@ pub fn register_repo(app: AppHandle, state: State<AppState>, path: String) -> Ap
     Ok(repo)
 }
 
+/// Remove one or more repos from Gamut in a single IPC round trip. DB-only —
+/// never touches anything on disk, no `git worktree remove`: a bound
+/// `DELETE FROM repos WHERE id IN (…)` cascades `repo_tags`/`repo_groups` via
+/// the schema's `ON DELETE CASCADE` FKs, then one `watch::resync` picks up the
+/// change (not once per removed repo). A single-repo removal just passes a
+/// one-element vec. Empty `ids` is a no-op: no DB write, no resync.
 #[tauri::command]
-pub fn remove_repo(app: AppHandle, state: State<AppState>, id: i64) -> AppResult<()> {
+pub fn remove_repos(app: AppHandle, state: State<AppState>, ids: Vec<i64>) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
     let conn = lock(&state)?;
-    conn.execute("DELETE FROM repos WHERE id = ?1", [id])?;
+    delete_repos(&conn, &ids)?;
     drop(conn); // release the DB lock before resync re-reads it
-    invalidate_origin_slug(&state, id);
+    for id in &ids {
+        invalidate_origin_slug(&state, *id);
+    }
     crate::watch::resync(&app);
+    Ok(())
+}
+
+/// Query core of [`remove_repos`]: delete every listed id from `repos` in one
+/// statement, over a plain `&Connection` so a test can exercise the SQL (and its
+/// FK cascade to `repo_tags`/`repo_groups`) without a Tauri `AppHandle`. Ids are
+/// bound placeholders — never string-interpolated into the SQL. A no-op for an
+/// empty list, and tolerant of ids that don't exist (nothing to delete).
+fn delete_repos(conn: &Connection, ids: &[i64]) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!("DELETE FROM repos WHERE id IN ({placeholders})");
+    let params: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    conn.execute(&sql, params.as_slice())?;
     Ok(())
 }
 
@@ -1114,6 +1142,133 @@ mod tests {
         assert_eq!(sync_folder_group(&conn, 1, &folder).unwrap(), 0);
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Dedicated connection for the `remove_repos` tests below: unlike
+    /// `test_conn()` above (a minimal schema with no FKs, used by the
+    /// folder-sync tests), this one enables `foreign_keys` and includes
+    /// `repo_tags`/`repo_groups` so the cascade this feature depends on is
+    /// actually exercised. Kept separate rather than retrofitting FKs onto
+    /// `test_conn()`, which would perturb its unrelated tests.
+    fn removal_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repos (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 name TEXT NOT NULL,
+                 is_git_repo INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE TABLE tags (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL UNIQUE
+             );
+             CREATE TABLE groups (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL
+             );
+             CREATE TABLE repo_tags (
+                 repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+                 tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                 PRIMARY KEY (repo_id, tag_id)
+             );
+             CREATE TABLE repo_groups (
+                 repo_id  INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+                 group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                 PRIMARY KEY (repo_id, group_id)
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn remove_repos_deletes_every_listed_id_and_leaves_others_intact() {
+        let conn = removal_test_conn();
+        conn.execute_batch(
+            "INSERT INTO repos (id, path, name) VALUES
+                 (1, '/a', 'a'), (2, '/b', 'b'), (3, '/c', 'c');",
+        )
+        .unwrap();
+
+        delete_repos(&conn, &[1, 3]).unwrap();
+
+        let remaining: Vec<i64> = conn
+            .prepare("SELECT id FROM repos ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(remaining, vec![2], "only the unlisted repo survives");
+    }
+
+    #[test]
+    fn remove_repos_cascades_repo_tags_and_repo_groups() {
+        let conn = removal_test_conn();
+        conn.execute_batch(
+            "INSERT INTO repos (id, path, name) VALUES (1, '/a', 'a'), (2, '/b', 'b');
+             INSERT INTO tags (id, name) VALUES (1, 't');
+             INSERT INTO groups (id, name) VALUES (1, 'g');
+             INSERT INTO repo_tags (repo_id, tag_id) VALUES (1, 1), (2, 1);
+             INSERT INTO repo_groups (repo_id, group_id) VALUES (1, 1), (2, 1);",
+        )
+        .unwrap();
+
+        delete_repos(&conn, &[1]).unwrap();
+
+        let tag_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repo_tags WHERE repo_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tag_rows, 0, "repo_tags cascades for the removed repo");
+        let group_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repo_groups WHERE repo_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(group_rows, 0, "repo_groups cascades for the removed repo");
+
+        // The surviving repo's memberships are untouched.
+        let survivor_tags: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM repo_tags WHERE repo_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            survivor_tags, 1,
+            "the surviving repo's tag membership stays"
+        );
+    }
+
+    #[test]
+    fn remove_repos_is_a_no_op_for_empty_and_tolerates_unknown_ids() {
+        let conn = removal_test_conn();
+        conn.execute(
+            "INSERT INTO repos (id, path, name) VALUES (1, '/a', 'a')",
+            [],
+        )
+        .unwrap();
+
+        delete_repos(&conn, &[]).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM repos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "empty id list touches nothing");
+
+        delete_repos(&conn, &[404]).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM repos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "unknown id is tolerated, not an error");
     }
 
     /// The auto-pull opt-in (#299) is per repo: flipping one repo's flag must not

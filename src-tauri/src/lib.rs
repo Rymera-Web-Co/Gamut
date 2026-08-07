@@ -115,7 +115,7 @@ pub fn run() {
             commands::repo::repo_statuses_for,
             commands::repo::repo_status,
             commands::repo::register_repo,
-            commands::repo::remove_repo,
+            commands::repo::remove_repos,
             commands::repo::touch_repo,
             commands::repo::set_repo_auto_pull,
             commands::repo::reorder_repos,

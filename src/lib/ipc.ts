@@ -642,7 +642,9 @@ export const ipc = {
   repoStatusesFor: (repoIds: number[]) => invoke<RepoStatus[]>("repo_statuses_for", { repoIds }),
   repoStatus: (repoId: number) => invoke<RepoStatus>("repo_status", { repoId }),
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
-  removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
+  /** Remove one or more repos in a single round trip — DB-only, files on disk
+   * are untouched. A single-repo removal passes a one-element array. */
+  removeRepos: (ids: number[]) => invoke<void>("remove_repos", { ids }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
   /** Turn this repo's background auto-pull opt-in on or off (#299). */
   setRepoAutoPull: (repoId: number, enabled: boolean) =>

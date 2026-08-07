@@ -118,10 +118,11 @@ export function useRegisterRepo() {
   });
 }
 
-export function useRemoveRepo() {
+/** Remove one or more repos in a single IPC round trip (not once per repo). */
+export function useRemoveRepos() {
   const invalidate = useInvalidateTree();
   return useMutation({
-    mutationFn: (id: number) => ipc.removeRepo(id),
+    mutationFn: (ids: number[]) => ipc.removeRepos(ids),
     onSuccess: invalidate,
   });
 }
