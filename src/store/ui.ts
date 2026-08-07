@@ -210,6 +210,12 @@ interface UiState {
   selectedPrNumber: number | null;
   // Whether the repo sidebar column is hidden. Persisted to localStorage.
   repoSidebarHidden: boolean;
+  // The ⌘⇧K shortcut's pending "publish this branch to origin?" question (#300),
+  // or null when there isn't one. The shortcut can fire with the sidebar hidden
+  // — or on a repo whose row isn't rendered — so its confirmation is an
+  // app-level dialog rather than the popover anchored to a row's push button.
+  // Carries the branch name so the dialog needs no query of its own.
+  pushConfirm: { repoId: number; branch: string } | null;
   // Integrated terminal pane. `terminalOpen` (persisted) toggles the bottom
   // pane; `terminals` holds each group's tabs/panes (in-memory, by group id).
   terminalOpen: boolean;
@@ -286,6 +292,9 @@ interface UiState {
    * leaves the user's saved hidden/shown preference untouched.
    */
   revealRepoSidebar: () => void;
+  /** Ask the user to confirm publishing `branch` to `origin` (#300). */
+  requestPushConfirm: (repoId: number, branch: string) => void;
+  clearPushConfirm: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
   setTerminalMaximized: (max: boolean) => void;
@@ -351,6 +360,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeGroupId: null,
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
+  pushConfirm: null,
   terminalOpen: storedTerminalOpen(),
   terminalMaximized: false,
   terminals: restoredTerminals.terminals,
@@ -426,6 +436,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   // In-memory only: no localStorage write, so the persisted preference survives.
   revealRepoSidebar: () => set({ repoSidebarHidden: false }),
+  requestPushConfirm: (repoId, branch) => set({ pushConfirm: { repoId, branch } }),
+  clearPushConfirm: () => set({ pushConfirm: null }),
   setTerminalOpen: (open) => {
     localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
     // Hiding the pane drops the maximized state so reopening starts from the

@@ -514,6 +514,14 @@ export interface SyncStatus {
   upstream: string | null;
   ahead: number;
   behind: number;
+  /**
+   * The branch a push would **publish** — set only when HEAD is a branch with no
+   * upstream, so pushing creates it on `origin` for the first time. `null` when
+   * the branch already tracks, or HEAD is detached: both push plainly. This is
+   * the exact value the push itself acts on, so the confirmation shown before a
+   * first push (#300) can't disagree with what the push then does.
+   */
+  unpublished_branch: string | null;
 }
 
 /** Per-repo outcome of a batch fetch (`gitFetchMany`). */

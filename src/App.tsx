@@ -15,6 +15,7 @@ import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { CommandPalette } from "@/features/palette/CommandPalette";
 import { CompareDialog } from "@/features/compare/CompareDialog";
+import { PublishBranchDialog } from "@/features/sync/PublishBranchDialog";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { DragGhost } from "@/lib/usePointerDnd";
 import { ipc } from "@/lib/ipc";
@@ -206,6 +207,7 @@ export default function App() {
       <SettingsDialog />
       <CommandPalette />
       <CompareDialog />
+      <PublishBranchDialog />
       <DragGhost />
     </div>
   );
