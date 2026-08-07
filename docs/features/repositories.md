@@ -46,10 +46,17 @@ A group can stay in sync with a folder on disk:
   selection; `⇧+click` selects every row in between (in on-screen order, spanning the
   git-repos and Folders sections). A row's leading icon swaps for a checkbox on hover or
   while selected, so you can select without reaching for a modifier key.
+- **Bulk actions** — as soon as anything is selected, the sidebar header turns into a
+  bulk-action bar: how many rows are selected, a checkbox to select or deselect them all,
+  **✕** to clear the selection, **Fetch N** to fetch just the selected repos, and
+  **Remove N**. *Fetch* counts only what can actually be fetched, so missing folders and
+  plain (non-git) folders are left out of the number and the run. Clearing the selection
+  brings the normal header back.
 - **Remove** — click the trash icon and confirm. With multiple repos selected, the trash
-  icon (or *Remove N repository folders* from the right-click menu) removes the whole
-  selection behind one confirmation dialog. This only removes them from Gamut's list;
-  **your files on disk are not touched.**
+  icon, the bar's **Remove N**, or *Remove N repository folders* from the right-click menu
+  all remove the whole selection behind one confirmation dialog listing every folder and
+  its path. This only removes them from Gamut's list; **your files on disk are not
+  touched.**
 - **Missing repos** — if a folder was moved or deleted, its repo shows a red warning and
   a strikethrough name.
 

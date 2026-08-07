@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   touchRepo: vi.fn(),
   repoRemoteUrl: vi.fn(),
   gitWorktreeList: vi.fn(),
+  gitFetchMany: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -29,6 +30,7 @@ vi.mock("@/lib/ipc", () => ({
     gitWorktreeList: mocks.gitWorktreeList,
     removeRepos: mocks.removeRepos,
     touchRepo: mocks.touchRepo,
+    gitFetchMany: mocks.gitFetchMany,
     registerRepo: vi.fn(),
     reorderRepos: vi.fn(),
     setRepoGroups: vi.fn(),
@@ -133,6 +135,7 @@ beforeEach(() => {
   mocks.touchRepo.mockReset().mockResolvedValue(undefined);
   mocks.repoRemoteUrl.mockReset().mockResolvedValue(null);
   mocks.gitWorktreeList.mockReset().mockResolvedValue([]);
+  mocks.gitFetchMany.mockReset().mockResolvedValue([]);
   useUiStore.setState({ activeGroupId: 1, activeRepoId: null, activeWorktreePath: null });
 });
 
@@ -337,6 +340,121 @@ describe("RepoSidebar hover checkbox (#294 st_908)", () => {
 
     fireEvent.click(checkbox);
     expect(row.getAttribute("aria-selected")).toBe("false");
+  });
+});
+
+describe("RepoSidebar bulk action bar (#294)", () => {
+  /** The header's normal (no-selection) controls. */
+  function headerControls() {
+    return {
+      fetchAll: screen.queryByTitle("Fetch all repositories in this group (⌘⌥F)"),
+      add: screen.queryByTitle("Add repository"),
+      scan: screen.queryByTitle("Scan a folder for repositories"),
+    };
+  }
+
+  it("A28: replaces the header with a bulk-action bar once a row is selected, and restores it on clear", async () => {
+    renderSidebar([A, B, C]);
+    await screen.findByTitle(A.path);
+
+    // No selection: the normal header, no toolbar.
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+    expect(headerControls().fetchAll).toBeInTheDocument();
+    expect(screen.getByText("Default")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
+
+    // Selection: the bar replaces the group name and its per-group controls.
+    const bar = screen.getByRole("toolbar", { name: /bulk actions/i });
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
+    expect(headerControls().fetchAll).not.toBeInTheDocument();
+    expect(headerControls().add).not.toBeInTheDocument();
+    expect(headerControls().scan).not.toBeInTheDocument();
+    expect(screen.queryByText("Default")).not.toBeInTheDocument();
+
+    fireEvent.click(within(bar).getByLabelText("Clear selection"));
+
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+    expect(headerControls().fetchAll).toBeInTheDocument();
+    expect(screen.getByTitle(A.path).getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("A29: the bar's count tracks the selection", async () => {
+    renderSidebar([A, B, C]);
+    await screen.findByTitle(A.path);
+
+    fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle(C.path), { shiftKey: true });
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+  });
+
+  it("A30: select-all is indeterminate while partial, then selects every visible row", async () => {
+    renderSidebar([A, B, C, D, E]);
+    await screen.findByTitle(A.path);
+
+    fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
+    const toggle = screen.getByLabelText("Select all") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(toggle.indeterminate).toBe(true);
+
+    fireEvent.click(toggle);
+    // Every row on screen, including the non-git Folders section.
+    for (const r of [A, B, C, D, E]) {
+      expect(screen.getByTitle(r.path).getAttribute("aria-selected")).toBe("true");
+    }
+    const all = screen.getByLabelText("Deselect all") as HTMLInputElement;
+    expect(all.checked).toBe(true);
+    expect(all.indeterminate).toBe(false);
+
+    // Toggling again deselects everything, so the bar goes away.
+    fireEvent.click(all);
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+  });
+
+  it("A31: Fetch counts and fetches only the fetchable selection — never a missing or non-git folder", async () => {
+    renderSidebar([A, B, C, D, E]);
+    await screen.findByTitle(A.path);
+
+    // A + B are healthy git repos; C is missing, D and E are plain folders.
+    fireEvent.click(screen.getByLabelText(`Select ${A.name}`));
+    fireEvent.click(screen.getByLabelText(`Select ${C.name}`));
+    fireEvent.click(screen.getByLabelText(`Select ${D.name}`));
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+
+    const fetchBtn = screen.getByRole("button", { name: /^Fetch 1$/ });
+    fireEvent.click(fetchBtn);
+
+    await waitFor(() => expect(mocks.gitFetchMany).toHaveBeenCalledTimes(1));
+    expect(mocks.gitFetchMany).toHaveBeenCalledWith([A.id]);
+  });
+
+  it("A32: Fetch is disabled when nothing in the selection can be fetched", async () => {
+    renderSidebar([A, C, D]);
+    await screen.findByTitle(A.path);
+
+    fireEvent.click(screen.getByLabelText(`Select ${C.name}`)); // missing
+    fireEvent.click(screen.getByLabelText(`Select ${D.name}`)); // non-git
+    expect(screen.getByRole("button", { name: /^Fetch 0$/ })).toBeDisabled();
+    expect(mocks.gitFetchMany).not.toHaveBeenCalled();
+  });
+
+  it("A33: the bar's Remove opens the dialog for the whole selection", async () => {
+    renderSidebar([A, B, C]);
+    await screen.findByTitle(A.path);
+
+    fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
+    fireEvent.click(screen.getByTitle(B.path), { ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Remove 2" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 2" }));
+
+    await waitFor(() => expect(mocks.removeRepos).toHaveBeenCalledTimes(1));
+    expect(mocks.removeRepos).toHaveBeenCalledWith([A.id, B.id]);
+    // The selection is consumed, so the bar goes back to the normal header.
+    await waitFor(() => expect(screen.queryByRole("toolbar")).not.toBeInTheDocument());
   });
 });
 
