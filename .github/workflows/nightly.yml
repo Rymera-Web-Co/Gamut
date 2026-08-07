@@ -141,7 +141,13 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         env:
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-        run: echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_BASE64:-}" ]; then
+            echo "::error::APPLE_API_KEY_BASE64 secret is empty or unset — cannot notarize" >&2
+            exit 1
+          fi
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
 
       - name: Build and release nightly
         uses: tauri-apps/tauri-action@v0
