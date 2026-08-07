@@ -40,6 +40,32 @@ pub struct SyncStatus {
     pub upstream: Option<String>,
     pub ahead: usize,
     pub behind: usize,
+    /// The branch a push would **publish** — set only when HEAD is a branch with
+    /// no upstream, in which case the push creates it on `origin`. `None` when
+    /// the branch already tracks, or HEAD is detached: both push plainly. It is
+    /// [`branch_needing_upstream`], the same value [`push_target`] acts on, so
+    /// the UI's "publish this branch?" confirmation (#300) can never disagree
+    /// with what the push then does.
+    pub unpublished_branch: Option<String>,
+}
+
+/// The branch a push must set an upstream for, or `None` when a plain
+/// `git push` is right — i.e. the branch already tracks, or HEAD is detached.
+/// The single definition of "this push would publish a new branch", read both
+/// by the push itself ([`push_target`]) and by the status the UI confirms
+/// against ([`sync_status_at`]).
+fn branch_needing_upstream(repo: &git2::Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    if !head.is_branch() {
+        return None;
+    }
+    let name = head.shorthand()?.to_string();
+    let tracks = repo
+        .find_branch(&name, BranchType::Local)
+        .ok()
+        .and_then(|b| b.upstream().ok())
+        .is_some();
+    (!tracks).then_some(name)
 }
 
 /// Ahead/behind counts of the current branch vs its upstream (local-only; run
@@ -56,10 +82,12 @@ pub async fn git_sync_status(state: State<'_, AppState>, repo_id: i64) -> AppRes
 /// Blocking core of [`git_sync_status`]; opens the repo from `path`.
 fn sync_status_at(path: &std::path::Path) -> AppResult<SyncStatus> {
     let repo = crate::git::open(path)?;
+    let unpublished_branch = branch_needing_upstream(&repo);
     let none = SyncStatus {
         upstream: None,
         ahead: 0,
         behind: 0,
+        unpublished_branch,
     };
 
     let head = match repo.head() {
@@ -86,6 +114,8 @@ fn sync_status_at(path: &std::path::Path) -> AppResult<SyncStatus> {
         upstream: upstream.name().ok().flatten().map(|s| s.to_string()),
         ahead,
         behind,
+        // Reaching here means the branch tracks, so it is already published.
+        unpublished_branch: None,
     })
 }
 
@@ -710,20 +740,7 @@ pub async fn git_checkout_pr(
 /// reads is not `Send` and must be dropped before any await.
 fn push_target(state: &State<'_, AppState>, repo_id: i64) -> AppResult<Option<String>> {
     let repo = open_repo(state, repo_id)?;
-    let head = repo.head().ok();
-    let branch = head
-        .as_ref()
-        .filter(|h| h.is_branch())
-        .and_then(|h| h.shorthand().map(|s| s.to_string()));
-    let has_upstream = match &branch {
-        Some(b) => repo
-            .find_branch(b, BranchType::Local)
-            .ok()
-            .and_then(|br| br.upstream().ok())
-            .is_some(),
-        None => false,
-    };
-    Ok(if has_upstream { None } else { branch })
+    Ok(branch_needing_upstream(&repo))
 }
 
 #[tauri::command]
@@ -1450,6 +1467,95 @@ mod tests {
         );
 
         drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `branch_needing_upstream` is the one rule behind both the push and the
+    /// confirmation the UI shows before it (#300), so it is pinned against every
+    /// HEAD shape — and, below, against what `git_push` actually runs.
+    #[test]
+    fn branch_needing_upstream_only_fires_for_an_untracked_branch() {
+        let root = scratch("needs_upstream");
+
+        // A local branch that tracks nothing — the next push publishes it.
+        let solo = root.join("solo");
+        std::fs::create_dir_all(&solo).unwrap();
+        git(&solo, &["init", "-b", "main"]);
+        std::fs::write(solo.join("a.txt"), "one\n").unwrap();
+        git(&solo, &["add", "."]);
+        git(&solo, &["commit", "-m", "init"]);
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&solo).unwrap()),
+            Some("main".to_string())
+        );
+
+        // A branch created off the first one, also untracked: the name reported
+        // is the branch that would be published, not the repo's default.
+        git(&solo, &["switch", "-c", "feat/x"]);
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&solo).unwrap()),
+            Some("feat/x".to_string()),
+            "the branch a push would create, slashes and all"
+        );
+
+        // An unborn HEAD (initialised, never committed) has nothing to push.
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        git(&empty, &["init", "-b", "main"]);
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&empty).unwrap()),
+            None
+        );
+
+        // A clone's branch already tracks, and a detached HEAD pushes plainly.
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&clone).unwrap()),
+            None
+        );
+        git(&clone, &["checkout", "--detach", "HEAD"]);
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&clone).unwrap()),
+            None,
+            "a detached HEAD must not be offered as a branch to publish"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The flag the UI confirms against and the branch `git_push` sets an
+    /// upstream for are the *same* value — the confirmation can't promise
+    /// something the push then doesn't do.
+    #[test]
+    fn sync_status_reports_the_branch_the_push_would_publish() {
+        let root = scratch("status_publish");
+
+        let solo = root.join("solo");
+        std::fs::create_dir_all(&solo).unwrap();
+        git(&solo, &["init", "-b", "main"]);
+        std::fs::write(solo.join("a.txt"), "one\n").unwrap();
+        git(&solo, &["add", "."]);
+        git(&solo, &["commit", "-m", "init"]);
+        let status = sync_status_at(&solo).unwrap();
+        assert_eq!(status.unpublished_branch, Some("main".to_string()));
+        assert_eq!(status.upstream, None);
+        // `push_target` is `branch_needing_upstream` behind a repo lookup, so the
+        // value the push acts on is the one the status just reported.
+        assert_eq!(
+            branch_needing_upstream(&crate::git::open(&solo).unwrap()),
+            status.unpublished_branch
+        );
+
+        let (remote, seed) = remote_with_seed(&root);
+        let clone = clone_that_is_behind(&root, &remote, &seed, "clone");
+        let status = sync_status_at(&clone).unwrap();
+        assert_eq!(
+            status.unpublished_branch, None,
+            "a tracking branch is already published — nothing to confirm"
+        );
+        assert!(status.upstream.is_some());
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

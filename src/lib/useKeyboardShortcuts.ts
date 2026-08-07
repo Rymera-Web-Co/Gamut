@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { useFetchGroup, useGroups, useRepos } from "@/features/repos/api";
+import { branchAwaitingPublish } from "@/features/sync/pushGate";
 import { useSyncActions } from "@/features/sync/useSyncActions";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
@@ -43,6 +44,7 @@ export function useKeyboardShortcuts() {
   const toggleSettings = useUiStore((s) => s.toggleSettings);
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
+  const requestPushConfirm = useUiStore((s) => s.requestPushConfirm);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
@@ -72,6 +74,7 @@ export function useKeyboardShortcuts() {
     pull,
     push,
     busy,
+    requestPushConfirm,
     setActiveRepo,
     setActiveGroup,
     setView,
@@ -85,6 +88,10 @@ export function useKeyboardShortcuts() {
   };
   const ref = useRef(snapshot);
   ref.current = snapshot;
+
+  // True while the push shortcut's "would this publish a new branch?" check is
+  // in flight — see the `push` handler.
+  const pushGateBusy = useRef(false);
 
   useEffect(() => {
     // The repos shown in the active group, in sidebar order — kept in sync with
@@ -168,7 +175,27 @@ export function useKeyboardShortcuts() {
       },
       push: () => {
         const s = ref.current;
-        if (s.activeRepoId != null && !s.busy) s.push.mutate();
+        // `busy` only covers a push already running; the gate below is a round
+        // trip of its own, and key auto-repeat would otherwise fire a fresh one
+        // (and eventually a duplicate push) every few milliseconds.
+        if (s.activeRepoId == null || s.busy || pushGateBusy.current) return;
+        const repoId = s.activeRepoId;
+        // Publishing a branch that has no upstream is more consequential than a
+        // push to one that tracks, so it gets confirmed rather than going
+        // through silently (#300). Asking the backend costs a round trip, but it
+        // is the only answer that can't be stale — a branch created moments ago
+        // is exactly the case this guards.
+        pushGateBusy.current = true;
+        void branchAwaitingPublish(repoId).then((branch) => {
+          pushGateBusy.current = false;
+          // `push.mutate` follows whichever repo is active *now*, so if the
+          // selection moved while the gate was in flight, pushing would hit a
+          // repo the user never asked about — and skip its own confirmation,
+          // since the answer we hold is about the old one. Drop it instead.
+          if (ref.current.activeRepoId !== repoId) return;
+          if (branch) ref.current.requestPushConfirm(repoId, branch);
+          else ref.current.push.mutate();
+        });
       },
       pull: () => {
         const s = ref.current;
