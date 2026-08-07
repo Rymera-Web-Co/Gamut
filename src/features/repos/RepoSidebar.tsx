@@ -3,6 +3,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Copy,
   Folder,
   FolderGit2,
@@ -17,6 +19,7 @@ import {
   RefreshCw,
   SquareTerminal,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,11 +28,11 @@ import {
   ContextMenuItem,
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
+import { usePullMany, usePushMany } from "@/features/sync/useSyncMany";
 import { moveBefore } from "@/lib/dnd";
 import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { visibleRepos } from "@/lib/groupRepos";
@@ -42,7 +45,7 @@ import {
   useGroups,
   useLinkedWorktrees,
   useRegisterRepo,
-  useRemoveRepo,
+  useRemoveRepos,
   useReorderRepos,
   useRepoRemoteUrl,
   useRepoStatuses,
@@ -50,8 +53,10 @@ import {
   useSetRepoGroups,
 } from "./api";
 import { AutoPullMenuItem } from "./AutoPullMenuItem";
+import { ConfirmRemoveReposDialog } from "./ConfirmRemoveReposDialog";
 import { DiscoverDialog } from "./DiscoverDialog";
 import { GroupDialog } from "./GroupDialog";
+import { rangeIds } from "./repoSelection";
 
 // Shared active/inactive styling for the selectable rows (repo + worktree) so
 // the highlight treatment stays in lockstep between them.
@@ -174,22 +179,28 @@ function RepoRow({
   repo,
   status,
   isSyncedRoot = false,
-  onRemove,
+  selected,
+  onRowClick,
+  onToggleSelect,
+  onRequestRemove,
   onReorder,
   onContextMenu,
 }: {
   repo: Repo;
   status?: RepoStatus;
   isSyncedRoot?: boolean;
-  onRemove: (repo: Repo) => void;
+  /** Whether this row is part of the current multi-selection (⌘/Ctrl-click,
+   * ⇧-click range, or the hover checkbox) — distinct from "active". */
+  selected: boolean;
+  onRowClick: (repo: Repo, e: React.MouseEvent) => void;
+  onToggleSelect: (repo: Repo) => void;
+  onRequestRemove: (repo: Repo) => void;
   onReorder: (srcId: number, targetId: number) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
-  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   // A selected worktree highlights its own nested row, not the repo row.
   const active = activeRepoId === repo.id && activeWorktreePath == null;
   // Only run `git worktree list` for repos that actually have linked worktrees.
@@ -215,11 +226,9 @@ function RepoRow({
         role="button"
         tabIndex={0}
         title={repo.path}
+        aria-selected={selected}
         {...drag}
-        onClick={() => {
-          setActiveRepo(repo.id);
-          ipc.touchRepo(repo.id);
-        }}
+        onClick={(e) => onRowClick(repo, e)}
         onContextMenu={(e) => {
           // Suppress the native webview menu, and keep the row's menu from also
           // firing the sidebar blank-space menu.
@@ -232,34 +241,66 @@ function RepoRow({
           dropOver && "border-t-2 border-t-[var(--color-primary)]",
           repo.missing && "opacity-60",
           getActiveRowClass(active),
+          // A ring, not a background: the active row already owns a background
+          // (`getActiveRowClass`), and two competing `bg-*` utilities would let
+          // one silently win — so a row that is both active and selected would
+          // lose one of the two signals. Same reasoning as `RepoTree.tsx`.
+          selected && "ring-1 ring-inset ring-[var(--color-primary)]",
         )}
       >
         <GripVertical className="mt-0.5 size-3.5 shrink-0 cursor-grab text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-60" />
-        {repo.missing ? (
-          <AlertTriangle
-            className="mt-0.5 size-4 shrink-0 text-[var(--color-destructive)]"
-            aria-label="Folder no longer exists"
-          >
-            <title>Folder no longer exists on disk</title>
-          </AlertTriangle>
-        ) : repo.is_git_repo ? (
-          <FolderGit2
+        {/* The leading icon and the selection checkbox share one fixed-size slot
+            (both absolutely positioned inside it) so hover/selection swaps one
+            for the other without shifting the row. */}
+        <div className="relative mt-0.5 size-4 shrink-0">
+          <span
             className={cn(
-              "mt-0.5 size-4 shrink-0",
-              active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+              "absolute inset-0 transition-opacity",
+              "group-hover:opacity-0",
+              selected && "opacity-0",
+            )}
+          >
+            {repo.missing ? (
+              <AlertTriangle
+                className="size-4 text-[var(--color-destructive)]"
+                aria-label="Folder no longer exists"
+              >
+                <title>Folder no longer exists on disk</title>
+              </AlertTriangle>
+            ) : repo.is_git_repo ? (
+              <FolderGit2
+                className={cn(
+                  "size-4",
+                  active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+                )}
+              />
+            ) : (
+              <Folder
+                className={cn(
+                  "size-4",
+                  active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
+                )}
+                aria-label="Not a git repository"
+              >
+                <title>Not a git repository</title>
+              </Folder>
+            )}
+          </span>
+          <input
+            type="checkbox"
+            aria-label={`Select ${repo.name}`}
+            checked={selected}
+            onChange={() => onToggleSelect(repo)}
+            onClick={(e) => e.stopPropagation()}
+            // Don't let a press on the checkbox arm a repo drag on the row.
+            onPointerDown={(e) => e.stopPropagation()}
+            className={cn(
+              "absolute inset-0 size-4 cursor-pointer opacity-0 transition-opacity",
+              "group-hover:opacity-100",
+              selected && "opacity-100",
             )}
           />
-        ) : (
-          <Folder
-            className={cn(
-              "mt-0.5 size-4 shrink-0",
-              active ? "text-[#2563eb]" : "text-[var(--color-muted-foreground)]",
-            )}
-            aria-label="Not a git repository"
-          >
-            <title>Not a git repository</title>
-          </Folder>
-        )}
+        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-1">
             <span
@@ -296,51 +337,19 @@ function RepoRow({
                 onPointerDown={(e) => e.stopPropagation()}
               />
             )}
-            <Popover open={confirmOpen} onOpenChange={setConfirmOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  aria-label="Remove repository"
-                  title="Remove from Gamut"
-                  // Don't let a press on this button arm a repo drag on the row.
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => e.stopPropagation()}
-                  className={cn(
-                    "shrink-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100",
-                    confirmOpen ? "opacity-100" : "opacity-0",
-                  )}
-                >
-                  <Trash2 className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)]" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                side="bottom"
-                className="w-64 p-3"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="text-sm text-[var(--color-muted-foreground)]">
-                  Remove{" "}
-                  <span className="font-medium text-[var(--color-foreground)]">{repo.name}</span>{" "}
-                  from Gamut? This only removes it from the list — your files on disk are not
-                  touched.
-                </p>
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => {
-                      setConfirmOpen(false);
-                      onRemove(repo);
-                    }}
-                  >
-                    <Trash2 /> Remove
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
+            <button
+              aria-label="Remove repository"
+              title="Remove from Gamut"
+              // Don't let a press on this button arm a repo drag on the row.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestRemove(repo);
+              }}
+              className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-destructive)] group-hover:opacity-100"
+            >
+              <Trash2 className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-destructive)]" />
+            </button>
           </div>
           {/* Per-repo branch switcher + sync controls (manage without selecting).
             Non-git folders have no branch or upstream, so neither is shown. */}
@@ -368,13 +377,16 @@ export function RepoSidebar() {
   const repos = useRepos();
   const groups = useGroups();
   const registerRepo = useRegisterRepo();
-  const removeRepo = useRemoveRepo();
+  const removeRepos = useRemoveRepos();
   const setRepoGroups = useSetRepoGroups();
   const reorderRepos = useReorderRepos();
   const fetchGroup = useFetchGroup();
+  const pullMany = usePullMany();
+  const pushMany = usePushMany();
   const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const showSyncedRoot = useSettings((s) => s.values.showSyncedRoot);
 
@@ -391,6 +403,20 @@ export function RepoSidebar() {
     | { at: ContextMenuPosition; kind: "blank" }
     | null
   >(null);
+
+  // Multi-selection (⌘/Ctrl-click toggle, ⇧-click range) over the rendered repo
+  // rows. Local component state, not the global store — mirrors
+  // `RepoTree.tsx`'s `selectedPaths`/`anchor`. `anchor` is the row a ⇧-range
+  // extends from, in rendered order.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
+  // The repos pending the bulk-remove confirmation dialog (single-row trash
+  // target or the whole selection); null when the dialog is closed. Holds the
+  // `Repo` rows themselves, not their ids: the dialog renders this exact array
+  // and `confirmRemove` sends its ids, so the set removed can never differ from
+  // the set the user was shown — even if the repo list refetches, or the active
+  // group is switched by a keyboard shortcut, while the dialog is open.
+  const [removeTarget, setRemoveTarget] = useState<Repo[] | null>(null);
 
   // "Open remote repo" only makes sense for a present git repo, and is hidden
   // unless the origin remote resolves — so resolve it lazily for the repo the
@@ -423,11 +449,105 @@ export function RepoSidebar() {
   // from real repos (they have no branch/sync and only a Files tab).
   const gitRepos = visible.filter((r) => r.is_git_repo);
   const nonGitRepos = visible.filter((r) => !r.is_git_repo);
+  // The exact on-screen row order across the git-repos / Folders section
+  // boundary — what a ⇧-range follows.
+  const orderedIds = [...gitRepos, ...nonGitRepos].map((r) => r.id);
 
   // Repos eligible for a group fetch — everything visible except missing folders
   // (fetching a gone directory just errors) and non-git folders (nothing to
   // fetch).
   const fetchableIds = visible.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
+  // The selected rows, in rendered order. Drawn from `visible`, so an id that has
+  // left the on-screen list can never reach a bulk action.
+  const selectedRepos = visible.filter((r) => selectedIds.has(r.id));
+  // The same eligibility, narrowed to the selection — what the bulk bar's pull
+  // and push act on, so their tooltips state what will actually run.
+  const selectedSyncableIds = fetchableIds.filter((id) => selectedIds.has(id));
+  // One in-flight bulk sync at a time: pulling and pushing the same repos at
+  // once would race on the same working trees.
+  const syncBusy = pullMany.isPending || pushMany.isPending;
+  // Whether the selection covers every row on screen (drives the bar's select-all
+  // checkbox; anything less shows as indeterminate).
+  const allVisibleSelected = orderedIds.length > 0 && selectedIds.size === orderedIds.length;
+
+  // Switching groups shows a different set of rows entirely — carrying a
+  // selection across that switch would let a hidden id get bulk-removed. The
+  // pending dialog target goes too: a group switch is reachable *while the
+  // dialog is open* (the ⌘/Ctrl+1…9 and Ctrl+Tab bindings are a window keydown
+  // listener that Radix's overlay doesn't intercept), and confirming against a
+  // group the user is no longer looking at would remove rows they can't see.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setAnchor(null);
+    setRemoveTarget(null);
+  }, [activeGroupId]);
+
+  // Drop ids that leave the visible set (reassigned to another group, or
+  // removed by some other path) so a later bulk action can't target a repo
+  // that no longer shows on screen. Keyed on the id list rather than the
+  // `visible` array, which is rebuilt every render.
+  const visibleIdKey = orderedIds.join(",");
+  useEffect(() => {
+    const ids = new Set(visibleIdKey ? visibleIdKey.split(",").map(Number) : []);
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [visibleIdKey]);
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setAnchor(null);
+  }
+
+  function toggleSelect(repo: Repo) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(repo.id)) next.delete(repo.id);
+      else next.add(repo.id);
+      return next;
+    });
+    setAnchor(repo.id);
+  }
+
+  // Resolve a row click against its modifiers: ⌘/Ctrl toggles the row in/out of
+  // the selection, ⇧ selects the inclusive range from the anchor (in rendered
+  // order), and a plain click clears the selection and activates the repo —
+  // today's behavior, unchanged.
+  function handleRowClick(repo: Repo, e: React.MouseEvent) {
+    if (e.metaKey || e.ctrlKey) {
+      toggleSelect(repo);
+      return;
+    }
+    if (e.shiftKey) {
+      const from = anchor ?? repo.id;
+      setSelectedIds(new Set(rangeIds(orderedIds, from, repo.id)));
+      setAnchor((a) => a ?? repo.id);
+      return;
+    }
+    setSelectedIds(new Set());
+    setAnchor(repo.id);
+    setActiveRepo(repo.id);
+    ipc.touchRepo(repo.id);
+  }
+
+  // What a remove action on `repo` targets: the whole selection when `repo` is
+  // part of it, else just that row. Shared by the trash icon and the context
+  // menu so the two can't scope differently. Drawn from `visible`, so an id that
+  // has left the on-screen list can never end up in the dialog.
+  function removeTargetFor(repo: Repo): Repo[] {
+    return selectedIds.has(repo.id) ? selectedRepos : [repo];
+  }
+
+  // What the open context menu's remove item would target — drives its label.
+  const menuRemoveTarget = menuRepo ? removeTargetFor(menuRepo) : [];
+
+  function confirmRemove() {
+    if (!removeTarget) return;
+    removeRepos.mutate(removeTarget.map((r) => r.id));
+    clearSelection();
+    setRemoveTarget(null);
+  }
 
   function reorder(srcId: number, targetId: number) {
     const order = moveBefore(
@@ -524,67 +644,147 @@ export function RepoSidebar() {
           </span>
         </div>
       )}
-      <header className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
-        <div className="group flex min-w-0 items-center gap-1">
-          <span
-            className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-            title={activeGroup?.name}
-          >
-            {activeGroup?.name ?? "Repositories"}
-          </span>
-          {activeGroup && (
-            <button
-              aria-label={`Edit ${activeGroup.name}`}
-              title="Edit group"
-              onClick={() => setEditGroupOpen(true)}
-              className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
-            >
-              <Pencil className="size-3 text-[var(--color-muted-foreground)]" />
-            </button>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="Fetch all repositories in this group (⌘⌥F)"
-            disabled={fetchGroup.isPending || fetchableIds.length === 0}
-            onClick={() => fetchGroup.mutate(fetchableIds)}
-          >
-            {fetchGroup.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          </Button>
-          {groupFolder && activeGroup && (
+      {/* With rows selected, the header turns into a bulk-action bar: the group
+          name and its per-group controls have nothing to do with the selection,
+          and acting on it is what the user is mid-way through. Same height and
+          border as the normal header so the swap doesn't move the list. */}
+      {selectedIds.size > 0 ? (
+        <header
+          role="toolbar"
+          aria-label="Bulk actions for selected repositories"
+          className="flex h-10 shrink-0 items-center justify-between gap-1 border-b bg-[var(--color-accent)] px-3"
+        >
+          <label className="flex min-w-0 cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              aria-label={allVisibleSelected ? "Deselect all" : "Select all"}
+              checked={allVisibleSelected}
+              ref={(el) => {
+                // Partial selection reads as indeterminate — settable only from
+                // script, never from an attribute.
+                if (el) el.indeterminate = !allVisibleSelected;
+              }}
+              onChange={() => setSelectedIds(allVisibleSelected ? new Set() : new Set(orderedIds))}
+            />
+            <span className="min-w-0 truncate text-xs font-semibold text-[var(--color-foreground)]">
+              {selectedIds.size} selected
+            </span>
+          </label>
+          {/* Icon-only so the whole bar fits a narrow sidebar — the count lives
+              in the label on the left, and each action names itself through its
+              tooltip and accessible label. Pull/push act on the syncable subset
+              (a missing or non-git folder has nothing to sync), so the tooltip
+              states the number that will actually run. Fetching stays a
+              group-level action: the header's fetch button already covers the
+              whole group, so a per-selection fetch would be redundant. */}
+          <div className="flex shrink-0 items-center gap-0.5">
             <Button
               size="icon"
               variant="ghost"
               className="size-7"
-              title={`Open terminal at ${activeGroup.name} folder`}
-              onClick={() => addTerminalTab(activeGroup.id, groupFolder, activeGroup.name)}
+              aria-label="Clear selection"
+              title="Clear selection"
+              onClick={clearSelection}
             >
-              <SquareTerminal />
+              <X />
             </Button>
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="Add repository"
-            onClick={addRepo}
-          >
-            <Plus />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="Scan a folder for repositories"
-            onClick={() => setDiscoverOpen(true)}
-          >
-            <FolderSearch />
-          </Button>
-        </div>
-      </header>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={`Pull ${selectedSyncableIds.length} selected`}
+              title={`Pull ${selectedSyncableIds.length} selected`}
+              disabled={syncBusy || selectedSyncableIds.length === 0}
+              onClick={() => pullMany.mutate(selectedSyncableIds)}
+            >
+              {pullMany.isPending ? <Loader2 className="animate-spin" /> : <ArrowDownToLine />}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={`Push ${selectedSyncableIds.length} selected`}
+              title={`Push ${selectedSyncableIds.length} selected`}
+              disabled={syncBusy || selectedSyncableIds.length === 0}
+              onClick={() => pushMany.mutate(selectedSyncableIds)}
+            >
+              {pushMany.isPending ? <Loader2 className="animate-spin" /> : <ArrowUpFromLine />}
+            </Button>
+            <Button
+              size="icon"
+              variant="destructive"
+              className="size-7"
+              aria-label={`Remove ${selectedIds.size} selected`}
+              title={`Remove ${selectedIds.size} selected from Gamut`}
+              onClick={() => setRemoveTarget(selectedRepos)}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        </header>
+      ) : (
+        <header className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
+          <div className="group flex min-w-0 items-center gap-1">
+            <span
+              className="min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
+              title={activeGroup?.name}
+            >
+              {activeGroup?.name ?? "Repositories"}
+            </span>
+            {activeGroup && (
+              <button
+                aria-label={`Edit ${activeGroup.name}`}
+                title="Edit group"
+                onClick={() => setEditGroupOpen(true)}
+                className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
+              >
+                <Pencil className="size-3 text-[var(--color-muted-foreground)]" />
+              </button>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              title="Fetch all repositories in this group (⌘⌥F)"
+              disabled={fetchGroup.isPending || fetchableIds.length === 0}
+              onClick={() => fetchGroup.mutate(fetchableIds)}
+            >
+              {fetchGroup.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            </Button>
+            {groupFolder && activeGroup && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7"
+                title={`Open terminal at ${activeGroup.name} folder`}
+                onClick={() => addTerminalTab(activeGroup.id, groupFolder, activeGroup.name)}
+              >
+                <SquareTerminal />
+              </Button>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              title="Add repository"
+              onClick={addRepo}
+            >
+              <Plus />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              title="Scan a folder for repositories"
+              onClick={() => setDiscoverOpen(true)}
+            >
+              <FolderSearch />
+            </Button>
+          </div>
+        </header>
+      )}
 
       <div
         className="min-h-0 flex-1 overflow-auto p-2"
@@ -608,7 +808,10 @@ export function RepoSidebar() {
                 repo={r}
                 status={statusById.get(r.id)}
                 isSyncedRoot={rootRepoIds.has(r.id)}
-                onRemove={(repo) => removeRepo.mutate(repo.id)}
+                selected={selectedIds.has(r.id)}
+                onRowClick={handleRowClick}
+                onToggleSelect={toggleSelect}
+                onRequestRemove={(repo) => setRemoveTarget(removeTargetFor(repo))}
                 onReorder={reorder}
                 onContextMenu={(e) =>
                   setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "repo", repo: r })
@@ -628,7 +831,10 @@ export function RepoSidebar() {
                     repo={r}
                     status={statusById.get(r.id)}
                     isSyncedRoot={rootRepoIds.has(r.id)}
-                    onRemove={(repo) => removeRepo.mutate(repo.id)}
+                    selected={selectedIds.has(r.id)}
+                    onRowClick={handleRowClick}
+                    onToggleSelect={toggleSelect}
+                    onRequestRemove={(repo) => setRemoveTarget(removeTargetFor(repo))}
                     onReorder={reorder}
                     onContextMenu={(e) =>
                       setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "repo", repo: r })
@@ -648,6 +854,16 @@ export function RepoSidebar() {
         open={editGroupOpen}
         onOpenChange={setEditGroupOpen}
         onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
+      />
+
+      <ConfirmRemoveReposDialog
+        repos={removeTarget ?? []}
+        hasRoot={removeTarget?.some((r) => rootRepoIds.has(r.id)) ?? false}
+        open={removeTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveTarget(null);
+        }}
+        onConfirm={confirmRemove}
       />
 
       <ContextMenu at={menu?.at ?? null} onClose={() => setMenu(null)}>
@@ -707,19 +923,14 @@ export function RepoSidebar() {
             <ContextMenuItem
               className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
               onClick={() => {
-                const repo = menu.repo;
                 setMenu(null);
-                if (
-                  window.confirm(
-                    `Remove "${repo.name}" from Gamut? This only removes it from the list — your files on disk are not touched.`,
-                  )
-                ) {
-                  removeRepo.mutate(repo.id);
-                }
+                setRemoveTarget(removeTargetFor(menu.repo));
               }}
             >
               <Trash2 />
-              Remove repo
+              {menuRemoveTarget.length > 1
+                ? `Remove ${menuRemoveTarget.length} repository folders`
+                : "Remove repo"}
             </ContextMenuItem>
           </>
         ) : menu?.kind === "blank" ? (

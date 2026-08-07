@@ -523,6 +523,14 @@ export interface FetchResult {
   error: string | null;
 }
 
+/** Per-repo outcome of a batch pull or push (`gitPullMany` / `gitPushMany`). One
+ * repo failing never aborts the batch, so callers report the mix. */
+export interface SyncResult {
+  repo_id: number;
+  ok: boolean;
+  error: string | null;
+}
+
 /** Repo-wide find & replace query. `includes`/`excludes` are gitignore-style
  * globs (e.g. `src/**`, `*.rs`); empty `includes` means "everything". */
 export interface SearchQuery {
@@ -642,7 +650,9 @@ export const ipc = {
   repoStatusesFor: (repoIds: number[]) => invoke<RepoStatus[]>("repo_statuses_for", { repoIds }),
   repoStatus: (repoId: number) => invoke<RepoStatus>("repo_status", { repoId }),
   registerRepo: (path: string) => invoke<Repo>("register_repo", { path }),
-  removeRepo: (id: number) => invoke<void>("remove_repo", { id }),
+  /** Remove one or more repos in a single round trip — DB-only, files on disk
+   * are untouched. A single-repo removal passes a one-element array. */
+  removeRepos: (ids: number[]) => invoke<void>("remove_repos", { ids }),
   touchRepo: (id: number) => invoke<void>("touch_repo", { id }),
   /** Turn this repo's background auto-pull opt-in on or off (#299). */
   setRepoAutoPull: (repoId: number, enabled: boolean) =>
@@ -666,6 +676,9 @@ export const ipc = {
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
   gitFetchMany: (repoIds: number[]) => invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
+  /** Pull several repos in one round trip — a full `git pull` each, with bounded
+   * concurrency and per-repo results (not the ff-only auto-pull batch). */
+  gitPullMany: (repoIds: number[]) => invoke<SyncResult[]>("git_pull_many", { repoIds }),
   /**
    * Fast-forward the auto-pull-enabled repos among `repoIds` (#299). The backend
    * owns the safety decision: an ineligible repo (dirty, diverged, no upstream)
@@ -673,6 +686,8 @@ export const ipc = {
    */
   gitPullFfMany: (repoIds: number[]) => invoke<AutoPullResult[]>("git_pull_ff_many", { repoIds }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
+  /** Push several repos in one round trip; a branch with no upstream gets one set. */
+  gitPushMany: (repoIds: number[]) => invoke<SyncResult[]>("git_push_many", { repoIds }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),
 

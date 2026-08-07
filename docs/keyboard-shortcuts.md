@@ -79,7 +79,8 @@ These apply inside text inputs and composers throughout the app.
 | --- | --- |
 | Right-click a file-tree entry | Open the context menu (New File, New Folder, Copy Path, Copy Relative Path, Delete) |
 | Hover a line in a PR diff | A `+` appears in the gutter — click to add an inline comment |
-| `⌘/Ctrl+click` a repo name | Open a terminal at that repo |
+| `⌘/Ctrl+click` a repo row in the sidebar | Toggle that repo into or out of the multi-selection |
+| `⇧+click` a repo row in the sidebar | Select every repo in between (on-screen order) |
 | Drag a repo onto a group | Assign it to that group |
 
 ---

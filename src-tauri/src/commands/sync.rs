@@ -246,6 +246,182 @@ pub async fn git_pull(state: State<'_, AppState>, repo_id: i64) -> AppResult<Str
     run_git(&dir.to_string_lossy(), &["pull"]).await
 }
 
+/// Outcome of one repo's pull or push within a batch [`git_pull_many`] /
+/// [`git_push_many`] call. Deliberately a separate type from [`FetchResult`]
+/// despite the identical shape: these are two independent wire contracts, and
+/// sharing one would mean a field added for the fetch batch silently becomes
+/// part of the sync batch's API too.
+#[derive(Serialize)]
+pub struct SyncResult {
+    pub repo_id: i64,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Concurrency ceiling for a batch pull/push. Same reasoning as
+/// [`FETCH_CONCURRENCY`]: these are network round trips plus a `git` subprocess
+/// each, so a bounded burst finishes far sooner than a one-at-a-time trickle
+/// while staying modest enough not to hammer the remote.
+const SYNC_CONCURRENCY: usize = 5;
+
+/// Resolve each requested repo to a directory that exists, recording the ones
+/// that can't be as failures. Shared by [`git_pull_many`] and [`git_push_many`]
+/// so the two batches skip and report unusable repos identically.
+fn resolve_sync_targets(
+    state: &State<'_, AppState>,
+    repo_ids: &[i64],
+) -> (Vec<SyncResult>, Vec<(i64, PathBuf)>) {
+    let mut failed: Vec<SyncResult> = Vec::new();
+    let mut pending: Vec<(i64, PathBuf)> = Vec::new();
+    for &repo_id in repo_ids {
+        match repo_path(state, repo_id) {
+            Ok(dir) if dir.exists() => pending.push((repo_id, dir)),
+            // A folder that's gone can't be pulled or pushed — record, don't run.
+            Ok(_) => failed.push(SyncResult {
+                repo_id,
+                ok: false,
+                error: Some("folder no longer exists on disk".to_string()),
+            }),
+            Err(e) => failed.push(SyncResult {
+                repo_id,
+                ok: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    (failed, pending)
+}
+
+/// Reassemble batch results into the caller's input order, so the observable
+/// output lines up with the ids that were passed in.
+fn in_input_order(results: Vec<SyncResult>, repo_ids: Vec<i64>) -> Vec<SyncResult> {
+    let mut by_id: std::collections::HashMap<i64, SyncResult> =
+        results.into_iter().map(|r| (r.repo_id, r)).collect();
+    repo_ids
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect()
+}
+
+/// Pull one repo and build its result + diagnostics timing. Mirrors
+/// [`fetch_one`]: the timer starts after the caller's concurrency permit is held,
+/// so a queued repo's recorded duration measures only its pull, not its wait.
+async fn pull_one(repo_id: i64, dir: PathBuf) -> (SyncResult, OpTiming) {
+    let started = std::time::Instant::now();
+    let out = run_git(&dir.to_string_lossy(), &["pull"]).await;
+    let timing = OpTiming::finished(
+        "git_pull",
+        Some(repo_id),
+        started,
+        out.is_ok(),
+        out.as_ref().err().map(|e| e.to_string()),
+    );
+    let result = SyncResult {
+        repo_id,
+        ok: out.is_ok(),
+        error: out.err().map(|e| e.to_string()),
+    };
+    (result, timing)
+}
+
+/// Push one repo and build its result + diagnostics timing. `set_upstream_for`
+/// carries the branch that still needs an upstream (see [`push_target`]); `None`
+/// means a plain `git push`.
+async fn push_one(
+    repo_id: i64,
+    dir: PathBuf,
+    set_upstream_for: Option<String>,
+) -> (SyncResult, OpTiming) {
+    let dir = dir.to_string_lossy().to_string();
+    let started = std::time::Instant::now();
+    let out = match &set_upstream_for {
+        Some(branch) => run_git(&dir, &["push", "--set-upstream", "origin", branch]).await,
+        None => run_git(&dir, &["push"]).await,
+    };
+    let timing = OpTiming::finished(
+        "git_push",
+        Some(repo_id),
+        started,
+        out.is_ok(),
+        out.as_ref().err().map(|e| e.to_string()),
+    );
+    let result = SyncResult {
+        repo_id,
+        ok: out.is_ok(),
+        error: out.err().map(|e| e.to_string()),
+    };
+    (result, timing)
+}
+
+/// Pull many repos in one call — backs the repo sidebar's bulk-action bar. Each
+/// repo is pulled independently: one failure (a conflict, a missing upstream, a
+/// folder that's gone) is recorded and the batch carries on rather than aborting,
+/// so a single problem repo can't strand the rest half-done. Runs with bounded
+/// concurrency ([`SYNC_CONCURRENCY`]).
+///
+/// This is a full `git pull`, matching what the per-repo pull button does — not
+/// the fast-forward-only, opt-in-gated [`git_pull_ff_many`] that backs background
+/// auto-pull.
+#[tauri::command]
+pub async fn git_pull_many(
+    state: State<'_, AppState>,
+    repo_ids: Vec<i64>,
+) -> AppResult<Vec<SyncResult>> {
+    let (mut resolved, pending) = resolve_sync_targets(&state, &repo_ids);
+    let pulled = bounded_map(pending, SYNC_CONCURRENCY, |(repo_id, dir)| {
+        pull_one(repo_id, dir)
+    })
+    .await;
+    for (result, timing) in pulled {
+        crate::commands::diagnostics::record(&state, timing);
+        resolved.push(result);
+    }
+    Ok(in_input_order(resolved, repo_ids))
+}
+
+/// Push many repos in one call — the bulk-action bar's counterpart to
+/// [`git_pull_many`], with the same independent-per-repo semantics and the same
+/// first-push upstream handling as the single-repo [`git_push`]: a branch with no
+/// upstream gets one set on its first push.
+#[tauri::command]
+pub async fn git_push_many(
+    state: State<'_, AppState>,
+    repo_ids: Vec<i64>,
+) -> AppResult<Vec<SyncResult>> {
+    let (mut resolved, pending) = resolve_sync_targets(&state, &repo_ids);
+
+    // Resolve each repo's branch/upstream up front: it needs `state` (and a
+    // non-Send git2 Repository), neither of which can cross into the concurrent
+    // tasks below.
+    let mut targets: Vec<(i64, PathBuf, Option<String>)> = Vec::new();
+    for (repo_id, dir) in pending {
+        let branch_without_upstream = match push_target(&state, repo_id) {
+            Ok(b) => b,
+            Err(e) => {
+                resolved.push(SyncResult {
+                    repo_id,
+                    ok: false,
+                    error: Some(e.to_string()),
+                });
+                continue;
+            }
+        };
+        targets.push((repo_id, dir, branch_without_upstream));
+    }
+
+    let pushed = bounded_map(
+        targets,
+        SYNC_CONCURRENCY,
+        |(repo_id, dir, set_upstream_for)| push_one(repo_id, dir, set_upstream_for),
+    )
+    .await;
+    for (result, timing) in pushed {
+        crate::commands::diagnostics::record(&state, timing);
+        resolved.push(result);
+    }
+    Ok(in_input_order(resolved, repo_ids))
+}
+
 /// What auto-pull did (or deliberately didn't do) to one repo. Serialised in
 /// kebab-case so the frontend switches on stable string literals.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -527,37 +703,39 @@ pub async fn git_checkout_pr(
     run_git(&dir, &["switch", &head_ref]).await
 }
 
+/// The branch a push must set an upstream for, or `None` when a plain
+/// `git push` is right (the branch already tracks, or HEAD is detached). Shared
+/// by [`git_push`] and [`git_push_many`] so both handle a first push the same
+/// way. Kept separate from the push itself because the git2 `Repository` it
+/// reads is not `Send` and must be dropped before any await.
+fn push_target(state: &State<'_, AppState>, repo_id: i64) -> AppResult<Option<String>> {
+    let repo = open_repo(state, repo_id)?;
+    let head = repo.head().ok();
+    let branch = head
+        .as_ref()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    let has_upstream = match &branch {
+        Some(b) => repo
+            .find_branch(b, BranchType::Local)
+            .ok()
+            .and_then(|br| br.upstream().ok())
+            .is_some(),
+        None => false,
+    };
+    Ok(if has_upstream { None } else { branch })
+}
+
 #[tauri::command]
 pub async fn git_push(state: State<'_, AppState>, repo_id: i64) -> AppResult<String> {
     let dir = repo_path(&state, repo_id)?;
-
-    // Determine the current branch and whether it has an upstream. The git2
-    // Repository is scoped to this block so it's dropped before the await.
-    let (branch, has_upstream) = {
-        let repo = open_repo(&state, repo_id)?;
-        let head = repo.head().ok();
-        let branch = head
-            .as_ref()
-            .filter(|h| h.is_branch())
-            .and_then(|h| h.shorthand().map(|s| s.to_string()));
-        let has_upstream = match &branch {
-            Some(b) => repo
-                .find_branch(b, BranchType::Local)
-                .ok()
-                .and_then(|br| br.upstream().ok())
-                .is_some(),
-            None => false,
-        };
-        (branch, has_upstream)
-    };
+    let set_upstream_for = push_target(&state, repo_id)?;
 
     let dir = dir.to_string_lossy().to_string();
-    match (has_upstream, branch) {
+    match set_upstream_for {
         // No upstream yet — set it on first push (git push -u origin <branch>).
-        (false, Some(branch)) => {
-            run_git(&dir, &["push", "--set-upstream", "origin", &branch]).await
-        }
-        _ => run_git(&dir, &["push"]).await,
+        Some(branch) => run_git(&dir, &["push", "--set-upstream", "origin", &branch]).await,
+        None => run_git(&dir, &["push"]).await,
     }
 }
 
@@ -1053,6 +1231,167 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A batch pull over real repos (#294's bulk-action bar): every input yields
+    /// exactly one result, the behind clones actually advance, and a non-git
+    /// folder fails without aborting the batch — through the same
+    /// `bounded_map` + `pull_one` path `git_pull_many` uses.
+    #[tokio::test]
+    async fn batch_pull_advances_every_repo_and_isolates_failures() {
+        let root = scratch("pull_many");
+        let (remote, seed) = remote_with_seed(&root);
+
+        // Two clones that are each one commit behind the remote.
+        let a = clone_that_is_behind(&root, &remote, &seed, "a");
+        let b = root.join("b");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), b.to_str().unwrap()],
+        );
+
+        // A plain folder — `git pull` here fails, but must not abort the batch.
+        let not_git = root.join("plain");
+        std::fs::create_dir_all(&not_git).unwrap();
+
+        let pending: Vec<(i64, PathBuf)> = vec![(1, a.clone()), (2, b.clone()), (99, not_git)];
+        let out = bounded_map(pending, SYNC_CONCURRENCY, |(id, dir)| pull_one(id, dir)).await;
+
+        assert_eq!(out.len(), 3, "one result per input, batch not aborted");
+        for (r, _) in &out {
+            if r.repo_id == 99 {
+                assert!(!r.ok, "non-git folder must fail");
+                assert!(r.error.is_some());
+            } else {
+                assert!(r.ok, "repo {} should pull, got {:?}", r.repo_id, r.error);
+            }
+        }
+        // The pull really happened, not just reported success.
+        assert_eq!(read_normalized(&a.join("a.txt")), "one\ntwo\n");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A batch push over real repos: every input yields exactly one result, the
+    /// commits land on the remote, and a non-git folder fails without aborting
+    /// the batch. Also pins the first-push arm — a branch with no upstream gets
+    /// one set, which is what `push_target`'s `Some(branch)` carries.
+    #[tokio::test]
+    async fn batch_push_lands_commits_and_isolates_failures() {
+        let root = scratch("push_many");
+        let (remote, _seed) = remote_with_seed(&root);
+
+        // A clone with a local commit to push on an already-tracking branch.
+        let tracking = root.join("tracking");
+        git(
+            &root,
+            &[
+                "clone",
+                remote.to_str().unwrap(),
+                tracking.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(tracking.join("tracked.txt"), "t").unwrap();
+        git(&tracking, &["add", "."]);
+        git(&tracking, &["commit", "-m", "tracked change"]);
+
+        // A clone on a brand-new branch that has no upstream yet.
+        let fresh = root.join("fresh");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), fresh.to_str().unwrap()],
+        );
+        git(&fresh, &["switch", "-c", "feature-x"]);
+        std::fs::write(fresh.join("new.txt"), "n").unwrap();
+        git(&fresh, &["add", "."]);
+        git(&fresh, &["commit", "-m", "new branch"]);
+
+        let not_git = root.join("plain");
+        std::fs::create_dir_all(&not_git).unwrap();
+
+        let targets: Vec<(i64, PathBuf, Option<String>)> = vec![
+            (1, tracking.clone(), None),
+            // No upstream yet → the first-push arm sets one.
+            (2, fresh.clone(), Some("feature-x".to_string())),
+            (99, not_git, None),
+        ];
+        let out = bounded_map(targets, SYNC_CONCURRENCY, |(id, dir, up)| {
+            push_one(id, dir, up)
+        })
+        .await;
+
+        assert_eq!(out.len(), 3, "one result per input, batch not aborted");
+        for (r, _) in &out {
+            if r.repo_id == 99 {
+                assert!(!r.ok, "non-git folder must fail");
+                assert!(r.error.is_some());
+            } else {
+                assert!(r.ok, "repo {} should push, got {:?}", r.repo_id, r.error);
+            }
+        }
+
+        // Both pushes actually landed on the remote.
+        let refs = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&remote)
+            .args(["for-each-ref", "--format=%(refname:short)"])
+            .output()
+            .unwrap();
+        let refs = String::from_utf8_lossy(&refs.stdout);
+        assert!(refs.contains("main"), "tracking push landed: {refs}");
+        assert!(
+            refs.contains("feature-x"),
+            "first push created the branch: {refs}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Batch results come back in the caller's input order regardless of the
+    /// order they completed in (`bounded_map` yields by completion), and an id
+    /// with no result is dropped rather than shifting the rest.
+    #[test]
+    fn in_input_order_restores_the_callers_order() {
+        let out_of_order = vec![
+            SyncResult {
+                repo_id: 3,
+                ok: true,
+                error: None,
+            },
+            SyncResult {
+                repo_id: 1,
+                ok: false,
+                error: Some("boom".to_string()),
+            },
+            SyncResult {
+                repo_id: 2,
+                ok: true,
+                error: None,
+            },
+        ];
+
+        let ordered = in_input_order(out_of_order, vec![1, 2, 3]);
+        assert_eq!(
+            ordered.iter().map(|r| r.repo_id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        // The per-repo outcome travels with its id, not its position.
+        assert!(!ordered[0].ok, "id 1 keeps its failure");
+        assert_eq!(ordered[0].error.as_deref(), Some("boom"));
+
+        // An id nobody reported on is simply absent.
+        let ordered = in_input_order(
+            vec![SyncResult {
+                repo_id: 2,
+                ok: true,
+                error: None,
+            }],
+            vec![1, 2, 3],
+        );
+        assert_eq!(
+            ordered.iter().map(|r| r.repo_id).collect::<Vec<_>>(),
+            vec![2]
+        );
     }
 
     /// The opt-in is enforced **in the backend**, not just by the caller: a repo
