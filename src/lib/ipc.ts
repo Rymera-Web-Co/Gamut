@@ -523,6 +523,14 @@ export interface FetchResult {
   error: string | null;
 }
 
+/** Per-repo outcome of a batch pull or push (`gitPullMany` / `gitPushMany`). One
+ * repo failing never aborts the batch, so callers report the mix. */
+export interface SyncResult {
+  repo_id: number;
+  ok: boolean;
+  error: string | null;
+}
+
 /** Repo-wide find & replace query. `includes`/`excludes` are gitignore-style
  * globs (e.g. `src/**`, `*.rs`); empty `includes` means "everything". */
 export interface SearchQuery {
@@ -668,6 +676,9 @@ export const ipc = {
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
   gitFetchMany: (repoIds: number[]) => invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
+  /** Pull several repos in one round trip — a full `git pull` each, with bounded
+   * concurrency and per-repo results (not the ff-only auto-pull batch). */
+  gitPullMany: (repoIds: number[]) => invoke<SyncResult[]>("git_pull_many", { repoIds }),
   /**
    * Fast-forward the auto-pull-enabled repos among `repoIds` (#299). The backend
    * owns the safety decision: an ineligible repo (dirty, diverged, no upstream)
@@ -675,6 +686,8 @@ export const ipc = {
    */
   gitPullFfMany: (repoIds: number[]) => invoke<AutoPullResult[]>("git_pull_ff_many", { repoIds }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
+  /** Push several repos in one round trip; a branch with no upstream gets one set. */
+  gitPushMany: (repoIds: number[]) => invoke<SyncResult[]>("git_push_many", { repoIds }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),
 

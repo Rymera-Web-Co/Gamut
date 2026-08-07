@@ -3,6 +3,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Copy,
   Folder,
   FolderGit2,
@@ -30,6 +32,7 @@ import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
+import { usePullMany, usePushMany } from "@/features/sync/useSyncMany";
 import { moveBefore } from "@/lib/dnd";
 import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { visibleRepos } from "@/lib/groupRepos";
@@ -378,6 +381,8 @@ export function RepoSidebar() {
   const setRepoGroups = useSetRepoGroups();
   const reorderRepos = useReorderRepos();
   const fetchGroup = useFetchGroup();
+  const pullMany = usePullMany();
+  const pushMany = usePushMany();
   const statuses = useRepoStatuses();
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
@@ -455,9 +460,12 @@ export function RepoSidebar() {
   // The selected rows, in rendered order. Drawn from `visible`, so an id that has
   // left the on-screen list can never reach a bulk action.
   const selectedRepos = visible.filter((r) => selectedIds.has(r.id));
-  // The same fetch eligibility, narrowed to the selection — what the bulk bar's
-  // "Fetch N" acts on, so its count states what will actually run.
-  const selectedFetchableIds = fetchableIds.filter((id) => selectedIds.has(id));
+  // The same eligibility, narrowed to the selection — what the bulk bar's pull
+  // and push act on, so their tooltips state what will actually run.
+  const selectedSyncableIds = fetchableIds.filter((id) => selectedIds.has(id));
+  // One in-flight bulk sync at a time: pulling and pushing the same repos at
+  // once would race on the same working trees.
+  const syncBusy = pullMany.isPending || pushMany.isPending;
   // Whether the selection covers every row on screen (drives the bar's select-all
   // checkbox; anything less shows as indeterminate).
   const allVisibleSelected = orderedIds.length > 0 && selectedIds.size === orderedIds.length;
@@ -662,7 +670,14 @@ export function RepoSidebar() {
               {selectedIds.size} selected
             </span>
           </label>
-          <div className="flex shrink-0 items-center gap-1">
+          {/* Icon-only so the whole bar fits a narrow sidebar — the count lives
+              in the label on the left, and each action names itself through its
+              tooltip and accessible label. Pull/push act on the syncable subset
+              (a missing or non-git folder has nothing to sync), so the tooltip
+              states the number that will actually run. Fetching stays a
+              group-level action: the header's fetch button already covers the
+              whole group, so a per-selection fetch would be redundant. */}
+          <div className="flex shrink-0 items-center gap-0.5">
             <Button
               size="icon"
               variant="ghost"
@@ -673,28 +688,37 @@ export function RepoSidebar() {
             >
               <X />
             </Button>
-            {/* Only the fetchable subset — a missing folder or a non-git folder
-                has nothing to fetch, so the count says what will actually run. */}
             <Button
-              size="sm"
-              variant="outline"
-              className="h-7"
-              title="Fetch the selected repositories"
-              disabled={fetchGroup.isPending || selectedFetchableIds.length === 0}
-              onClick={() => fetchGroup.mutate(selectedFetchableIds)}
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={`Pull ${selectedSyncableIds.length} selected`}
+              title={`Pull ${selectedSyncableIds.length} selected`}
+              disabled={syncBusy || selectedSyncableIds.length === 0}
+              onClick={() => pullMany.mutate(selectedSyncableIds)}
             >
-              {fetchGroup.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              Fetch {selectedFetchableIds.length}
+              {pullMany.isPending ? <Loader2 className="animate-spin" /> : <ArrowDownToLine />}
             </Button>
             <Button
-              size="sm"
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label={`Push ${selectedSyncableIds.length} selected`}
+              title={`Push ${selectedSyncableIds.length} selected`}
+              disabled={syncBusy || selectedSyncableIds.length === 0}
+              onClick={() => pushMany.mutate(selectedSyncableIds)}
+            >
+              {pushMany.isPending ? <Loader2 className="animate-spin" /> : <ArrowUpFromLine />}
+            </Button>
+            <Button
+              size="icon"
               variant="destructive"
-              className="h-7"
-              title="Remove the selected repositories from Gamut"
+              className="size-7"
+              aria-label={`Remove ${selectedIds.size} selected`}
+              title={`Remove ${selectedIds.size} selected from Gamut`}
               onClick={() => setRemoveTarget(selectedRepos)}
             >
               <Trash2 />
-              Remove {selectedIds.size}
             </Button>
           </div>
         </header>

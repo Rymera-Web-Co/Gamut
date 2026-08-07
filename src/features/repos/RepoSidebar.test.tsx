@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   repoRemoteUrl: vi.fn(),
   gitWorktreeList: vi.fn(),
   gitFetchMany: vi.fn(),
+  gitPullMany: vi.fn(),
+  gitPushMany: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -31,6 +33,8 @@ vi.mock("@/lib/ipc", () => ({
     removeRepos: mocks.removeRepos,
     touchRepo: mocks.touchRepo,
     gitFetchMany: mocks.gitFetchMany,
+    gitPullMany: mocks.gitPullMany,
+    gitPushMany: mocks.gitPushMany,
     registerRepo: vi.fn(),
     reorderRepos: vi.fn(),
     setRepoGroups: vi.fn(),
@@ -136,6 +140,8 @@ beforeEach(() => {
   mocks.repoRemoteUrl.mockReset().mockResolvedValue(null);
   mocks.gitWorktreeList.mockReset().mockResolvedValue([]);
   mocks.gitFetchMany.mockReset().mockResolvedValue([]);
+  mocks.gitPullMany.mockReset().mockResolvedValue([]);
+  mocks.gitPushMany.mockReset().mockResolvedValue([]);
   useUiStore.setState({ activeGroupId: 1, activeRepoId: null, activeWorktreePath: null });
 });
 
@@ -412,31 +418,57 @@ describe("RepoSidebar bulk action bar (#294)", () => {
     expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
   });
 
-  it("A31: Fetch counts and fetches only the fetchable selection — never a missing or non-git folder", async () => {
+  it("A31: Pull and Push act on only the syncable selection — never a missing or non-git folder", async () => {
     renderSidebar([A, B, C, D, E]);
     await screen.findByTitle(A.path);
 
     // A + B are healthy git repos; C is missing, D and E are plain folders.
     fireEvent.click(screen.getByLabelText(`Select ${A.name}`));
+    fireEvent.click(screen.getByLabelText(`Select ${B.name}`));
     fireEvent.click(screen.getByLabelText(`Select ${C.name}`));
     fireEvent.click(screen.getByLabelText(`Select ${D.name}`));
-    expect(screen.getByText("3 selected")).toBeInTheDocument();
+    expect(screen.getByText("4 selected")).toBeInTheDocument();
 
-    const fetchBtn = screen.getByRole("button", { name: /^Fetch 1$/ });
-    fireEvent.click(fetchBtn);
+    // The count in the label states what will actually run, not the selection size.
+    fireEvent.click(screen.getByLabelText("Pull 2 selected"));
+    await waitFor(() => expect(mocks.gitPullMany).toHaveBeenCalledTimes(1));
+    expect(mocks.gitPullMany).toHaveBeenCalledWith([A.id, B.id]);
 
-    await waitFor(() => expect(mocks.gitFetchMany).toHaveBeenCalledTimes(1));
-    expect(mocks.gitFetchMany).toHaveBeenCalledWith([A.id]);
+    fireEvent.click(screen.getByLabelText("Push 2 selected"));
+    await waitFor(() => expect(mocks.gitPushMany).toHaveBeenCalledTimes(1));
+    expect(mocks.gitPushMany).toHaveBeenCalledWith([A.id, B.id]);
   });
 
-  it("A32: Fetch is disabled when nothing in the selection can be fetched", async () => {
+  it("A32: Pull and Push are disabled when nothing in the selection can be synced", async () => {
     renderSidebar([A, C, D]);
     await screen.findByTitle(A.path);
 
     fireEvent.click(screen.getByLabelText(`Select ${C.name}`)); // missing
     fireEvent.click(screen.getByLabelText(`Select ${D.name}`)); // non-git
-    expect(screen.getByRole("button", { name: /^Fetch 0$/ })).toBeDisabled();
-    expect(mocks.gitFetchMany).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Pull 0 selected")).toBeDisabled();
+    expect(screen.getByLabelText("Push 0 selected")).toBeDisabled();
+    expect(mocks.gitPullMany).not.toHaveBeenCalled();
+    expect(mocks.gitPushMany).not.toHaveBeenCalled();
+  });
+
+  it("A34: the bar's actions carry no text label, so they fit a narrow sidebar", async () => {
+    renderSidebar([A, B]);
+    await screen.findByTitle(A.path);
+    fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
+
+    const bar = screen.getByRole("toolbar", { name: /bulk actions/i });
+    // Only the count reads as text; every action is icon-only, named for
+    // assistive tech and tooltips through its accessible label.
+    for (const label of [
+      "Clear selection",
+      "Pull 1 selected",
+      "Push 1 selected",
+      "Remove 1 selected",
+    ]) {
+      const btn = within(bar).getByLabelText(label);
+      expect(btn.textContent).toBe("");
+    }
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
   });
 
   it("A33: the bar's Remove opens the dialog for the whole selection", async () => {
@@ -445,7 +477,7 @@ describe("RepoSidebar bulk action bar (#294)", () => {
 
     fireEvent.click(screen.getByTitle(A.path), { ctrlKey: true });
     fireEvent.click(screen.getByTitle(B.path), { ctrlKey: true });
-    fireEvent.click(screen.getByRole("button", { name: "Remove 2" }));
+    fireEvent.click(screen.getByLabelText("Remove 2 selected"));
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);

@@ -48,15 +48,17 @@ A group can stay in sync with a folder on disk:
   while selected, so you can select without reaching for a modifier key.
 - **Bulk actions** — as soon as anything is selected, the sidebar header turns into a
   bulk-action bar: how many rows are selected, a checkbox to select or deselect them all,
-  **✕** to clear the selection, **Fetch N** to fetch just the selected repos, and
-  **Remove N**. *Fetch* counts only what can actually be fetched, so missing folders and
-  plain (non-git) folders are left out of the number and the run. Clearing the selection
-  brings the normal header back.
-- **Remove** — click the trash icon and confirm. With multiple repos selected, the trash
-  icon, the bar's **Remove N**, or *Remove N repository folders* from the right-click menu
-  all remove the whole selection behind one confirmation dialog listing every folder and
-  its path. This only removes them from Gamut's list; **your files on disk are not
-  touched.**
+  and icon buttons to **clear** the selection, **pull** it, **push** it, or **remove** it.
+  Pull and push skip what can't be synced — missing folders and plain (non-git) folders —
+  and each button's tooltip names the number it will actually act on. One repo failing
+  never stops the rest; you get a single summary either way. Clearing the selection brings
+  the normal header back. (Fetching stays group-wide: the header's fetch button already
+  covers every repo in the group.)
+- **Remove** — click the trash icon and confirm. With multiple repos selected, the row's
+  trash icon, the bar's remove button, or *Remove N repository folders* from the
+  right-click menu all remove the whole selection behind one confirmation dialog listing
+  every folder and its path. This only removes them from Gamut's list; **your files on
+  disk are not touched.**
 - **Missing repos** — if a folder was moved or deleted, its repo shows a red warning and
   a strikethrough name.
 
@@ -72,8 +74,9 @@ switcher, and how many commits you're ahead or behind appear on the
 
 `src/features/repos/` talks to `src-tauri/src/commands/repo.rs`. Key IPC commands:
 `registerRepo`, `removeRepos`, `listRepos`, `discoverRepos`, `reorderRepos`, `touchRepo`,
-`repoStatuses`, plus the group commands `createGroup`, `updateGroup`, `deleteGroup`,
-`bindGroupFolder`, `unbindGroupFolder`, `syncGroupFolder`, `reorderGroups`,
+`repoStatuses`, plus the batch sync commands `gitPullMany` / `gitPushMany` (in
+`src-tauri/src/commands/sync.rs`) and the group commands `createGroup`, `updateGroup`,
+`deleteGroup`, `bindGroupFolder`, `unbindGroupFolder`, `syncGroupFolder`, `reorderGroups`,
 `setRepoGroups`, `listGroups`. Registered repos are stored in SQLite, and a filesystem
 watcher keeps branch/commit state live (see [Architecture](../ARCHITECTURE.md)).
 
