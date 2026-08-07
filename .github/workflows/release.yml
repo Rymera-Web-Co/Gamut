@@ -72,6 +72,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Notarization uses an App Store Connect API key (a .p8 file). The key is
+      # stored base64-encoded in a secret; decode it to a file the build can
+      # point APPLE_API_KEY_PATH at. macOS runners only.
+      - name: Decode Apple API key (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -82,6 +91,18 @@ jobs:
           # + password are repo secrets — see docs/features/updates.md.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS Developer ID signing + notarization. tauri-action imports the
+          # certificate into a temporary keychain, signs the app with the
+          # hardened runtime, then notarizes and staples it using the App Store
+          # Connect API key. Ignored on Linux/Windows. A stable Developer ID
+          # signature (vs the previous ad-hoc signing) keeps macOS TCC grants and
+          # keychain items valid across auto-updates.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/apple_api_key.p8
         with:
           # On a tag push, attach artifacts to a GitHub Release for that tag.
           # On manual workflow_dispatch, tagName is empty so tauri-action only
