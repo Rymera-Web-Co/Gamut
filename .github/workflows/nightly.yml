@@ -136,6 +136,19 @@ jobs:
       - name: Stamp nightly version
         run: bash scripts/set-nightly-version.sh "$(date -u +'%Y%m%d')"
 
+      # Decode the App Store Connect API key (.p8) for notarization. macOS only.
+      - name: Decode Apple API key (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_BASE64:-}" ]; then
+            echo "::error::APPLE_API_KEY_BASE64 secret is empty or unset — cannot notarize" >&2
+            exit 1
+          fi
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
+
       - name: Build and release nightly
         uses: tauri-apps/tauri-action@v0
         env:
@@ -144,6 +157,15 @@ jobs:
           # update package and uploads latest.json to the `nightly` release.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS Developer ID signing + notarization — see release.yml for the
+          # full rationale. A stable signature keeps TCC grants and keychain
+          # items valid across nightly auto-updates. Ignored on Linux/Windows.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/apple_api_key.p8
         with:
           # Publish to the fixed rolling `nightly` tag as a prerelease.
           tagName: nightly
