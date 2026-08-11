@@ -344,6 +344,41 @@ describe("RepoConfigPanel (#306)", () => {
     }
   });
 
+  it("the config table scrolls sideways instead of wrapping long values", async () => {
+    // Config values are routinely wider than the dialog. Wrapping them turns a
+    // single entry into a multi-line row and buries the rest of the table, so
+    // the table sits in a horizontal scroller and its cells never wrap.
+    mockBackend(
+      [baseRepo()],
+      baseOverview({
+        entries: [
+          {
+            name: "remote.origin.fetch",
+            value: "+refs/heads/*:refs/remotes/origin/*",
+            level: "local",
+            effective: true,
+          },
+        ],
+      }),
+    );
+    renderPanel(1);
+
+    await screen.findByText("Effective config");
+    const table = screen.getByRole("table", { name: "Effective git config entries" });
+
+    const scroller = table.parentElement!;
+    expect(scroller).toHaveClass("overflow-x-auto");
+    // Focusable, or a keyboard user cannot reach the clipped columns at all.
+    expect(scroller).toHaveAttribute("tabindex", "0");
+    // The table must be free to exceed the scroller's width, not be squeezed
+    // back into it — `w-full` alone would just re-introduce wrapping.
+    expect(table).toHaveClass("w-max");
+
+    for (const cell of within(table).getAllByRole("cell")) {
+      expect(cell).toHaveClass("whitespace-nowrap");
+    }
+  });
+
   it("fix 7: a remote with a distinct push URL renders a read-only note; one without does not", async () => {
     mockBackend(
       [baseRepo()],

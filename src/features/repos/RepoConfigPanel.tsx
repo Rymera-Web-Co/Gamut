@@ -321,42 +321,53 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
 
           <Divider />
           <PanelTitle>Effective config</PanelTitle>
-          <table className="w-full text-xs" aria-label="Effective git config entries">
-            <thead className="text-[var(--color-muted-foreground)]">
-              <tr className="text-left">
-                <th scope="col" className="py-1 font-medium">
-                  Key
-                </th>
-                <th scope="col" className="py-1 font-medium">
-                  Value
-                </th>
-                <th scope="col" className="py-1 font-medium">
-                  Source
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.entries.map((entry, i) => (
-                <tr
-                  key={`${entry.name}-${entry.level}-${i}`}
-                  className={cn("border-t", !entry.effective && "opacity-60")}
-                >
-                  <td className="py-1 font-mono">{entry.name}</td>
-                  <td className="py-1 font-mono">
-                    {entry.value == null ? <em>(non-UTF-8 value)</em> : entry.value}
-                  </td>
-                  <td className="py-1">
-                    {entry.level}
-                    {entry.effective && (
-                      <span className="ml-1 rounded bg-[var(--color-secondary)] px-1 text-[10px] text-[var(--color-secondary-foreground)]">
-                        current
-                      </span>
-                    )}
-                  </td>
+          {/* Scrolls sideways rather than wrapping: config values are routinely
+              wider than the dialog (fetch refspecs, remote URLs, credential
+              helper commands), and wrapping them turns single entries into
+              multi-line rows that bury the rest of the table. `tabIndex`/`role`
+              make the scroll region reachable without a pointer — a keyboard
+              user otherwise cannot reach the clipped columns. */}
+          <div
+            tabIndex={0}
+            className="overflow-x-auto focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:outline-none"
+          >
+            <table className="w-max min-w-full text-xs" aria-label="Effective git config entries">
+              <thead className="text-[var(--color-muted-foreground)]">
+                <tr className="text-left">
+                  <th scope="col" className="py-1 pr-6 font-medium">
+                    Key
+                  </th>
+                  <th scope="col" className="py-1 pr-6 font-medium">
+                    Value
+                  </th>
+                  <th scope="col" className="py-1 font-medium">
+                    Source
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {overview.entries.map((entry, i) => (
+                  <tr
+                    key={`${entry.name}-${entry.level}-${i}`}
+                    className={cn("border-t", !entry.effective && "opacity-60")}
+                  >
+                    <td className="py-1 pr-6 font-mono whitespace-nowrap">{entry.name}</td>
+                    <td className="py-1 pr-6 font-mono whitespace-nowrap">
+                      {entry.value == null ? <em>(non-UTF-8 value)</em> : entry.value}
+                    </td>
+                    <td className="py-1 whitespace-nowrap">
+                      {entry.level}
+                      {entry.effective && (
+                        <span className="ml-1 rounded bg-[var(--color-secondary)] px-1 text-[10px] text-[var(--color-secondary-foreground)]">
+                          current
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>
