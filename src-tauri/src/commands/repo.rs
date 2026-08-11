@@ -767,7 +767,8 @@ pub async fn list_git_tags(state: State<'_, AppState>, repo_id: i64) -> AppResul
 }
 
 /// Check out a branch, tag, or commit (safe checkout — aborts if it would
-/// overwrite local edits). Local branches stay attached; tags/commits detach HEAD.
+/// overwrite local edits). Local branches stay attached, a remote branch becomes
+/// a local branch tracking it, and tags/commits detach HEAD.
 ///
 /// `checkout_tree` rewrites every working-tree file that differs between the two
 /// branches, so this runs on a blocking thread rather than the async runtime's
@@ -783,25 +784,160 @@ pub async fn checkout_branch(
     crate::commands::run_git_blocking(path, move |p| checkout_at(p, &name)).await
 }
 
+/// Where [`checkout_at`] points HEAD once the working tree is written.
+enum HeadTarget {
+    /// Attach to a local branch that already exists, at its own tip.
+    Existing(String),
+    /// Create local branch `local` at `commit`, attach to it, and set its
+    /// upstream to the remote-tracking branch `upstream` it came from. The
+    /// commit is carried from the ref that was matched rather than re-resolved
+    /// later: `revparse_single` uses a wider precedence than the lookup here, so
+    /// re-resolving could pick a different object (e.g. a stray
+    /// `refs/origin/feature` outranking `refs/remotes/origin/feature`).
+    Track {
+        local: String,
+        upstream: String,
+        commit: git2::Oid,
+    },
+    /// A tag, a raw revision, or anything else with no local branch behind it.
+    Detached,
+}
+
+/// Strip a configured remote's name — and only its name — off the front of a
+/// branch shorthand: `origin/feature/nested` → `feature/nested`. Inner slashes
+/// belong to the branch, so just the first segment is never the right rule. The
+/// longest matching remote wins, so a remote called `origin/mirror` beats
+/// `origin`. Returns `None` when no remote matches or nothing is left over.
+///
+/// A slash-bearing remote name can still leave the upstream genuinely ambiguous
+/// (two remotes whose fetch refspecs both claim the ref); libgit2 rejects that
+/// when the upstream is written, and the checkout fails before it touches the
+/// working tree.
+///
+/// The remotes are passed in rather than read from the repo so the rule can be
+/// tested on its own.
+fn strip_remote_prefix<'a>(
+    remotes: impl IntoIterator<Item = &'a str>,
+    name: &str,
+) -> Option<String> {
+    remotes
+        .into_iter()
+        .filter_map(|remote| name.strip_prefix(remote)?.strip_prefix('/'))
+        .filter(|rest| !rest.is_empty())
+        // Longest remote matched == shortest remainder.
+        .min_by_key(|rest| rest.len())
+        .map(str::to_string)
+}
+
+/// Decide where HEAD lands for `name`, following git's ref precedence: a local
+/// branch wins, then a tag, then a remote-tracking branch — which git's DWIM
+/// turns into a local branch tracking it (#305). Anything else detaches.
+fn resolve_head_target(repo: &git2::Repository, name: &str) -> AppResult<HeadTarget> {
+    let local_ref = format!("refs/heads/{name}");
+    if repo.find_reference(&local_ref).is_ok() {
+        return Ok(HeadTarget::Existing(local_ref));
+    }
+    // A tag outranks a remote branch of the same name, and tags always detach.
+    if repo.find_reference(&format!("refs/tags/{name}")).is_ok() {
+        return Ok(HeadTarget::Detached);
+    }
+    let Ok(remote_ref) = repo.find_reference(&format!("refs/remotes/{name}")) else {
+        // Not a remote-tracking ref: a raw sha, a bare name git will DWIM to
+        // some other ref, or nothing at all. Left to `revparse_single`.
+        return Ok(HeadTarget::Detached);
+    };
+    // `origin/HEAD` points at another ref instead of naming a branch of its own.
+    // Checking one out has always detached and still should.
+    if remote_ref.symbolic_target().is_some() {
+        return Ok(HeadTarget::Detached);
+    }
+
+    let remotes = repo.remotes()?;
+    let Some(local) = strip_remote_prefix(remotes.iter().flatten(), name) else {
+        // A `refs/remotes/<x>/…` ref whose `<x>` is not a configured remote is
+        // not something we can set an upstream from.
+        return Ok(HeadTarget::Detached);
+    };
+    // A non-symbolic `refs/remotes/<remote>/HEAD` can be created by hand, and
+    // `HEAD` is not a name a branch may have.
+    if local == "HEAD" {
+        return Ok(HeadTarget::Detached);
+    }
+
+    let existing = format!("refs/heads/{local}");
+    if repo.find_reference(&existing).is_ok() {
+        // git's DWIM: a local branch of that name is already here, so switch to
+        // it as it stands rather than resetting it to the remote tip.
+        return Ok(HeadTarget::Existing(existing));
+    }
+    Ok(HeadTarget::Track {
+        local,
+        upstream: name.to_string(),
+        commit: remote_ref.peel_to_commit()?.id(),
+    })
+}
+
 /// Blocking core of [`checkout_branch`]; opens the repo from `path`.
 fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
     let repo = git::open(path)?;
-    let obj = repo.revparse_single(name)?;
-    // Peel through annotated tags to the underlying commit.
-    let commit = obj.peel_to_commit()?;
+    let target = resolve_head_target(&repo, name)?;
+
+    // Take the commit from the ref HEAD will end on, not from `name`: when a
+    // local branch of the remote's name already exists we switch to *it*, so its
+    // tip is what the working tree must match. Checking out the remote tip
+    // instead would leave the difference sitting as a staged diff.
+    let commit = match &target {
+        HeadTarget::Existing(refname) => repo.find_reference(refname)?.peel_to_commit()?,
+        HeadTarget::Track { commit, .. } => repo.find_commit(*commit)?,
+        // Peels through annotated tags to the underlying commit.
+        HeadTarget::Detached => repo.revparse_single(name)?.peel_to_commit()?,
+    };
+
+    // Do every ref and config write that can fail *before* the working tree is
+    // touched, and undo them if one does: a directory/file ref conflict (an
+    // existing `feature/nested` blocking `feature`) fails on `branch`, and a
+    // held config lock or an ambiguous remote fails on `set_upstream`. Writing
+    // the tree first would report those failures on a repo already switched over.
+    if let HeadTarget::Track {
+        local, upstream, ..
+    } = &target
+    {
+        repo.branch(local, &commit, false)?;
+        if let Err(e) = repo
+            .find_branch(local, BranchType::Local)
+            .and_then(|mut b| b.set_upstream(Some(upstream)))
+        {
+            delete_local_branch(&repo, local);
+            return Err(e.into());
+        }
+    }
 
     let mut checkout = git2::build::CheckoutBuilder::new();
     checkout.safe();
-    repo.checkout_tree(commit.as_object(), Some(&mut checkout))?;
+    if let Err(e) = repo.checkout_tree(commit.as_object(), Some(&mut checkout)) {
+        // The safe checkout refused (local edits would be lost). Drop the branch
+        // we just made, so a refused checkout adds no refs of its own.
+        if let HeadTarget::Track { local, .. } = &target {
+            delete_local_branch(&repo, local);
+        }
+        return Err(e.into());
+    }
 
-    let local_ref = format!("refs/heads/{name}");
-    if repo.find_reference(&local_ref).is_ok() {
-        repo.set_head(&local_ref)?;
-    } else {
-        // Tag / remote / arbitrary revision — detached HEAD.
-        repo.set_head_detached(commit.id())?;
+    match target {
+        HeadTarget::Existing(refname) => repo.set_head(&refname)?,
+        HeadTarget::Track { local, .. } => repo.set_head(&format!("refs/heads/{local}"))?,
+        HeadTarget::Detached => repo.set_head_detached(commit.id())?,
     }
     Ok(())
+}
+
+/// Best-effort removal of a local branch this run created, used to unwind a
+/// checkout that could not be completed. A failure here is not worth reporting
+/// over the error that triggered the unwind.
+fn delete_local_branch(repo: &git2::Repository, local: &str) {
+    if let Ok(mut branch) = repo.find_branch(local, BranchType::Local) {
+        let _ = branch.delete();
+    }
 }
 
 /// Create a new local branch and check it out. Mirrors `git checkout -b <name>
@@ -1319,5 +1455,698 @@ mod tests {
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---------------------------------------------------------------------
+    // checkout_at / resolve_head_target / strip_remote_prefix (#305)
+    // ---------------------------------------------------------------------
+
+    /// Initialise a fresh repo at `root` with one commit, with HEAD landing on
+    /// `branch_name` regardless of the environment's default init branch (which
+    /// varies by git version/global config) — so fixtures never depend on it.
+    fn init_repo_on(root: &Path, branch_name: &str) -> Repository {
+        let repo = Repository::init(root).unwrap();
+        commit_file(&repo, "a.txt", "hello\n");
+        let current = git::current_branch(&repo).unwrap();
+        if current != branch_name {
+            repo.find_branch(&current, BranchType::Local)
+                .unwrap()
+                .rename(branch_name, false)
+                .unwrap();
+            repo.set_head(&format!("refs/heads/{branch_name}")).unwrap();
+        }
+        repo
+    }
+
+    /// Convenience wrapper of [`init_repo_on`] for the common case: a fresh
+    /// repo with one commit, HEAD on `main`.
+    fn init_repo(root: &Path) -> Repository {
+        init_repo_on(root, "main")
+    }
+
+    /// Build a new commit on top of `parent_oid`, writing `name` = `contents`,
+    /// without touching the index, HEAD, or working tree — used to create a
+    /// commit on a ref other than the one currently checked out (e.g. a
+    /// remote-tracking ref that should differ from the local tip).
+    fn commit_on(
+        repo: &Repository,
+        parent_oid: git2::Oid,
+        name: &str,
+        contents: &str,
+    ) -> git2::Oid {
+        let parent = repo.find_commit(parent_oid).unwrap();
+        let parent_tree = parent.tree().unwrap();
+        let mut builder = repo.treebuilder(Some(&parent_tree)).unwrap();
+        let blob_oid = repo.blob(contents.as_bytes()).unwrap();
+        builder.insert(name, blob_oid, 0o100644).unwrap();
+        let tree_oid = builder.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        repo.commit(None, &sig, &sig, "msg", &tree, &[&parent])
+            .unwrap()
+    }
+
+    /// A1/A2/A3: checking out `origin/feature` when there is no local `feature`
+    /// creates a local branch at the remote ref's commit, leaves the working
+    /// tree/index clean, sets up its upstream, and attaches HEAD to it.
+    #[test]
+    fn checkout_remote_branch_creates_local_tracking_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a1_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        let oid_feature = commit_on(&repo, oid_a, "a.txt", "feature content\n");
+        repo.reference("refs/remotes/origin/feature", oid_feature, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        let local = repo.find_branch("feature", BranchType::Local).unwrap();
+        assert_eq!(
+            local.get().target(),
+            Some(oid_feature),
+            "local branch lands on the remote ref's commit"
+        );
+        assert!(
+            repo.statuses(None).unwrap().is_empty(),
+            "working tree/index left clean after checkout"
+        );
+        let config = repo.config().unwrap();
+        assert_eq!(
+            config.get_string("branch.feature.remote").unwrap(),
+            "origin"
+        );
+        assert_eq!(
+            config.get_string("branch.feature.merge").unwrap(),
+            "refs/heads/feature"
+        );
+        assert!(!repo.head_detached().unwrap());
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature"));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A4: a nested remote branch name (`origin/feature/nested`) strips only the
+    /// remote's own segment; the rest of the name — including its slash — stays
+    /// intact as the local branch name and the upstream merge ref.
+    #[test]
+    fn checkout_remote_branch_nested_name_strips_only_remote_prefix() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a4_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference("refs/remotes/origin/feature/nested", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/feature/nested").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo
+            .find_branch("feature/nested", BranchType::Local)
+            .is_ok());
+        let config = repo.config().unwrap();
+        assert_eq!(
+            config.get_string("branch.feature/nested.merge").unwrap(),
+            "refs/heads/feature/nested"
+        );
+        assert_eq!(
+            git::current_branch(&repo).as_deref(),
+            Some("feature/nested")
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A5a/A6: when a local branch of the remote's name already exists, git's
+    /// DWIM switches to it as it stands — checking out `origin/feature` does not
+    /// reset it to the remote tip, and it keeps having no upstream. The working
+    /// tree ends up matching the *local* branch's own commit, not the remote's,
+    /// and the tree/index stay clean.
+    #[test]
+    fn checkout_existing_local_branch_keeps_its_own_commit_and_upstream() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a5a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        // Local "feature" at commit A, deliberately with no upstream.
+        repo.branch("feature", &commit_a, false).unwrap();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        // origin/feature points somewhere else entirely (commit B).
+        let oid_b = commit_on(&repo, oid_a, "a.txt", "commit B content\n");
+        repo.reference("refs/remotes/origin/feature", oid_b, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(!repo.head_detached().unwrap());
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature"));
+        let local = repo.find_branch("feature", BranchType::Local).unwrap();
+        assert_eq!(
+            local.get().target(),
+            Some(oid_a),
+            "existing local branch is not moved to the remote tip"
+        );
+        assert!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .is_err(),
+            "no upstream was set"
+        );
+        // A6: the working tree holds commit A's content, not commit B's, and the
+        // tree/index are clean against the branch actually checked out.
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "hello\n"
+        );
+        assert!(repo.statuses(None).unwrap().is_empty());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A5b: an existing local branch tracking a *different* remote keeps that
+    /// upstream — checking out `origin/feature` must not rewrite
+    /// `branch.feature.remote` from `upstream` to `origin`.
+    #[test]
+    fn checkout_existing_local_branch_does_not_rewrite_existing_upstream() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a5b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        repo.branch("feature", &commit_a, false).unwrap();
+        repo.remote("origin", "https://example.com/origin.git")
+            .unwrap();
+        repo.remote("upstream", "https://example.com/upstream.git")
+            .unwrap();
+        repo.reference("refs/remotes/upstream/feature", oid_a, true, "test")
+            .unwrap();
+        repo.find_branch("feature", BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("upstream/feature"))
+            .unwrap();
+        repo.reference("refs/remotes/origin/feature", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .unwrap(),
+            "upstream",
+            "existing upstream is left alone, not rewritten to origin"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A7a: checking out a lightweight tag detaches HEAD at the tag's commit.
+    #[test]
+    fn checkout_lightweight_tag_detaches_at_tag_commit() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a7a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let obj = repo.find_object(oid_a, None).unwrap();
+        repo.tag_lightweight("v1", &obj, false).unwrap();
+
+        checkout_at(&root, "v1").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid_a);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A7b: checking out an annotated tag detaches HEAD at the *peeled commit*,
+    /// not the tag object's own id.
+    #[test]
+    fn checkout_annotated_tag_detaches_at_peeled_commit() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a7b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let obj = repo.find_object(oid_a, None).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let tag_oid = repo.tag("v2", &obj, &sig, "annotated", false).unwrap();
+        assert_ne!(tag_oid, oid_a, "sanity: the tag object has its own id");
+
+        checkout_at(&root, "v2").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid_a);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A8: checking out a full sha detaches HEAD at that commit.
+    #[test]
+    fn checkout_raw_sha_detaches() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a8_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        checkout_at(&root, &oid_a.to_string()).unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid_a);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A9: `origin/HEAD` is symbolic (points at another ref rather than naming
+    /// its own branch) — checking it out detaches HEAD and creates no local
+    /// branch literally called `HEAD`.
+    #[test]
+    fn checkout_symbolic_origin_head_detaches_without_creating_head_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a9_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference("refs/remotes/origin/main", oid_a, true, "test")
+            .unwrap();
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "test",
+        )
+        .unwrap();
+
+        checkout_at(&root, "origin/HEAD").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert!(repo.find_branch("HEAD", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A `refs/remotes/<remote>/HEAD` that is a direct ref rather than a
+    /// symbolic one skips the symbolic-ref check, so the name guard is the only
+    /// thing keeping a branch literally called `HEAD` from being created.
+    #[test]
+    fn checkout_direct_origin_head_ref_detaches_without_creating_head_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a9b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference("refs/remotes/origin/HEAD", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/HEAD").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert!(repo.find_branch("HEAD", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A10: a plain local branch just attaches HEAD; its (absent) upstream
+    /// config is left untouched.
+    #[test]
+    fn checkout_plain_local_branch_attaches_without_touching_upstream() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a10_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        repo.branch("feature", &commit_a, false).unwrap();
+
+        checkout_at(&root, "feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(!repo.head_detached().unwrap());
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature"));
+        assert!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .is_err(),
+            "no upstream config was introduced"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A11: a local branch can be *literally* named `origin/x` (a directory
+    /// component, not a remote-prefix). Local-branch precedence in
+    /// `resolve_head_target` means checking out `origin/x` attaches to that
+    /// literal branch at its own commit, ignoring the differently-pointed
+    /// `refs/remotes/origin/x`, and never creates a branch called `x`.
+    #[test]
+    fn checkout_prefers_literal_local_branch_named_like_a_remote_ref() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a11_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.branch("origin/x", &commit_a, false).unwrap();
+        let oid_b = commit_on(&repo, oid_a, "a.txt", "commit B content\n");
+        repo.reference("refs/remotes/origin/x", oid_b, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/x").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(!repo.head_detached().unwrap());
+        let local = repo.find_branch("origin/x", BranchType::Local).unwrap();
+        assert_eq!(
+            local.get().target(),
+            Some(oid_a),
+            "attaches to the literal branch's own commit, not the remote ref's"
+        );
+        assert!(repo.find_branch("x", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A12: a tag and a remote-tracking ref can share a name — tags outrank
+    /// remotes, so checking out `origin/x` detaches at the tag's commit and
+    /// creates no local branch `x`.
+    #[test]
+    fn checkout_prefers_tag_over_remote_branch_of_same_name() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a12_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        let obj = repo.find_object(oid_a, None).unwrap();
+        repo.tag_lightweight("origin/x", &obj, false).unwrap();
+        let oid_b = commit_on(&repo, oid_a, "a.txt", "commit B content\n");
+        repo.reference("refs/remotes/origin/x", oid_b, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/x").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid_a);
+        assert!(repo.find_branch("x", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A13a: `refs/remotes/notaremote/feature` exists but `notaremote` is not a
+    /// configured remote — there's no remote to attribute an upstream to, so
+    /// this just detaches like any other unrecognised ref shape.
+    #[test]
+    fn checkout_remote_ref_under_unconfigured_remote_detaches() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a13a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.reference("refs/remotes/notaremote/feature", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "notaremote/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.head_detached().unwrap());
+        assert!(repo.find_branch("feature", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A13b: `notaremote` *is* configured but no such ref exists — there's
+    /// nothing to check out at all, so `checkout_at` errors and HEAD is left
+    /// exactly where it was.
+    #[test]
+    fn checkout_unknown_ref_under_configured_remote_errors() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a13b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        repo.remote("notaremote", "https://example.com/x.git")
+            .unwrap();
+        let head_before = repo.head().unwrap().target();
+
+        assert!(checkout_at(&root, "notaremote/feature").is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(repo.head().unwrap().target(), head_before);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A14: two remotes both carry a `feature` branch — checking out
+    /// `upstream/feature` attributes the new local branch to `upstream`, not
+    /// `origin`.
+    #[test]
+    fn checkout_selects_the_named_remote_when_multiple_carry_the_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a14_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/origin.git")
+            .unwrap();
+        repo.remote("upstream", "https://example.com/upstream.git")
+            .unwrap();
+        repo.reference("refs/remotes/origin/feature", oid_a, true, "test")
+            .unwrap();
+        repo.reference("refs/remotes/upstream/feature", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "upstream/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        let local = repo.find_branch("feature", BranchType::Local).unwrap();
+        assert_eq!(local.get().target(), Some(oid_a));
+        assert_eq!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .unwrap(),
+            "upstream"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A15: with remotes `origin` and `origin2` both configured, a ref under
+    /// `origin2` strips the whole remote name, landing on local branch
+    /// `feature` — never `2/feature`. (The longest-match tie-break between two
+    /// remotes that both match is covered by `strip_remote_prefix_rules`.)
+    #[test]
+    fn checkout_strips_whole_remote_name_not_just_first_segment() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a15_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/origin.git")
+            .unwrap();
+        repo.remote("origin2", "https://example.com/origin2.git")
+            .unwrap();
+        repo.reference("refs/remotes/origin2/feature", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin2/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.find_branch("feature", BranchType::Local).is_ok());
+        assert!(repo.find_branch("2/feature", BranchType::Local).is_err());
+        assert_eq!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .unwrap(),
+            "origin2"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A16: only `refs/remotes/origin/main` exists — no literal `refs/remotes/main`
+    /// (which is what `resolve_head_target` and libgit2's own ref-DWIM look for
+    /// on a bare name). Real `git checkout main` special-cases "exactly one
+    /// remote has this branch" at a layer above plain ref resolution; that
+    /// DWIM is deliberately out of scope for #305, which only changed the
+    /// explicit `origin/feature` shape. So a bare `main` here still falls
+    /// through to `revparse_single`, which — unlike the assumption that this
+    /// legacy path silently detaches — actually errors ("revspec not found"),
+    /// exactly as it did before #305. This test pins that: no local `main` is
+    /// ever created, and HEAD is left exactly where it was.
+    #[test]
+    fn checkout_bare_name_matching_only_remote_tracking_branch_still_errors() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a16_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo_on(&root, "trunk");
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference("refs/remotes/origin/main", oid_a, true, "test")
+            .unwrap();
+        let head_before = repo.head().unwrap().target();
+
+        assert!(checkout_at(&root, "main").is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(repo.head().unwrap().target(), head_before);
+        assert!(repo.find_branch("main", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A17: checking out the same remote branch twice in a row is idempotent —
+    /// the second call is the `HeadTarget::Existing` path, HEAD stays attached
+    /// to the one `feature` branch, and no duplicate gets created.
+    #[test]
+    fn checkout_remote_branch_twice_is_idempotent() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a17_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference("refs/remotes/origin/feature", oid_a, true, "test")
+            .unwrap();
+
+        checkout_at(&root, "origin/feature").unwrap();
+        checkout_at(&root, "origin/feature").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(!repo.head_detached().unwrap());
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("feature"));
+        let mut count = 0;
+        for b in repo.branches(Some(BranchType::Local)).unwrap() {
+            let (branch, _) = b.unwrap();
+            if branch.name().unwrap() == Some("feature") {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 1, "no duplicate local branch was created");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A18: an existing local branch `feature/nested` occupies the
+    /// `refs/heads/feature` path as a directory component, so creating
+    /// `refs/heads/feature` for the incoming remote branch fails. `checkout_at`
+    /// must surface that error before touching the working tree, leaving HEAD
+    /// untouched and no local `feature` branch behind.
+    #[test]
+    fn checkout_remote_branch_errors_when_local_branch_path_conflicts() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a18_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.branch("feature/nested", &commit_a, false).unwrap();
+        repo.reference("refs/remotes/origin/feature", oid_a, true, "test")
+            .unwrap();
+        let head_before = repo.head().unwrap().target();
+
+        assert!(checkout_at(&root, "origin/feature").is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(repo.head().unwrap().target(), head_before);
+        assert!(repo.find_branch("feature", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A19: an uncommitted local edit conflicts with a file that also differs
+    /// between HEAD and the remote tip — the safe checkout must refuse rather
+    /// than clobber it, `checkout_at` returns `Err`, HEAD is untouched, and the
+    /// branch it tentatively created is rolled back rather than left as an
+    /// orphan.
+    #[test]
+    fn checkout_remote_branch_refuses_when_local_edit_would_be_lost() {
+        let root = std::env::temp_dir().join(format!("gamut_checkout_a19_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        let oid_remote = commit_on(&repo, oid_a, "a.txt", "remote version\n");
+        repo.reference("refs/remotes/origin/feature", oid_remote, true, "test")
+            .unwrap();
+        // Uncommitted edit that differs from both HEAD and the remote tip.
+        std::fs::write(root.join("a.txt"), "local edit\n").unwrap();
+        let head_before = repo.head().unwrap().target();
+
+        assert!(checkout_at(&root, "origin/feature").is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(repo.head().unwrap().target(), head_before);
+        assert!(repo.find_branch("feature", BranchType::Local).is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "local edit\n",
+            "the refused checkout left the local edit in place"
+        );
+        // The upstream is written before the tree, so unwinding has to take the
+        // tracking config with it rather than stranding it for the next branch
+        // that happens to be called `feature`.
+        assert!(
+            repo.config()
+                .unwrap()
+                .get_string("branch.feature.remote")
+                .is_err(),
+            "the unwound branch left no tracking config behind"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A20: `strip_remote_prefix` on its own — the longest-matching remote
+    /// wins, inner slashes in the branch name are preserved, and a name that
+    /// doesn't belong to any configured remote (or has nothing left over) is
+    /// rejected.
+    #[test]
+    fn strip_remote_prefix_rules() {
+        assert_eq!(
+            strip_remote_prefix(["origin"], "origin/feature"),
+            Some("feature".to_string())
+        );
+        assert_eq!(
+            strip_remote_prefix(["origin"], "origin/feature/nested"),
+            Some("feature/nested".to_string())
+        );
+        assert_eq!(
+            strip_remote_prefix(["origin", "origin2"], "origin2/feature"),
+            Some("feature".to_string())
+        );
+        assert_eq!(
+            strip_remote_prefix(["origin", "origin/mirror"], "origin/mirror/feat"),
+            Some("feat".to_string()),
+            "longest matching remote wins"
+        );
+        assert_eq!(strip_remote_prefix(["origin"], "other/feature"), None);
+        assert_eq!(strip_remote_prefix(["origin"], "origin/"), None);
+        assert_eq!(strip_remote_prefix(["origin"], "origin"), None);
     }
 }

@@ -66,6 +66,13 @@ branch name to display:
 - Click any branch or tag to check it out — switch your working files to match it. On
   success the history and all related views refresh. Checkout errors (e.g. uncommitted
   changes in the way) show inline.
+- Checking out a **remote** branch gives you a matching local branch to work on, named
+  without the server prefix (`origin/feature` becomes `feature`) and set to push and pull
+  against the remote one. If you already have a local branch of that name, you simply
+  switch to it as it stands — it is never reset to the server's version, so it can sit
+  behind the remote branch you clicked until you pull. Tags, individual commits, and the
+  server's `origin/HEAD` entry still put you in the *detached* state, because there is
+  no branch to be on.
 
 ## Clean up stale branches
 
