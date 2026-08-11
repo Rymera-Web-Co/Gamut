@@ -13,6 +13,7 @@ so you don't need to be a git expert to follow along. (Most pages end with a sho
 | [History](features/history.md) | The visual commit graph: who changed what and when, per-file diffs, line-by-line blame, switching branches, cleaning up stale ones |
 | [Files](features/files.md) | Browsing and editing the files in a repository, with project-wide find & replace |
 | [Repositories](features/repositories.md) | Adding your repositories to Gamut and organising them into groups |
+| [Repo config](features/repo-config.md) | Viewing a repository's effective git config layer by layer, and editing a curated safe subset |
 | [Sync](features/sync.md) | One-click fetch / pull / push, with live counts of what's ahead or behind |
 | [GitHub integration](features/github.md) | Connecting your GitHub account, and how Gamut keeps the token safe |
 | [Terminal](features/terminal.md) | The built-in terminal — tabs, splits, session restore, and notifications when background work finishes |

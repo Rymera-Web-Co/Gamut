@@ -3,6 +3,7 @@ import {
   Activity,
   Bell,
   Command,
+  FileCog,
   GitCompare,
   GitFork,
   Github,
@@ -23,6 +24,7 @@ import { AppearancePanel } from "./panels/AppearancePanel";
 import { DiffPanel } from "./panels/DiffPanel";
 import { GitPanel } from "./panels/GitPanel";
 import { GitHubPanel } from "./panels/GitHubPanel";
+import { RepoConfigPanel } from "./panels/RepoConfigPanel";
 import { TerminalPanel } from "./panels/TerminalPanel";
 import { CommandPalettePanel } from "./panels/CommandPalettePanel";
 import { KeyboardPanel } from "./panels/KeyboardPanel";
@@ -34,6 +36,7 @@ const CATEGORIES = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "diff", label: "Diff & Review", icon: GitCompare },
   { id: "git", label: "Git & Repos", icon: GitFork },
+  { id: "repo-config", label: "Repo config", icon: FileCog },
   { id: "github", label: "GitHub", icon: Github },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
   { id: "palette", label: "Command palette", icon: Command },
@@ -88,6 +91,7 @@ export function SettingsDialog() {
           {category === "appearance" && <AppearancePanel />}
           {category === "diff" && <DiffPanel />}
           {category === "git" && <GitPanel />}
+          {category === "repo-config" && <RepoConfigPanel />}
           {category === "github" && <GitHubPanel />}
           {category === "terminal" && <TerminalPanel />}
           {category === "palette" && <CommandPalettePanel />}

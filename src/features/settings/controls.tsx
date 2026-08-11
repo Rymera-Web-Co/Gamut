@@ -125,11 +125,18 @@ export function TextField({
   onChange,
   placeholder,
   wide,
+  onBlur,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   wide?: boolean;
+  /** Commit-on-blur for callers that save on blur rather than on every
+   * keystroke (e.g. a field backed by a round-tripping IPC write). */
+  onBlur?: () => void;
+  /** Accessible name, for a field with no associated `<label>` element. */
+  ariaLabel?: string;
 }) {
   return (
     <Input
@@ -137,6 +144,8 @@ export function TextField({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      aria-label={ariaLabel}
     />
   );
 }
@@ -172,15 +181,19 @@ export function Select<T extends string>({
   value,
   options,
   onChange,
+  ariaLabel,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
+  /** Accessible name, for a select with no associated `<label>` element. */
+  ariaLabel?: string;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
+      aria-label={ariaLabel}
       className="h-8 w-48 rounded-md border bg-[var(--color-background)] px-2 text-sm"
     >
       {options.map((opt) => (

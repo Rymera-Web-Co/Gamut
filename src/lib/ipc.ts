@@ -86,6 +86,72 @@ export interface BranchInfo {
   is_remote: boolean;
 }
 
+/**
+ * One occurrence of a config key (#306) — `Config::entries` returns one row per
+ * layer/multivar value, not just the winner, so inherited values never look
+ * local. `value` is `null` for a non-UTF-8 entry; `level` is one of the seven
+ * git config levels (`system`, `global`, `global (xdg)`, `local`, `worktree`,
+ * `app`); `effective` marks the occurrence git actually resolves to. A
+ * multivar key (multiple values at one level, e.g. `remote.origin.fetch`) is
+ * NOT ambiguous here either — git resolves it to the LAST value written, so
+ * that occurrence is marked effective exactly like any other key.
+ */
+export interface ConfigEntry {
+  name: string;
+  value: string | null;
+  level: string;
+  effective: boolean;
+}
+
+/** One identity field (`user.name`/`user.email`): the effective value plus the
+ * level it resolves from, and the raw local-scope value so the editor can tell
+ * "inherited from global" apart from "set here". */
+export interface IdentityValue {
+  value: string | null;
+  level: string | null;
+  local_value: string | null;
+}
+
+export interface Identity {
+  name: IdentityValue;
+  email: IdentityValue;
+}
+
+/** A configured remote — name plus its **unredacted** URL (the editor
+ * round-trips it; see `ConfigEntry` for the redacted table view). */
+export interface RemoteRow {
+  name: string;
+  url: string;
+  /** `remote.<name>.pushurl`, when set and distinct from `url`. Disclosure
+   * only — never edited here, so retargeting `url` can't silently leave
+   * pushes still going to a stale host. */
+  push_url: string | null;
+}
+
+/** A local branch's current upstream wiring, read straight from
+ * `branch.<name>.remote`/`.merge` rather than the resolved remote-tracking ref,
+ * so a dangling upstream still shows what's configured. */
+export interface BranchRow {
+  name: string;
+  remote: string | null;
+  merge: string | null;
+  is_head: boolean;
+}
+
+/** The effective git config for a repo (#306): every occurrence, source-
+ * annotated, plus identity/remotes/branch-upstream wiring for the curated
+ * editors and the remote-tracking branch names for the upstream picker. */
+export interface ConfigOverview {
+  entries: ConfigEntry[];
+  identity: Identity;
+  remotes: RemoteRow[];
+  branches: BranchRow[];
+  remote_branches: string[];
+}
+
+/** Which identity key a curated write targets — mirrors the Rust `IdentityField`. */
+export type IdentityFieldName = "name" | "email";
+
 export interface RepoStatus {
   id: number;
   branch: string | null;
@@ -678,6 +744,18 @@ export const ipc = {
   listStaleBranches: (repoId: number) => invoke<StaleBranch[]>("list_stale_branches", { repoId }),
   deleteBranches: (repoId: number, names: string[]) =>
     invoke<DeleteResult[]>("delete_branches", { repoId, names }),
+
+  // git config (#306) — read the effective config, edit a curated safe subset
+  // at local scope only.
+  gitConfigOverview: (repoId: number) => invoke<ConfigOverview>("git_config_overview", { repoId }),
+  /** `value: null` (or blank) clears the local key so the inherited value applies. */
+  gitConfigSetIdentity: (repoId: number, field: IdentityFieldName, value: string | null) =>
+    invoke<void>("git_config_set_identity", { repoId, field, value }),
+  gitConfigSetRemoteUrl: (repoId: number, remote: string, url: string) =>
+    invoke<void>("git_config_set_remote_url", { repoId, remote, url }),
+  /** `upstream: null` clears the branch's upstream. */
+  gitConfigSetBranchUpstream: (repoId: number, branch: string, upstream: string | null) =>
+    invoke<void>("git_config_set_branch_upstream", { repoId, branch, upstream }),
 
   // sync (network ops via git CLI)
   gitSyncStatus: (repoId: number) => invoke<SyncStatus>("git_sync_status", { repoId }),
