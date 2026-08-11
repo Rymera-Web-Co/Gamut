@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
+import {
+  Select as SelectRoot,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useSettings, type Settings } from "@/lib/settings";
 
@@ -190,18 +197,18 @@ export function Select<T extends string>({
   ariaLabel?: string;
 }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
-      aria-label={ariaLabel}
-      className="h-8 w-48 rounded-md border bg-[var(--color-background)] px-2 text-sm"
-    >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
-    </select>
+    <SelectRoot value={value} onValueChange={(v) => onChange(v as T)}>
+      <SelectTrigger aria-label={ariaLabel}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((opt) => (
+          <SelectItem key={opt.value} value={opt.value}>
+            {opt.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </SelectRoot>
   );
 }
 

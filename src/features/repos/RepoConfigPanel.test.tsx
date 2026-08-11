@@ -176,8 +176,12 @@ describe("RepoConfigPanel (#306)", () => {
     const { container } = renderPanel(1);
 
     await screen.findByText("Effective config");
+    // Radix's Select trigger is a `<button role="combobox">`, not a native
+    // `<select>` — included alongside the native form controls so this stays
+    // an enumeration of every editable control regardless of which markup
+    // backs it (#306 follow-up: native `<select>` replaced with Radix Select).
     const controls = Array.from(
-      container.querySelectorAll("input, select, textarea, [contenteditable]"),
+      container.querySelectorAll("input, textarea, [contenteditable], [role='combobox']"),
     );
     const names = controls.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names)).toEqual(
@@ -480,13 +484,18 @@ describe("RepoConfigPanel (#306)", () => {
     );
     renderPanel(1);
 
-    const branchSelect = await screen.findByRole("combobox", { name: "Branch" });
+    const branchTrigger = await screen.findByRole("combobox", { name: "Branch" });
     expect(screen.getByRole("textbox", { name: "origin URL" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "upstream URL" })).toBeInTheDocument();
 
-    fireEvent.change(branchSelect, { target: { value: "second" } });
-    const upstreamSelect = screen.getByRole("combobox", { name: "Upstream" });
-    fireEvent.change(upstreamSelect, { target: { value: "upstream/main" } });
+    // Radix Select isn't a native `<select>` — drive it by opening the
+    // trigger and clicking the option, rather than `fireEvent.change`.
+    fireEvent.click(branchTrigger);
+    fireEvent.click(await screen.findByRole("option", { name: "second" }));
+
+    const upstreamTrigger = screen.getByRole("combobox", { name: "Upstream" });
+    fireEvent.click(upstreamTrigger);
+    fireEvent.click(await screen.findByRole("option", { name: "upstream/main" }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
