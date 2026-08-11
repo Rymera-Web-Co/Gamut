@@ -27,6 +27,23 @@ describe("repo sidebar store actions (#283)", () => {
   });
 });
 
+describe("openSettingsAt (#306)", () => {
+  beforeEach(() => {
+    useUiStore.setState({ settingsOpen: false, settingsCategory: "appearance" });
+  });
+
+  it("sets both the target category and settingsOpen, regardless of the current open state", () => {
+    useUiStore.getState().openSettingsAt("repo-config");
+    expect(useUiStore.getState().settingsCategory).toBe("repo-config");
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+
+    // Already open, on a different category — still jumps to the target.
+    useUiStore.getState().openSettingsAt("git");
+    expect(useUiStore.getState().settingsCategory).toBe("git");
+    expect(useUiStore.getState().settingsOpen).toBe(true);
+  });
+});
+
 /** A minimal well-formed persisted blob for one group with one tab/pane. */
 function blob(overrides?: Record<string, unknown>) {
   return JSON.stringify({

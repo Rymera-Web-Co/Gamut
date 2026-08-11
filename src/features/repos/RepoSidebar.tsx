@@ -17,6 +17,7 @@ import {
   Plus,
   FolderSearch,
   RefreshCw,
+  Settings,
   SquareTerminal,
   Trash2,
   X,
@@ -201,6 +202,8 @@ function RepoRow({
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const openSettingsAt = useUiStore((s) => s.openSettingsAt);
   // A selected worktree highlights its own nested row, not the repo row.
   const active = activeRepoId === repo.id && activeWorktreePath == null;
   // Only run `git worktree list` for repos that actually have linked worktrees.
@@ -337,6 +340,23 @@ function RepoRow({
                 onPointerDown={(e) => e.stopPropagation()}
               />
             )}
+            {/* Config is git-only — a plain folder has no .git/config to show. */}
+            {!repo.missing && repo.is_git_repo && (
+              <button
+                aria-label={`Repo settings for ${repo.name}`}
+                title="Repo settings"
+                // Don't let a press on this button arm a repo drag on the row.
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveRepo(repo.id);
+                  openSettingsAt("repo-config");
+                }}
+                className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
+              >
+                <Settings className="size-3.5 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]" />
+              </button>
+            )}
             <button
               aria-label="Remove repository"
               title="Remove from Gamut"
@@ -387,6 +407,7 @@ export function RepoSidebar() {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const openSettingsAt = useUiStore((s) => s.openSettingsAt);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const showSyncedRoot = useSettings((s) => s.values.showSyncedRoot);
 
@@ -901,6 +922,19 @@ export function RepoSidebar() {
               <Copy />
               Copy repo name
             </ContextMenuItem>
+            {/* Config is git-only — a plain folder has no .git/config to show. */}
+            {!menu.repo.missing && menu.repo.is_git_repo && (
+              <ContextMenuItem
+                onClick={() => {
+                  setActiveRepo(menu.repo.id);
+                  openSettingsAt("repo-config");
+                  setMenu(null);
+                }}
+              >
+                <Settings />
+                Repo settings…
+              </ContextMenuItem>
+            )}
             {/* Hidden for plain folders and missing repos — see canAutoPull. */}
             {canAutoPull(menu.repo) && (
               <AutoPullMenuItem repo={menu.repo} onDone={() => setMenu(null)} />

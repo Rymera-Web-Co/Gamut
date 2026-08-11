@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 
 // Every sibling panel is stubbed so this test proves only the category
 // wiring (rail click -> which panel body renders), not each panel's own
@@ -40,5 +40,31 @@ describe("SettingsDialog — Repo config category (#306)", () => {
     expect(screen.queryByTestId("repo-config-body")).not.toBeInTheDocument();
 
     useUiStore.setState({ settingsOpen: false });
+  });
+});
+
+describe("SettingsDialog — opens on the store's category (follow-up to #306)", () => {
+  afterEach(() => {
+    useUiStore.setState({ settingsOpen: false, settingsCategory: "appearance" });
+  });
+
+  it("renders whatever category the store names, not a hardcoded Appearance", () => {
+    useUiStore.setState({ settingsOpen: true, settingsCategory: "repo-config" });
+    render(<SettingsDialog />);
+
+    expect(screen.getByTestId("repo-config-body")).toBeInTheDocument();
+  });
+
+  it("openSettingsAt jumps the already-rendered dialog to the target category", () => {
+    useUiStore.setState({ settingsOpen: true, settingsCategory: "diagnostics" });
+    render(<SettingsDialog />);
+    expect(screen.getByTestId("diagnostics-body")).toBeInTheDocument();
+
+    act(() => {
+      useUiStore.getState().openSettingsAt("repo-config");
+    });
+
+    expect(screen.getByTestId("repo-config-body")).toBeInTheDocument();
+    expect(screen.queryByTestId("diagnostics-body")).not.toBeInTheDocument();
   });
 });

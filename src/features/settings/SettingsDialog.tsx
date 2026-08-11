@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Activity,
   Bell,
@@ -19,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useSettings } from "@/lib/settings";
 import { useTheme } from "@/lib/theme";
-import { useUiStore } from "@/store/ui";
+import { useUiStore, type SettingsCategory } from "@/store/ui";
 import { AppearancePanel } from "./panels/AppearancePanel";
 import { DiffPanel } from "./panels/DiffPanel";
 import { GitPanel } from "./panels/GitPanel";
@@ -32,6 +31,9 @@ import { NotificationsPanel } from "./panels/NotificationsPanel";
 import { DiagnosticsPanel } from "./panels/DiagnosticsPanel";
 import { AboutPanel } from "./panels/AboutPanel";
 
+// `satisfies` rather than a type annotation: it checks every id against
+// `SettingsCategory` while *keeping* the literal id types, which the assertion
+// below then uses to check the other direction too.
 const CATEGORIES = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "diff", label: "Diff & Review", icon: GitCompare },
@@ -44,14 +46,22 @@ const CATEGORIES = [
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "diagnostics", label: "Diagnostics", icon: Activity },
   { id: "about", label: "About", icon: Info },
-] as const;
+] as const satisfies readonly { id: SettingsCategory; label: string; icon: typeof Palette }[];
 
-type CategoryId = (typeof CATEGORIES)[number]["id"];
+// The reverse check: a `SettingsCategory` with no CATEGORIES entry would leave
+// `openSettingsAt` able to open the dialog on a category with no rail item and
+// no panel — a blank content area. The tuple wrapper stops the conditional
+// distributing, so this is `true` only when nothing is missing; otherwise the
+// assignment below fails `tsc` and names the offending category.
+type UnreachableCategory = Exclude<SettingsCategory, (typeof CATEGORIES)[number]["id"]>;
+const _everyCategoryIsReachable: [UnreachableCategory] extends [never] ? true : never = true;
+void _everyCategoryIsReachable;
 
 export function SettingsDialog() {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);
-  const [category, setCategory] = useState<CategoryId>("appearance");
+  const category = useUiStore((s) => s.settingsCategory);
+  const setCategory = useUiStore((s) => s.openSettingsAt);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

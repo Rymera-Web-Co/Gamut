@@ -13,6 +13,16 @@ Select a git repository in the sidebar, then open **Settings** (`⌘/Ctrl+,`) �
 in the category list. Selecting a plain (non-git) folder, or having nothing selected, shows an
 empty state instead — there's no config to show.
 
+Two shortcuts jump straight to the panel for a given repo, skipping the category list:
+
+- Hover a git repo's row in the sidebar and click its gear icon (next to the terminal and
+  remove buttons).
+- Right-click a git repo's row and choose **Repo settings…**.
+
+Either one makes the repo active and opens Settings already scoped to **Repo config**. Both
+are hidden for plain (non-git) folders and for repos whose folder is missing on disk — there's
+nothing to configure in either case.
+
 ## What you can edit
 
 Only a curated subset — never an arbitrary key — and every edit is written to **local scope**
