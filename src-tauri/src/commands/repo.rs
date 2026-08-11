@@ -458,7 +458,13 @@ fn delete_repos(conn: &Connection, ids: &[i64]) -> AppResult<()> {
 
 /// Drop a repo's cached `origin` owner/repo slug (#136), so a later GitHub call
 /// re-resolves it. Best-effort: a poisoned lock just leaves the stale entry.
-fn invalidate_origin_slug(state: &State<AppState>, id: i64) {
+///
+/// Takes `&AppState` rather than `&State<AppState>` so it's callable both from a
+/// command's `State<AppState>` param (deref-coerces automatically) and directly
+/// against a bare `AppState` in a test with no Tauri app to draw a `State` from.
+/// `pub(crate)` (rather than private) so `commands::config`'s remote-URL write
+/// can invalidate the cache after editing `origin` (#306 impact hazard 1).
+pub(crate) fn invalidate_origin_slug(state: &AppState, id: i64) {
     if let Ok(mut cache) = state.origin_slug_cache.lock() {
         cache.remove(&id);
     }

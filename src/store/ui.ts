@@ -242,6 +242,11 @@ interface UiState {
   filesPath: string | null;
   // Whether the Settings panel (⌘,) is open. In-memory only.
   settingsOpen: boolean;
+  // The repo config dialog's target repo (#306 follow-up): `null` when closed,
+  // otherwise the id of the repo it's showing. Explicit rather than following
+  // `activeRepoId` — opening it (the sidebar gear / context-menu item) must
+  // configure the row that was clicked without navigating the app to it. In-memory only.
+  repoConfigRepoId: number | null;
   // Whether the ⌘/Ctrl+K command palette is open. In-memory only.
   commandPaletteOpen: boolean;
   // File Compare dialog (#130). `null` when closed; otherwise the seed it opened
@@ -274,6 +279,10 @@ interface UiState {
   setFilesPath: (path: string | null) => void;
   setSettingsOpen: (open: boolean) => void;
   toggleSettings: () => void;
+  /** Open the repo config dialog for an explicit repo — e.g. the sidebar row's
+   * gear button — without touching `activeRepoId`. */
+  openRepoConfig: (repoId: number) => void;
+  closeRepoConfig: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
   // Open the File Compare dialog, optionally seeded with a repo + file (which
@@ -370,6 +379,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   historySha: null,
   filesPath: null,
   settingsOpen: false,
+  repoConfigRepoId: null,
   commandPaletteOpen: false,
   compare: null,
   compareSelection: null,
@@ -412,6 +422,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setFilesPath: (filesPath) => set({ filesPath }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  openRepoConfig: (repoId) => set({ repoConfigRepoId: repoId }),
+  closeRepoConfig: () => set({ repoConfigRepoId: null }),
   setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
   openCompare: (seed) => set({ compare: seed ?? {}, commandPaletteOpen: false }),

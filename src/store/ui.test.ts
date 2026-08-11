@@ -27,6 +27,28 @@ describe("repo sidebar store actions (#283)", () => {
   });
 });
 
+describe("openRepoConfig / closeRepoConfig (#306 follow-up)", () => {
+  beforeEach(() => {
+    useUiStore.setState({ repoConfigRepoId: null, activeRepoId: null });
+  });
+
+  it("openRepoConfig targets an explicit repo without touching activeRepoId", () => {
+    useUiStore.getState().openRepoConfig(7);
+    expect(useUiStore.getState().repoConfigRepoId).toBe(7);
+    expect(useUiStore.getState().activeRepoId).toBeNull();
+
+    // Already open, on a different repo — still jumps to the target.
+    useUiStore.getState().openRepoConfig(9);
+    expect(useUiStore.getState().repoConfigRepoId).toBe(9);
+  });
+
+  it("closeRepoConfig clears the target repo", () => {
+    useUiStore.setState({ repoConfigRepoId: 7 });
+    useUiStore.getState().closeRepoConfig();
+    expect(useUiStore.getState().repoConfigRepoId).toBeNull();
+  });
+});
+
 /** A minimal well-formed persisted blob for one group with one tab/pane. */
 function blob(overrides?: Record<string, unknown>) {
   return JSON.stringify({

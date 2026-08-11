@@ -12,10 +12,22 @@ import {
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { useRepos } from "@/features/repos/api";
 import { CleanupStaleDialog } from "./CleanupStaleDialog";
+
+/** Sentinel `Select` value standing in for `sourceRef === ""` (base the new
+ * branch on current HEAD) — Radix `Select.Item` rejects an empty-string value,
+ * since it reserves "" internally to mean "no selection". */
+const HEAD_SENTINEL = "__head__";
 
 export function BranchSwitcher({
   repoId,
@@ -223,24 +235,34 @@ export function BranchSwitcher({
                 }}
                 className="h-8 font-mono text-xs"
               />
-              <label className="block text-[10px] font-medium text-[var(--color-muted-foreground)]">
+              {/* `aria-labelledby` rather than a bare <label>: the trigger is a
+                  button, so nothing tied the visible label to it — screen
+                  readers announced the control unnamed. */}
+              <label
+                id="branch-source-label"
+                className="block text-[10px] font-medium text-[var(--color-muted-foreground)]"
+              >
                 Base it on
               </label>
-              <div className="relative">
-                <select
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                  className="h-8 w-full appearance-none rounded-md border border-[var(--color-input)] bg-transparent pr-7 pl-2 font-mono text-xs text-[var(--color-foreground)] shadow-sm transition-colors hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+              <Select
+                value={sourceRef || HEAD_SENTINEL}
+                onValueChange={(v) => setSourceRef(v === HEAD_SENTINEL ? "" : v)}
+              >
+                <SelectTrigger
+                  aria-labelledby="branch-source-label"
+                  className="w-full font-mono text-xs hover:bg-[var(--color-accent)]"
                 >
-                  <option value="">Current branch (HEAD)</option>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="font-mono text-xs">
+                  <SelectItem value={HEAD_SENTINEL}>Current branch (HEAD)</SelectItem>
                   {sourceOptions.map((ref) => (
-                    <option key={ref} value={ref}>
+                    <SelectItem key={ref} value={ref}>
                       {ref}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
-              </div>
+                </SelectContent>
+              </Select>
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"

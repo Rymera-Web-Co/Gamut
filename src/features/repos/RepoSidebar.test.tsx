@@ -142,7 +142,13 @@ beforeEach(() => {
   mocks.gitFetchMany.mockReset().mockResolvedValue([]);
   mocks.gitPullMany.mockReset().mockResolvedValue([]);
   mocks.gitPushMany.mockReset().mockResolvedValue([]);
-  useUiStore.setState({ activeGroupId: 1, activeRepoId: null, activeWorktreePath: null });
+  useUiStore.setState({
+    activeGroupId: 1,
+    activeRepoId: null,
+    activeWorktreePath: null,
+    settingsOpen: false,
+    repoConfigRepoId: null,
+  });
 });
 
 describe("RepoSidebar selection (#294)", () => {
@@ -661,6 +667,55 @@ describe("RepoSidebar bulk remove with confirmation (#294)", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
     expect(within(dialog).getByText(/synced root folder/i)).toBeInTheDocument();
+  });
+
+  describe("repo settings entry points (#306 follow-up)", () => {
+    it("the gear button opens the repo config dialog for that repo, without touching the active repo", async () => {
+      renderSidebar([A, D]);
+      const rowA = await screen.findByTitle(A.path);
+      useUiStore.setState({ activeRepoId: B.id });
+
+      fireEvent.click(within(rowA).getByLabelText(`Repo settings for ${A.name}`));
+
+      expect(useUiStore.getState().repoConfigRepoId).toBe(A.id);
+      expect(useUiStore.getState().activeRepoId).toBe(B.id);
+    });
+
+    it("does not render the gear button for a non-git folder row", async () => {
+      renderSidebar([A, D]);
+      const rowD = await screen.findByTitle(D.path);
+
+      expect(within(rowD).queryByLabelText(`Repo settings for ${D.name}`)).not.toBeInTheDocument();
+    });
+
+    it("does not render the gear button for a missing repo row", async () => {
+      renderSidebar([A, C]);
+      const rowC = await screen.findByTitle(C.path);
+
+      expect(within(rowC).queryByLabelText(`Repo settings for ${C.name}`)).not.toBeInTheDocument();
+    });
+
+    it("the context-menu item opens the repo config dialog for that repo, without touching the active repo", async () => {
+      renderSidebar([A]);
+      const rowA = await screen.findByTitle(A.path);
+      useUiStore.setState({ activeRepoId: null });
+
+      fireEvent.contextMenu(rowA);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Repo settings…" }));
+
+      expect(useUiStore.getState().repoConfigRepoId).toBe(A.id);
+      expect(useUiStore.getState().activeRepoId).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Repo settings…" })).not.toBeInTheDocument();
+    });
+
+    it("does not render the context-menu item for a non-git folder", async () => {
+      renderSidebar([A, D]);
+      const rowD = await screen.findByTitle(D.path);
+
+      fireEvent.contextMenu(rowD);
+      await screen.findByRole("menuitem", { name: "Remove repo" });
+      expect(screen.queryByRole("menuitem", { name: "Repo settings…" })).not.toBeInTheDocument();
+    });
   });
 
   it("A17: reconciles the active repo when the removed selection includes it", async () => {
