@@ -202,8 +202,7 @@ function RepoRow({
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
-  const openSettingsAt = useUiStore((s) => s.openSettingsAt);
+  const openRepoConfig = useUiStore((s) => s.openRepoConfig);
   // A selected worktree highlights its own nested row, not the repo row.
   const active = activeRepoId === repo.id && activeWorktreePath == null;
   // Only run `git worktree list` for repos that actually have linked worktrees.
@@ -349,8 +348,7 @@ function RepoRow({
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setActiveRepo(repo.id);
-                  openSettingsAt("repo-config");
+                  openRepoConfig(repo.id);
                 }}
                 className="shrink-0 opacity-0 transition-opacity hover:text-[var(--color-foreground)] group-hover:opacity-100"
               >
@@ -407,7 +405,7 @@ export function RepoSidebar() {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
-  const openSettingsAt = useUiStore((s) => s.openSettingsAt);
+  const openRepoConfig = useUiStore((s) => s.openRepoConfig);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const showSyncedRoot = useSettings((s) => s.values.showSyncedRoot);
 
@@ -926,8 +924,7 @@ export function RepoSidebar() {
             {!menu.repo.missing && menu.repo.is_git_repo && (
               <ContextMenuItem
                 onClick={() => {
-                  setActiveRepo(menu.repo.id);
-                  openSettingsAt("repo-config");
+                  openRepoConfig(menu.repo.id);
                   setMenu(null);
                 }}
               >

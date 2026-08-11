@@ -4,24 +4,24 @@ Every repository's git config is really a stack of layers — system-wide, your 
 `~/.gitconfig`, and the repository's own `.git/config` — and git quietly resolves them into
 one effective value per key. That's convenient until something looks wrong: an email address
 that isn't what you expected, or a remote URL that seems to have come from nowhere. **Repo
-config** (Settings → **Repo config**) shows every layer for the currently selected repository,
-not just the value that wins, and lets you edit a small curated set of fields directly.
+config** shows every layer for a repository, not just the value that wins, and lets you edit a
+small curated set of fields directly. It's its own dialog, not a Settings category — the config
+is scoped to one repository, not an app-wide preference.
 
 ## Opening it
 
-Select a git repository in the sidebar, then open **Settings** (`⌘/Ctrl+,`) → **Repo config**
-in the category list. Selecting a plain (non-git) folder, or having nothing selected, shows an
-empty state instead — there's no config to show.
-
-Two shortcuts jump straight to the panel for a given repo, skipping the category list:
+There's no menu entry for this — it's reached directly from the repo you want to configure, so
+it's always obvious which repo you're looking at:
 
 - Hover a git repo's row in the sidebar and click its gear icon (next to the terminal and
   remove buttons).
 - Right-click a git repo's row and choose **Repo settings…**.
 
-Either one makes the repo active and opens Settings already scoped to **Repo config**. Both
-are hidden for plain (non-git) folders and for repos whose folder is missing on disk — there's
-nothing to configure in either case.
+Both are hidden for plain (non-git) folders and for repos whose folder is missing on disk —
+there's nothing to configure in either case. Opening the dialog doesn't change your current
+selection — configuring another repo's config doesn't navigate you to it. The dialog's title
+names the repo, with its full folder path underneath — useful when two repos share a name (a
+routine occurrence for folder-derived names like `docs`).
 
 ## What you can edit
 
@@ -60,8 +60,10 @@ terminal, another tool). It isn't kept live automatically, unlike most of the re
 
 *For contributors — where this feature lives in the code.*
 
-`src/features/settings/panels/RepoConfigPanel.tsx` talks to
-`src-tauri/src/commands/config.rs`. Key IPC commands: `gitConfigOverview`,
+`src/features/repos/RepoConfigDialog.tsx` (the modal chrome — title, path, sizing) renders
+`src/features/repos/RepoConfigPanel.tsx` (the viewer/editor) as its body, keyed by an explicit
+repo id rather than the app's active repo. Both talk to `src-tauri/src/commands/config.rs`. Key
+IPC commands: `gitConfigOverview`,
 `gitConfigSetIdentity`, `gitConfigSetRemoteUrl`, `gitConfigSetBranchUpstream`. Reads go through
 git2's `Config::entries` (one row per occurrence, source-annotated); writes always target
 `Config::open_level(ConfigLevel::Local)` and are validated before anything touches disk, so a

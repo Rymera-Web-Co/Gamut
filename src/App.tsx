@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 
 import { GroupRail } from "@/features/repos/GroupRail";
+import { RepoConfigDialog } from "@/features/repos/RepoConfigDialog";
 import { RepoSidebar } from "@/features/repos/RepoSidebar";
 import { TopTabs } from "@/components/layout/TopTabs";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
@@ -205,6 +206,7 @@ export default function App() {
       <StatusBar />
       <Toaster />
       <SettingsDialog />
+      <RepoConfigDialog />
       <CommandPalette />
       <CompareDialog />
       <PublishBranchDialog />

@@ -4,10 +4,9 @@ import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ipc, type ConfigOverview, type IdentityFieldName, type IdentityValue } from "@/lib/ipc";
-import { useActiveRepoIsGit } from "@/lib/useActiveRepo";
-import { useUiStore } from "@/store/ui";
+import { Divider, Field, PanelTitle, Select, TextField } from "@/features/settings/controls";
 import { toast } from "@/store/toast";
-import { Divider, Field, PanelTitle, Select, TextField } from "../controls";
+import { useRepos } from "./api";
 
 /** Sentinel `<select>` value for "no upstream configured" — never a legal
  * `remote/branch` shorthand, so it can't collide with a real remote-tracking
@@ -30,9 +29,22 @@ function upstreamShorthand(remote: string | null, merge: string | null): string 
   return `${remote}/${merge.replace(/^refs\/heads\//, "")}`;
 }
 
-export function RepoConfigPanel() {
-  const activeRepoId = useUiStore((s) => s.activeRepoId);
-  const isGit = useActiveRepoIsGit();
+/**
+ * The config viewer + curated editor for one repo, rendered inside
+ * `RepoConfigDialog` (#306 follow-up — this used to be a Settings panel
+ * reading `activeRepoId`; it now takes an explicit `repoId` prop so opening
+ * it never changes which repo is selected elsewhere in the app).
+ */
+export function RepoConfigPanel({ repoId }: { repoId: number }) {
+  const repos = useRepos();
+  // The dialog only ever opens for a repo that's a known git repo at the time
+  // of the click, so this is a late guard, not the common path: it catches the
+  // repo being removed (or turning out not to be git) while the dialog stays
+  // open. While the repo list is still loading, `repos.data` is `undefined` —
+  // treated as "not yet known" rather than "gone", so this doesn't flash the
+  // guard for a repo that's about to resolve.
+  const repo = repos.data?.find((r) => r.id === repoId);
+  const notFound = repos.data != null && (repo == null || !repo.is_git_repo);
 
   const [overview, setOverview] = useState<ConfigOverview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -51,8 +63,8 @@ export function RepoConfigPanel() {
 
   // Re-read from disk and reset every unsaved draft to what's actually stored
   // — used for the mount load, the Refresh button (A8), after every
-  // successful write (A24), and whenever the active repo changes (A10, via
-  // the effect below), so a previous repo's unsaved edit never carries over.
+  // successful write (A24), and whenever `repoId` changes (A10, via the
+  // effect below), so a previous repo's unsaved edit never carries over.
   //
   // Exception: a field the user is actively typing into (has DOM focus) right
   // now is left alone. `refresh()` runs after every write, so committing Name
@@ -60,11 +72,10 @@ export function RepoConfigPanel() {
   // `document.activeElement` at response time is simpler to reason about than
   // trying to track "written vs. untouched" per field.
   const refresh = useCallback(() => {
-    if (activeRepoId == null) return;
     const generation = (generationRef.current += 1);
     setLoading(true);
     ipc
-      .gitConfigOverview(activeRepoId)
+      .gitConfigOverview(repoId)
       .then((ov) => {
         if (generationRef.current !== generation) return;
         setOverview(ov);
@@ -100,27 +111,25 @@ export function RepoConfigPanel() {
         if (generationRef.current !== generation) return;
         setLoading(false);
       });
-  }, [activeRepoId]);
+  }, [repoId]);
 
   useEffect(() => {
-    if (activeRepoId == null || !isGit) {
+    if (notFound) {
       setOverview(null);
       return;
     }
     refresh();
-    // Only re-run on repo/git-ness changes, not on every `refresh` identity
-    // change (it already depends on `activeRepoId`, which is in this list).
+    // Only re-run on repo/not-found changes, not on every `refresh` identity
+    // change (it already depends on `repoId`, which is in this list).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRepoId, isGit]);
+  }, [repoId, notFound]);
 
-  if (activeRepoId == null || !isGit) {
+  if (notFound) {
+    // No heading here: the dialog's own header already names what's gone.
     return (
-      <div>
-        <PanelTitle>Repo config</PanelTitle>
-        <p className="text-xs text-[var(--color-muted-foreground)]">
-          Select a git repository to view and edit its config.
-        </p>
-      </div>
+      <p className="text-xs text-[var(--color-muted-foreground)]">
+        This repository is no longer available.
+      </p>
     );
   }
 
@@ -132,7 +141,7 @@ export function RepoConfigPanel() {
     // "Inherited from global" to "Set here (local)" with no user intent.
     if (trimmed === (overview?.identity.name.value ?? "")) return;
     try {
-      await ipc.gitConfigSetIdentity(activeRepoId, "name", trimmed === "" ? null : trimmed);
+      await ipc.gitConfigSetIdentity(repoId, "name", trimmed === "" ? null : trimmed);
       refresh();
     } catch (e) {
       toast.error(String(e));
@@ -144,7 +153,7 @@ export function RepoConfigPanel() {
     const trimmed = emailValue.trim();
     if (trimmed === (overview?.identity.email.value ?? "")) return;
     try {
-      await ipc.gitConfigSetIdentity(activeRepoId, "email", trimmed === "" ? null : trimmed);
+      await ipc.gitConfigSetIdentity(repoId, "email", trimmed === "" ? null : trimmed);
       refresh();
     } catch (e) {
       toast.error(String(e));
@@ -154,7 +163,7 @@ export function RepoConfigPanel() {
 
   const clearIdentity = async (field: IdentityFieldName) => {
     try {
-      await ipc.gitConfigSetIdentity(activeRepoId, field, null);
+      await ipc.gitConfigSetIdentity(repoId, field, null);
       refresh();
     } catch (e) {
       toast.error(String(e));
@@ -168,7 +177,7 @@ export function RepoConfigPanel() {
     // field just because it was focused and blurred.
     if (trimmed === (overview?.remotes.find((r) => r.name === name)?.url ?? "")) return;
     try {
-      await ipc.gitConfigSetRemoteUrl(activeRepoId, name, trimmed);
+      await ipc.gitConfigSetRemoteUrl(repoId, name, trimmed);
       refresh();
     } catch (e) {
       toast.error(String(e));
@@ -179,11 +188,7 @@ export function RepoConfigPanel() {
 
   const onUpstreamChange = async (value: string) => {
     try {
-      await ipc.gitConfigSetBranchUpstream(
-        activeRepoId,
-        branch,
-        value === NO_UPSTREAM ? null : value,
-      );
+      await ipc.gitConfigSetBranchUpstream(repoId, branch, value === NO_UPSTREAM ? null : value);
       refresh();
     } catch (e) {
       // No local draft to revert: the picker's value is derived straight from
@@ -200,7 +205,8 @@ export function RepoConfigPanel() {
 
   return (
     <div>
-      <PanelTitle>Repo config</PanelTitle>
+      {/* No top-level heading: the dialog header already names the repo this
+          is for. The section headings below carry the structure. */}
       <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
         The effective git config for this repository — every layer it's assembled from, plus a
         curated set of fields you can edit. Edits are always written at local scope (this repo's{" "}

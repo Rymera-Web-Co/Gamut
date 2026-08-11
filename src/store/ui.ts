@@ -7,23 +7,6 @@ import { useSettings } from "@/lib/settings";
 export type View = "files" | "history" | "review" | "pulls";
 export type ReviewMode = "working" | "branch";
 
-// Every Settings category id. Kept here (rather than derived from
-// SettingsDialog's local CATEGORIES array) so a caller outside the dialog can
-// target a category by id, and so CATEGORIES can be typed against this union —
-// a category present in one and missing from the other is a compile error.
-export type SettingsCategory =
-  | "appearance"
-  | "diff"
-  | "git"
-  | "repo-config"
-  | "github"
-  | "terminal"
-  | "palette"
-  | "keyboard"
-  | "notifications"
-  | "diagnostics"
-  | "about";
-
 /** Seed for the File Compare dialog (#130): an optional repo + file to prefill. */
 export interface CompareSeed {
   repoId?: number;
@@ -259,10 +242,11 @@ interface UiState {
   filesPath: string | null;
   // Whether the Settings panel (⌘,) is open. In-memory only.
   settingsOpen: boolean;
-  // Which Settings category is showing. Persists across open/close within a
-  // session (the dialog never unmounts) — only `openSettingsAt` or a rail
-  // click changes it. In-memory only.
-  settingsCategory: SettingsCategory;
+  // The repo config dialog's target repo (#306 follow-up): `null` when closed,
+  // otherwise the id of the repo it's showing. Explicit rather than following
+  // `activeRepoId` — opening it (the sidebar gear / context-menu item) must
+  // configure the row that was clicked without navigating the app to it. In-memory only.
+  repoConfigRepoId: number | null;
   // Whether the ⌘/Ctrl+K command palette is open. In-memory only.
   commandPaletteOpen: boolean;
   // File Compare dialog (#130). `null` when closed; otherwise the seed it opened
@@ -295,9 +279,10 @@ interface UiState {
   setFilesPath: (path: string | null) => void;
   setSettingsOpen: (open: boolean) => void;
   toggleSettings: () => void;
-  /** Open Settings pre-scoped to a category — e.g. the repo row's gear button
-   * jumping straight to "repo-config" rather than always landing on Appearance. */
-  openSettingsAt: (category: SettingsCategory) => void;
+  /** Open the repo config dialog for an explicit repo — e.g. the sidebar row's
+   * gear button — without touching `activeRepoId`. */
+  openRepoConfig: (repoId: number) => void;
+  closeRepoConfig: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
   // Open the File Compare dialog, optionally seeded with a repo + file (which
@@ -394,7 +379,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   historySha: null,
   filesPath: null,
   settingsOpen: false,
-  settingsCategory: "appearance",
+  repoConfigRepoId: null,
   commandPaletteOpen: false,
   compare: null,
   compareSelection: null,
@@ -437,7 +422,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setFilesPath: (filesPath) => set({ filesPath }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
-  openSettingsAt: (settingsCategory) => set({ settingsCategory, settingsOpen: true }),
+  openRepoConfig: (repoId) => set({ repoConfigRepoId: repoId }),
+  closeRepoConfig: () => set({ repoConfigRepoId: null }),
   setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
   toggleCommandPalette: () => set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
   openCompare: (seed) => set({ compare: seed ?? {}, commandPaletteOpen: false }),

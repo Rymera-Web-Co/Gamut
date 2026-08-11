@@ -3,8 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Only the Tauri `invoke` boundary is faked — the real ipc wrappers, the real
-// toast store, the real repos query (`useActiveRepoIsGit`), and the real panel
-// all run for real, per the `DiagnosticsPanel.test.tsx` house pattern (#301, #306).
+// toast store, the real repos query, and the real panel all run for real, per
+// the `DiagnosticsPanel.test.tsx` house pattern (#301, #306).
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({
   invoke,
@@ -13,7 +13,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import type { ConfigOverview, Repo } from "@/lib/ipc";
 import { useToasts } from "@/store/toast";
-import { useUiStore } from "@/store/ui";
 import { RepoConfigPanel } from "./RepoConfigPanel";
 
 function baseRepo(overrides?: Partial<Repo>): Repo {
@@ -48,11 +47,11 @@ function baseOverview(overrides?: Partial<ConfigOverview>): ConfigOverview {
   };
 }
 
-function renderPanel() {
+function renderPanel(repoId = 1) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <RepoConfigPanel />
+      <RepoConfigPanel repoId={repoId} />
     </QueryClientProvider>,
   );
 }
@@ -70,7 +69,6 @@ function mockBackend(repos: Repo[], overview: ConfigOverview) {
 beforeEach(() => {
   invoke.mockReset();
   useToasts.setState({ toasts: [] });
-  useUiStore.setState({ activeRepoId: null });
 });
 
 afterEach(() => {
@@ -78,31 +76,25 @@ afterEach(() => {
 });
 
 describe("RepoConfigPanel (#306)", () => {
-  it("A7: exact empty state and zero rows with no repo selected", async () => {
+  it("guard: renders a message and zero rows when repoId no longer resolves in the repo list", async () => {
     mockBackend([], baseOverview());
-    renderPanel();
+    renderPanel(1);
 
-    expect(
-      await screen.findByText("Select a git repository to view and edit its config."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("This repository is no longer available.")).toBeInTheDocument();
     expect(screen.queryAllByRole("row")).toHaveLength(0);
   });
 
-  it("A7: exact empty state and zero rows when the selection is not a git repo", async () => {
+  it("guard: renders the same message when the resolved repo is no longer a git repo", async () => {
     mockBackend([baseRepo({ id: 2, is_git_repo: false })], baseOverview());
-    useUiStore.setState({ activeRepoId: 2 });
-    renderPanel();
+    renderPanel(2);
 
-    expect(
-      await screen.findByText("Select a git repository to view and edit its config."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("This repository is no longer available.")).toBeInTheDocument();
     expect(screen.queryAllByRole("row")).toHaveLength(0);
   });
 
   it("A1: renders the Key/Value/Source table with one row per entry", async () => {
     mockBackend([baseRepo()], baseOverview());
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Effective config");
     expect(screen.getByRole("columnheader", { name: "Key" })).toBeInTheDocument();
@@ -121,8 +113,7 @@ describe("RepoConfigPanel (#306)", () => {
         ],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Effective config");
     const rows = screen.getAllByText("user.email").map((el) => el.closest("tr")!);
@@ -142,8 +133,7 @@ describe("RepoConfigPanel (#306)", () => {
         ],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Effective config");
     expect(screen.getByText("(non-UTF-8 value)")).toBeInTheDocument();
@@ -159,8 +149,7 @@ describe("RepoConfigPanel (#306)", () => {
       if (cmd === "git_config_overview") return overview;
       return undefined;
     });
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Old Name");
 
@@ -184,8 +173,7 @@ describe("RepoConfigPanel (#306)", () => {
         ],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    const { container } = renderPanel();
+    const { container } = renderPanel(1);
 
     await screen.findByText("Effective config");
     const controls = Array.from(
@@ -198,7 +186,7 @@ describe("RepoConfigPanel (#306)", () => {
     expect(names).toHaveLength(6);
   });
 
-  it("A10: switching the active repo re-reads and discards an unsaved edit from the previous repo", async () => {
+  it("A10: changing the repoId prop re-reads and discards an unsaved edit from the previous repo", async () => {
     const overview1 = baseOverview({
       identity: {
         name: { value: "Repo One Name", level: "local", local_value: "Repo One Name" },
@@ -219,8 +207,12 @@ describe("RepoConfigPanel (#306)", () => {
       return undefined;
     });
 
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <RepoConfigPanel repoId={1} />
+      </QueryClientProvider>,
+    );
     const nameInput = await screen.findByRole("textbox", { name: "user.name" });
     expect(nameInput).toHaveValue("Repo One Name");
 
@@ -228,9 +220,11 @@ describe("RepoConfigPanel (#306)", () => {
     fireEvent.change(nameInput, { target: { value: "Uncommitted Draft" } });
 
     // ...switching repos must discard it, not apply it to repo 2.
-    act(() => {
-      useUiStore.setState({ activeRepoId: 2 });
-    });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <RepoConfigPanel repoId={2} />
+      </QueryClientProvider>,
+    );
 
     await waitFor(() => expect(nameInput).toHaveValue("Repo Two Name"));
     expect(screen.queryByDisplayValue("Uncommitted Draft")).not.toBeInTheDocument();
@@ -242,8 +236,7 @@ describe("RepoConfigPanel (#306)", () => {
       [baseRepo()],
       baseOverview({ remotes: [{ name: "origin", url: credentialUrl, push_url: null }] }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const urlInput = await screen.findByRole("textbox", { name: "origin URL" });
     expect(urlInput).toHaveValue(credentialUrl);
@@ -269,8 +262,7 @@ describe("RepoConfigPanel (#306)", () => {
 
   it("fix 1: blurring an inherited (non-local) email without editing it does not write", async () => {
     mockBackend([baseRepo()], baseOverview());
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const emailInput = await screen.findByRole("textbox", { name: "user.email" });
     expect(emailInput).toHaveValue("jane@example.com");
@@ -289,8 +281,7 @@ describe("RepoConfigPanel (#306)", () => {
         remotes: [{ name: "origin", url: "https://example.com/a.git", push_url: null }],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const urlInput = await screen.findByRole("textbox", { name: "origin URL" });
     fireEvent.focus(urlInput);
@@ -302,8 +293,7 @@ describe("RepoConfigPanel (#306)", () => {
 
   it("fix 8: a value with surrounding whitespace is trimmed before being sent", async () => {
     mockBackend([baseRepo()], baseOverview());
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const emailInput = await screen.findByRole("textbox", { name: "user.email" });
     fireEvent.change(emailInput, { target: { value: "new@example.com " } });
@@ -328,8 +318,7 @@ describe("RepoConfigPanel (#306)", () => {
       }
       return undefined;
     });
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const refreshButton = await screen.findByRole("button", { name: "Refresh" });
     await waitFor(() => expect(refreshButton).toBeDisabled());
@@ -342,8 +331,7 @@ describe("RepoConfigPanel (#306)", () => {
 
   it("fix 16: the effective-config table exposes an accessible name and column headers", async () => {
     mockBackend([baseRepo()], baseOverview());
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Effective config");
     const table = screen.getByRole("table", { name: "Effective git config entries" });
@@ -366,8 +354,7 @@ describe("RepoConfigPanel (#306)", () => {
         ],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     await screen.findByText("Effective config");
     expect(screen.getByText("https://example.com/push.git", { exact: false })).toBeInTheDocument();
@@ -402,14 +389,20 @@ describe("RepoConfigPanel (#306)", () => {
       return undefined;
     });
 
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <RepoConfigPanel repoId={1} />
+      </QueryClientProvider>,
+    );
     await waitFor(() => expect(resolveA).not.toBeNull());
 
     // Switch to repo 2 before repo 1's (slow) response ever lands.
-    act(() => {
-      useUiStore.setState({ activeRepoId: 2 });
-    });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <RepoConfigPanel repoId={2} />
+      </QueryClientProvider>,
+    );
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "user.name" })).toHaveValue("Repo B Name"),
     );
@@ -446,8 +439,7 @@ describe("RepoConfigPanel (#306)", () => {
       return undefined;
     });
 
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
     const nameInput = await screen.findByRole("textbox", { name: "user.name" });
     const emailInput = screen.getByRole("textbox", { name: "user.email" });
 
@@ -486,8 +478,7 @@ describe("RepoConfigPanel (#306)", () => {
         remote_branches: ["origin/main", "upstream/main"],
       }),
     );
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const branchSelect = await screen.findByRole("combobox", { name: "Branch" });
     expect(screen.getByRole("textbox", { name: "origin URL" })).toBeInTheDocument();
@@ -529,8 +520,7 @@ describe("RepoConfigPanel (#306)", () => {
       return undefined;
     });
 
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
     const nameInput = await screen.findByRole("textbox", { name: "user.name" });
     expect(nameInput).toHaveValue("Old Name");
 
@@ -550,8 +540,7 @@ describe("RepoConfigPanel (#306)", () => {
       if (cmd === "git_config_set_identity") throw new Error("rejected");
       return undefined;
     });
-    useUiStore.setState({ activeRepoId: 1 });
-    renderPanel();
+    renderPanel(1);
 
     const nameInput = await screen.findByRole("textbox", { name: "user.name" });
     expect(nameInput).toHaveValue("Jane Doe");

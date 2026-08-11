@@ -147,7 +147,7 @@ beforeEach(() => {
     activeRepoId: null,
     activeWorktreePath: null,
     settingsOpen: false,
-    settingsCategory: "appearance",
+    repoConfigRepoId: null,
   });
 });
 
@@ -670,15 +670,15 @@ describe("RepoSidebar bulk remove with confirmation (#294)", () => {
   });
 
   describe("repo settings entry points (#306 follow-up)", () => {
-    it("the gear button sets the active repo and opens Settings at repo-config", async () => {
+    it("the gear button opens the repo config dialog for that repo, without touching the active repo", async () => {
       renderSidebar([A, D]);
       const rowA = await screen.findByTitle(A.path);
+      useUiStore.setState({ activeRepoId: B.id });
 
       fireEvent.click(within(rowA).getByLabelText(`Repo settings for ${A.name}`));
 
-      expect(useUiStore.getState().activeRepoId).toBe(A.id);
-      expect(useUiStore.getState().settingsOpen).toBe(true);
-      expect(useUiStore.getState().settingsCategory).toBe("repo-config");
+      expect(useUiStore.getState().repoConfigRepoId).toBe(A.id);
+      expect(useUiStore.getState().activeRepoId).toBe(B.id);
     });
 
     it("does not render the gear button for a non-git folder row", async () => {
@@ -695,16 +695,16 @@ describe("RepoSidebar bulk remove with confirmation (#294)", () => {
       expect(within(rowC).queryByLabelText(`Repo settings for ${C.name}`)).not.toBeInTheDocument();
     });
 
-    it("the context-menu item sets the active repo and opens Settings at repo-config", async () => {
+    it("the context-menu item opens the repo config dialog for that repo, without touching the active repo", async () => {
       renderSidebar([A]);
       const rowA = await screen.findByTitle(A.path);
+      useUiStore.setState({ activeRepoId: null });
 
       fireEvent.contextMenu(rowA);
       fireEvent.click(await screen.findByRole("menuitem", { name: "Repo settings…" }));
 
-      expect(useUiStore.getState().activeRepoId).toBe(A.id);
-      expect(useUiStore.getState().settingsOpen).toBe(true);
-      expect(useUiStore.getState().settingsCategory).toBe("repo-config");
+      expect(useUiStore.getState().repoConfigRepoId).toBe(A.id);
+      expect(useUiStore.getState().activeRepoId).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "Repo settings…" })).not.toBeInTheDocument();
     });
 
