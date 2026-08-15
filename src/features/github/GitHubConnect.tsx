@@ -131,14 +131,14 @@ export function GitHubConnect() {
       <PopoverTrigger asChild>
         <button
           title={connected ? `GitHub: ${login ?? "Connected"}` : "Connect to GitHub"}
-          className="relative mt-1 flex size-10 items-center justify-center rounded-lg text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          className="relative flex size-7 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
         >
-          <Github className="size-5" />
+          <Github className="size-4" />
           {/* Amber dot only when disconnected — signals "action needed: connect".
               Once signed in (or while auth is still loading) there's nothing to
               act on yet, so no dot. */}
           {!auth.isLoading && !connected && (
-            <span className="absolute bottom-1 right-1 size-2 rounded-full border border-[var(--color-sidebar)] bg-[#f59e0b]" />
+            <span className="absolute bottom-0.5 right-0.5 size-1.5 rounded-full border border-[var(--color-sidebar)] bg-[var(--color-warning)]" />
           )}
         </button>
       </PopoverTrigger>

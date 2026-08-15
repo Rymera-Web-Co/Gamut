@@ -215,7 +215,7 @@ export function CommandPalette() {
           // sidebar is scoped to a group — so reveal the repo there too by
           // switching to a group that contains it (its first group, or the
           // default group for ungrouped repos), unless the current group
-          // already shows it. Mirrors the visibility rule in RepoSidebar.
+          // already shows it. Mirrors the visibility rule in the Sidebar.
           const activeGroup = groupList.find((g) => g.id === activeGroupId);
           const shownHere = repoInGroup(r, activeGroup);
           if (!shownHere) {

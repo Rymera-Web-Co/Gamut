@@ -11,7 +11,7 @@ import { useSetRepoAutoPull } from "./api";
  * `Repo.auto_pull`, so the app keeps this repo fast-forwarded when it falls behind
  * (only ever a clean fast-forward; see `lib/autoPull.ts`).
  *
- * Its own module rather than another export from `RepoSidebar.tsx`: the state it
+ * Its own module rather than another export from the sidebar: the state it
  * shows and the value it writes are this feature's on/off switch, so it gets a
  * component test, and testing it shouldn't mean importing the whole sidebar (and
  * stubbing everything that sidebar reaches for at import time).

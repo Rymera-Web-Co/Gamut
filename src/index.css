@@ -5,55 +5,63 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Warm cream / off-white palette — softer on the eyes than pure white.
-     Subtle yellow hue (~85) at low chroma keeps it paper-like, not yellowed. */
+  /* "Model C" palette: cool near-white surfaces with a teal accent. The
+     sidebar is a slightly deeper rail tone so the content area lifts off it. */
   --radius: 0.625rem;
-  --background: oklch(0.975 0.008 85); /* cream canvas */
-  --foreground: oklch(0.22 0.006 75); /* warm near-black text */
-  --card: oklch(0.992 0.004 85); /* lighter — surfaces lift off the canvas */
-  --card-foreground: oklch(0.22 0.006 75);
-  --popover: oklch(0.992 0.004 85);
-  --popover-foreground: oklch(0.22 0.006 75);
-  --primary: oklch(0.255 0.006 75);
-  --primary-foreground: oklch(0.985 0.004 85);
-  --secondary: oklch(0.945 0.01 85); /* soft cream fill */
-  --secondary-foreground: oklch(0.255 0.006 75);
-  --muted: oklch(0.945 0.01 85);
-  --muted-foreground: oklch(0.55 0.012 75); /* warm gray */
-  --accent: oklch(0.945 0.01 85);
-  --accent-foreground: oklch(0.255 0.006 75);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.905 0.008 85); /* warm light border */
-  --input: oklch(0.905 0.008 85);
-  --ring: oklch(0.708 0.01 85);
-  --sidebar: oklch(0.96 0.01 85); /* slightly deeper cream */
-  --sidebar-foreground: oklch(0.22 0.006 75);
-  --sidebar-border: oklch(0.9 0.008 85);
+  --background: #f7f7fc;
+  --foreground: #22233a;
+  --card: #ffffff;
+  --card-foreground: #22233a;
+  --popover: #ffffff;
+  --popover-foreground: #22233a;
+  /* Teal accent, darkened from the mock's #00a896 so it holds 4.5:1 contrast
+     as text on the white/near-white surfaces (small labels use it directly). */
+  --primary: #007a6c;
+  --primary-foreground: #ffffff;
+  --primary-soft: rgba(0, 168, 150, 0.12);
+  --secondary: #eff0f6;
+  --secondary-foreground: #494b66;
+  --muted: #f1f1f8;
+  --muted-foreground: #6e7191;
+  --faint: #a0a3bd;
+  --warning: #b7791f;
+  --accent: #ececf4;
+  --accent-foreground: #22233a;
+  --destructive: #d0463b;
+  --border: #e6e7f1;
+  --input: #e6e7f1;
+  --ring: #007a6c;
+  --sidebar: #f1f1f8;
+  --sidebar-foreground: #22233a;
+  --sidebar-border: #e6e7f1;
 }
 
 .dark {
-  /* GitHub "dark dimmed" palette — softer than pure dark. */
-  --background: #22272e;
-  --foreground: #adbac7;
-  --card: #2d333b;
-  --card-foreground: #adbac7;
-  --popover: #2d333b;
-  --popover-foreground: #adbac7;
-  --primary: #347d39;
-  --primary-foreground: #ffffff;
-  --secondary: #373e47;
-  --secondary-foreground: #adbac7;
-  --muted: #2d333b;
-  --muted-foreground: #768390;
-  --accent: #373e47;
-  --accent-foreground: #cdd9e5;
-  --destructive: #e5534b;
-  --border: #444c56;
-  --input: #444c56;
-  --ring: #539bf5;
-  --sidebar: #1c2128;
-  --sidebar-foreground: #adbac7;
-  --sidebar-border: #444c56;
+  /* Dark counterpart of the Model C palette. */
+  --background: #12131a;
+  --foreground: #e7e8f0;
+  --card: #1a1c25;
+  --card-foreground: #e7e8f0;
+  --popover: #1a1c25;
+  --popover-foreground: #e7e8f0;
+  --primary: #16c2ae;
+  --primary-foreground: #0c1512;
+  --primary-soft: rgba(22, 194, 174, 0.14);
+  --secondary: #20232d;
+  --secondary-foreground: #c3c6d6;
+  --muted: #161821;
+  --muted-foreground: #8a8fa6;
+  --faint: #6b7089;
+  --warning: #e0a33e;
+  --accent: #232733;
+  --accent-foreground: #e7e8f0;
+  --destructive: #e5645a;
+  --border: #262935;
+  --input: #262935;
+  --ring: #16c2ae;
+  --sidebar: #15161e;
+  --sidebar-foreground: #e7e8f0;
+  --sidebar-border: #262935;
 }
 
 @theme inline {
@@ -75,6 +83,9 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-faint: var(--faint);
+  --color-warning: var(--warning);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -104,6 +115,19 @@
   body,
   #root {
     height: 100%;
+  }
+}
+
+/* Soft pulse for the "session running" dot in the sidebar's terminal rows. */
+@keyframes gamut-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
   }
 }
 

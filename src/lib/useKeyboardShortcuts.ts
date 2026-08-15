@@ -95,7 +95,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     // The repos shown in the active group, in sidebar order — kept in sync with
-    // RepoSidebar's own filter so cycling and group-fetch match what's visible.
+    // the Sidebar's group filter so cycling and group-fetch match what's visible.
     function visibleRepos() {
       const s = ref.current;
       const group = (s.groups ?? []).find((g) => g.id === s.activeGroupId);

@@ -2,10 +2,9 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 
-import { GroupRail } from "@/features/repos/GroupRail";
 import { RepoConfigDialog } from "@/features/repos/RepoConfigDialog";
-import { RepoSidebar } from "@/features/repos/RepoSidebar";
-import { TopTabs } from "@/components/layout/TopTabs";
+import { Sidebar } from "@/features/nav/Sidebar";
+import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/toaster";
 import { FilesView } from "@/features/files/FilesView";
@@ -39,9 +38,12 @@ function StatusBar() {
     queryKey: ["db-health"],
     queryFn: ipc.dbHealth,
   });
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminals = useUiStore((s) => s.terminals);
+  const groupTerms = activeGroupId != null ? (terminals[activeGroupId]?.tabs.length ?? 0) : 0;
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t px-3 text-xs text-[var(--color-muted-foreground)]">
+    <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-[var(--color-sidebar)] px-3 text-[11px] text-[var(--color-muted-foreground)]">
       <span>Gamut</span>
       <span aria-hidden>·</span>
       {isError ? (
@@ -54,6 +56,12 @@ function StatusBar() {
       ) : (
         <span>connecting…</span>
       )}
+      {groupTerms > 0 && (
+        <span className="text-[var(--color-primary)]">
+          {groupTerms} terminal{groupTerms === 1 ? "" : "s"} in this group
+        </span>
+      )}
+      <span className="ml-auto hidden sm:inline">⌘K jump · ⌘` terminal · ⌘B sidebar</span>
     </footer>
   );
 }
@@ -144,43 +152,26 @@ export default function App() {
     <div className="flex h-full w-full flex-col">
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
-        <GroupRail />
-        {/* Vertical split to the right of the group rail: main content on top,
-            the integrated terminal pinned to the bottom. The rail stays outside
-            so the terminal spans the full width minus the rail. While the
+        {!repoSidebarHidden && <Sidebar />}
+        {/* Vertical split to the right of the sidebar: main content on top,
+            the integrated terminal pinned to the bottom. The sidebar stays
+            outside so the terminal spans the full width minus it. While the
             terminal is maximized the content panel collapses to zero, so a
-            persistent top bar is rendered above the split to keep view tabs and
+            persistent header is rendered above the split to keep view tabs and
             the maximize toggle reachable. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {terminalMaximized && <TopTabs />}
+          {terminalMaximized && <WorkspaceHeader />}
           <PanelGroup direction="vertical" className="min-h-0 flex-1">
             <Panel id="content" order={1} minSize={terminalMaximized ? 0 : 20} className="min-h-0">
-              <PanelGroup direction="horizontal" autoSaveId="gamut.layout.main" className="min-w-0">
-                {!repoSidebarHidden && (
-                  <Panel
-                    id="repos"
-                    order={1}
-                    defaultSize={20}
-                    minSize={12}
-                    maxSize={40}
-                    className="min-w-0"
-                  >
-                    <RepoSidebar />
-                  </Panel>
-                )}
-                {!repoSidebarHidden && <ResizeHandle />}
-                <Panel id="main" order={2} className="min-w-0">
-                  <main className="flex h-full min-w-0 flex-col">
-                    <TopTabs />
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      {view === "files" && <FilesView />}
-                      {isGitRepo && view === "history" && <HistoryView />}
-                      {isGitRepo && view === "review" && <ReviewView />}
-                      {isGitRepo && view === "pulls" && <PullsView />}
-                    </div>
-                  </main>
-                </Panel>
-              </PanelGroup>
+              <main className="flex h-full min-w-0 flex-col">
+                <WorkspaceHeader />
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {view === "files" && <FilesView />}
+                  {isGitRepo && view === "history" && <HistoryView />}
+                  {isGitRepo && view === "review" && <ReviewView />}
+                  {isGitRepo && view === "pulls" && <PullsView />}
+                </div>
+              </main>
             </Panel>
             <ResizeHandle
               horizontal

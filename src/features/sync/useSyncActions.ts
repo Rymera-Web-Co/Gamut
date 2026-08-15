@@ -12,7 +12,7 @@ import { summarizePull } from "./summarizePull";
  * triggered, so callers should guard on `repoId`.
  *
  * Fetching is group-level (fetch-all), not per-repo — see `useFetchGroup` and
- * the group header in RepoSidebar.
+ * the group row's fetch action in the Sidebar.
  */
 export function useSyncActions(repoId: number | null) {
   const qc = useQueryClient();
