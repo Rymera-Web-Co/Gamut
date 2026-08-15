@@ -47,7 +47,7 @@ import { activityColor, groupActivityKind, tabActivityKind } from "@/features/te
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
 import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
-import { visibleRepos } from "@/lib/groupRepos";
+import { repoInGroup, visibleRepos } from "@/lib/groupRepos";
 import {
   ipc,
   pickDirectory,
@@ -112,6 +112,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const repos = useRepos();
+  const groups = useGroups();
 
   const activity = tabActivityKind(tab, termActivity);
   const current =
@@ -266,7 +267,17 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
         {cwdRepo && (
           <ContextMenuItem
             onClick={() => {
-              setActiveGroup(group.id);
+              // The repo may have left the session's group since the terminal
+              // opened — open a group that actually contains it so the
+              // reconciler can't swap in a different repo.
+              if (repoInGroup(cwdRepo, group)) {
+                setActiveGroup(group.id);
+              } else {
+                const list = groups.data ?? [];
+                const fallback = list.find((g) => g.is_default) ?? list[0];
+                const target = cwdRepo.group_ids[0] ?? fallback?.id ?? null;
+                if (target != null) setActiveGroup(target);
+              }
               setActiveRepo(cwdRepo.id);
               ipc.touchRepo(cwdRepo.id);
               setTerminalOpen(false);
@@ -559,29 +570,38 @@ export function Sidebar() {
   }, [groupsData, activeGroupId, setActiveGroup]);
 
   // Drag-resizable width (persisted). The drag tracks window-level pointer
-  // events so fast drags that leave the handle keep resizing.
-  const [width, setWidth] = useState(storedSidebarWidth);
+  // events so fast drags that leave the handle keep resizing; pointercancel
+  // (OS interruption, app switch) releases the drag like pointerup so the
+  // col-resize cursor and drag state can't get stuck. The live width rides a
+  // ref so persisting happens outside any state updater.
+  const [width, setWidthState] = useState(storedSidebarWidth);
+  const widthRef = useRef(width);
   const dragFrom = useRef<{ x: number; width: number } | null>(null);
+  function applyWidth(w: number, persist: boolean) {
+    const clamped = clampSidebarWidth(w);
+    widthRef.current = clamped;
+    setWidthState(clamped);
+    if (persist) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+  }
   useEffect(() => {
     function onMove(e: PointerEvent) {
       const from = dragFrom.current;
       if (!from) return;
-      setWidth(clampSidebarWidth(from.width + (e.clientX - from.x)));
+      applyWidth(from.width + (e.clientX - from.x), false);
     }
-    function onUp() {
+    function endDrag() {
       if (!dragFrom.current) return;
       dragFrom.current = null;
       document.body.style.cursor = "";
-      setWidth((w) => {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
-        return w;
-      });
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(widthRef.current));
     }
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
     return () => {
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
     };
   }, []);
 
@@ -732,22 +752,31 @@ export function Sidebar() {
         borderColor: "var(--color-sidebar-border)",
       }}
     >
-      {/* Drag handle on the right edge; double-click resets to the default. */}
+      {/* Drag handle on the right edge. Keyboard: arrows nudge, Home (or
+          double-click) resets to the default — the ARIA separator pattern. */}
       <div
         role="separator"
+        tabIndex={0}
         aria-orientation="vertical"
         aria-label="Resize sidebar"
-        title="Drag to resize · double-click to reset"
+        aria-valuemin={SIDEBAR_WIDTH_MIN}
+        aria-valuemax={SIDEBAR_WIDTH_MAX}
+        aria-valuenow={width}
+        title="Drag or use arrow keys to resize · double-click or Home to reset"
         onPointerDown={(e) => {
           e.preventDefault();
           dragFrom.current = { x: e.clientX, width };
           document.body.style.cursor = "col-resize";
         }}
-        onDoubleClick={() => {
-          setWidth(SIDEBAR_WIDTH_DEFAULT);
-          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_WIDTH_DEFAULT));
+        onDoubleClick={() => applyWidth(SIDEBAR_WIDTH_DEFAULT, true)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") applyWidth(width - 16, true);
+          else if (e.key === "ArrowRight") applyWidth(width + 16, true);
+          else if (e.key === "Home") applyWidth(SIDEBAR_WIDTH_DEFAULT, true);
+          else return;
+          e.preventDefault();
         }}
-        className="absolute -right-0.5 top-0 z-30 h-full w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/40 active:bg-[var(--color-primary)]/60"
+        className="absolute -right-0.5 top-0 z-30 h-full w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/40 focus-visible:bg-[var(--color-primary)]/40 focus-visible:outline-none active:bg-[var(--color-primary)]/60"
       />
       {folderOver && (
         <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-[var(--color-primary)] bg-[var(--color-primary)]/10">
@@ -778,7 +807,7 @@ export function Sidebar() {
           <TerminalRow key={`${group.id}:${tab.id}`} group={group} tab={tab} />
         ))}
         <button
-          disabled={!newTermTarget}
+          disabled={!newTermTarget || activeGroupId == null}
           title={
             newTermTarget
               ? `New terminal in ${newTermTarget.title}`

@@ -23,7 +23,9 @@
   --secondary-foreground: #494b66;
   --muted: #f1f1f8;
   --muted-foreground: #6e7191;
-  --faint: #a0a3bd;
+  /* Darker than the mock's #a0a3bd: this token colors small text (branch
+     labels, counts, section headers), so it must hold ~4.5:1 on white. */
+  --faint: #767a99;
   --warning: #b7791f;
   --accent: #ececf4;
   --accent-foreground: #22233a;
@@ -51,7 +53,7 @@
   --secondary-foreground: #c3c6d6;
   --muted: #161821;
   --muted-foreground: #8a8fa6;
-  --faint: #6b7089;
+  --faint: #7d829b;
   --warning: #e0a33e;
   --accent: #232733;
   --accent-foreground: #e7e8f0;

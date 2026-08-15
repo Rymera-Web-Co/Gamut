@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, SplitSquareHorizontal } from "lucide-react";
+import { Folder, PanelLeft, PanelLeftClose, SplitSquareHorizontal } from "lucide-react";
 
 import { useGroups, useRepos } from "@/features/repos/api";
-import { ipc } from "@/lib/ipc";
+import { repoInGroup } from "@/lib/groupRepos";
+import { ipc, type Repo } from "@/lib/ipc";
 import { termTabLabel, useUiStore } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
 
@@ -18,6 +19,9 @@ export function TerminalHeader() {
   const termActivity = useUiStore((s) => s.termActivity);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
+  const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
   const splitTerminal = useUiStore((s) => s.splitTerminal);
 
@@ -51,17 +55,39 @@ export function TerminalHeader() {
   }
 
   // Jump back to the repo workspace, selecting the repo the session is rooted
-  // in when we can resolve one.
-  function openWorkspace(repoId?: number) {
-    if (repoId != null) {
-      setActiveRepo(repoId);
-      ipc.touchRepo(repoId);
+  // in when we can resolve one. The repo may have left the session's group
+  // since the terminal opened — switch to a group that actually contains it
+  // (its first group, or the default group for ungrouped repos) so the
+  // reconciler can't silently swap in a different repo. Mirrors the command
+  // palette's visibility rule.
+  function openWorkspace(target?: Repo) {
+    if (target) {
+      const activeGroup = (groups.data ?? []).find((g) => g.id === activeGroupId);
+      if (!repoInGroup(target, activeGroup)) {
+        const defaultGroup = (groups.data ?? []).find((g) => g.is_default);
+        const groupId = target.group_ids[0] ?? defaultGroup?.id ?? null;
+        if (groupId != null) setActiveGroup(groupId);
+      }
+      setActiveRepo(target.id);
+      ipc.touchRepo(target.id);
     }
     setTerminalOpen(false);
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-3 border-b bg-[var(--color-card)] px-4">
+    <div className="flex h-11 shrink-0 items-center gap-3 border-b bg-[var(--color-card)] pl-2 pr-4">
+      <button
+        aria-label={repoSidebarHidden ? "Show sidebar" : "Hide sidebar"}
+        title={repoSidebarHidden ? "Show sidebar (⌘B)" : "Hide sidebar (⌘B)"}
+        onClick={toggleRepoSidebar}
+        className="flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+      >
+        {repoSidebarHidden ? (
+          <PanelLeft className="size-4" />
+        ) : (
+          <PanelLeftClose className="size-4" />
+        )}
+      </button>
       <span
         aria-hidden
         className="size-2 shrink-0 rounded-full"
@@ -75,7 +101,7 @@ export function TerminalHeader() {
           <>
             <button
               title={`Open ${group.name} in the repo workspace`}
-              onClick={() => openWorkspace(cwdRepo?.id)}
+              onClick={() => openWorkspace(cwdRepo)}
               className="truncate text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:underline"
             >
               {group.name}
@@ -89,7 +115,7 @@ export function TerminalHeader() {
               title={
                 cwdRepo ? `Open ${cwdRepo.name} in the repo workspace` : "Open the repo workspace"
               }
-              onClick={() => openWorkspace(cwdRepo?.id)}
+              onClick={() => openWorkspace(cwdRepo)}
               className="truncate text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:underline"
             >
               {folder}
@@ -129,7 +155,7 @@ export function TerminalHeader() {
       <button
         aria-label="Split terminal"
         title="Split terminal (⌘D)"
-        disabled={!tab}
+        disabled={!tab || !cwd || activeGroupId == null}
         onClick={() => {
           if (activeGroupId == null || !tab || !cwd) return;
           splitTerminal(activeGroupId, cwd);
@@ -139,7 +165,7 @@ export function TerminalHeader() {
         <SplitSquareHorizontal className="size-3.5" />
       </button>
       <button
-        onClick={() => openWorkspace(cwdRepo?.id)}
+        onClick={() => openWorkspace(cwdRepo)}
         className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-[var(--color-muted)] px-2.5 text-xs font-medium text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
       >
         <Folder className="size-3.5" />

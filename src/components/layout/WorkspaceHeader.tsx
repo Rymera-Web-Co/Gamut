@@ -41,7 +41,6 @@ export function WorkspaceHeader() {
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
-  const terminalOpen = useUiStore((s) => s.terminalOpen);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const openRepoConfig = useUiStore((s) => s.openRepoConfig);
@@ -62,11 +61,12 @@ export function WorkspaceHeader() {
 
   const canSync = isGitRepo && !!repo && !repo.missing;
 
-  // With the sidebar hidden (or the panel closed) the sidebar's terminal rail
-  // can't surface unseen bell/exit activity — badge the terminal toggle here so
-  // "needs input"/"exited" is never invisible everywhere at once.
+  // With the sidebar hidden the terminal rail can't surface unseen bell/exit
+  // activity — badge the terminal toggle here so "needs input"/"exited" is
+  // never invisible everywhere at once. (Whenever this header is visible the
+  // terminal view is closed, so the sidebar is the only other surface.)
   const activity =
-    activeGroupId != null && (repoSidebarHidden || !terminalOpen)
+    activeGroupId != null && repoSidebarHidden
       ? groupActivityKind(terminals[activeGroupId], termActivity)
       : undefined;
 

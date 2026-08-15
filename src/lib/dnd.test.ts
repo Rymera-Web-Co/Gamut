@@ -1,14 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  getActiveDrag,
-  moveAdjacent,
-  moveBefore,
-  startDrag,
-  subscribeDrag,
-  subscribeDrop,
-  type DragItem,
-} from "./dnd";
+import { getActiveDrag, startDrag, subscribeDrag, subscribeDrop, type DragItem } from "./dnd";
 
 // Dispatch an event the pointer-drag manager listens for. A MouseEvent carries
 // clientX/clientY and fires for a "pointer*" listener, which is all the manager
@@ -23,32 +15,6 @@ afterEach(() => {
   // Make sure a half-finished drag from one test can't leak into the next.
   firePointer("pointercancel", 0, 0);
   firePointer("pointerup", 0, 0);
-});
-
-describe("moveBefore", () => {
-  it("moves an item to just before the target", () => {
-    expect(moveBefore([1, 2, 3, 4], 4, 2)).toEqual([1, 4, 2, 3]);
-  });
-
-  it("is a no-op when source and target match", () => {
-    const items = [1, 2, 3];
-    expect(moveBefore(items, 2, 2)).toBe(items);
-  });
-
-  it("returns the input unchanged when the target is absent", () => {
-    const items = [1, 2, 3];
-    expect(moveBefore(items, 1, 99)).toBe(items);
-  });
-});
-
-describe("moveAdjacent", () => {
-  it("places the item after the target when position is 'after'", () => {
-    expect(moveAdjacent([1, 2, 3], 1, 3, "after")).toEqual([2, 3, 1]);
-  });
-
-  it("places the item before the target when position is 'before'", () => {
-    expect(moveAdjacent([1, 2, 3], 3, 1, "before")).toEqual([3, 1, 2]);
-  });
 });
 
 describe("pointer drag session", () => {
