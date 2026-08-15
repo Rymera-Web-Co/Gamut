@@ -107,7 +107,9 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
         },
     )?;
 
-    let missing = !std::path::Path::new(&path).exists();
+    // Missing covers a deleted/moved folder and a path that exists but is
+    // not a directory (a file row registered before the is_dir guard).
+    let missing = !std::path::Path::new(&path).is_dir();
 
     Ok(Repo {
         id,
@@ -138,6 +140,12 @@ fn load_repo(conn: &Connection, id: i64) -> AppResult<Repo> {
 /// entry instead of failing registration — the UI shows only the Files tab for
 /// it and the backend skips all git operations.
 fn register_path(conn: &Connection, path: &std::path::Path) -> AppResult<(i64, bool)> {
+    // Only directories can be repos or folder entries — reject files here so a
+    // file dropped onto the sidebar (or sent by a scan) can't register as a
+    // phantom "folder" row.
+    if !path.is_dir() {
+        return Err(AppError::NotADirectory(path.display().to_string()));
+    }
     let (branch, is_git_repo) = match git::open(path) {
         Ok(repo) => (git::current_branch(&repo), true),
         Err(AppError::NotARepo(_)) => (None, false),
@@ -384,7 +392,9 @@ fn list_repos_from_conn(conn: &Connection) -> AppResult<Vec<Repo>> {
                 has_worktrees,
                 auto_pull,
             )| {
-                let missing = !std::path::Path::new(&path).exists();
+                // Missing covers a deleted/moved folder and a path that exists but is
+                // not a directory (a file row registered before the is_dir guard).
+                let missing = !std::path::Path::new(&path).is_dir();
                 Repo {
                     id,
                     path,
@@ -1242,6 +1252,30 @@ mod tests {
             })
             .unwrap();
         assert_eq!(is_git, 1, "git repo is flagged git");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn register_path_rejects_files() {
+        let root = std::env::temp_dir().join("gamut_reject_file_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("notes.md");
+        std::fs::write(&file, "hello").unwrap();
+
+        let conn = test_conn();
+
+        // A file must not register as a phantom "folder" row.
+        let err = register_path(&conn, &file).unwrap_err();
+        assert!(
+            matches!(err, AppError::NotADirectory(_)),
+            "expected NotADirectory, got: {err:?}"
+        );
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM repos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no row is inserted for a file");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

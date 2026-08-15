@@ -60,6 +60,22 @@ import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
 
+// Resizable sidebar width, persisted across launches. Clamped so it can
+// neither collapse into uselessness nor swallow the workspace.
+const SIDEBAR_WIDTH_KEY = "gamut.sidebarWidth";
+const SIDEBAR_WIDTH_DEFAULT = 280;
+const SIDEBAR_WIDTH_MIN = 220;
+const SIDEBAR_WIDTH_MAX = 480;
+
+function clampSidebarWidth(w: number): number {
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(w)));
+}
+
+function storedSidebarWidth(): number {
+  const n = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  return Number.isFinite(n) && n > 0 ? clampSidebarWidth(n) : SIDEBAR_WIDTH_DEFAULT;
+}
+
 /** Last path segment of a cwd, for the terminal row's meta line. */
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -542,6 +558,33 @@ export function Sidebar() {
     }
   }, [groupsData, activeGroupId, setActiveGroup]);
 
+  // Drag-resizable width (persisted). The drag tracks window-level pointer
+  // events so fast drags that leave the handle keep resizing.
+  const [width, setWidth] = useState(storedSidebarWidth);
+  const dragFrom = useRef<{ x: number; width: number } | null>(null);
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      const from = dragFrom.current;
+      if (!from) return;
+      setWidth(clampSidebarWidth(from.width + (e.clientX - from.x)));
+    }
+    function onUp() {
+      if (!dragFrom.current) return;
+      dragFrom.current = null;
+      document.body.style.cursor = "";
+      setWidth((w) => {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
+        return w;
+      });
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -682,9 +725,30 @@ export function Sidebar() {
     <aside
       ref={asideRef}
       aria-label="Terminals and groups"
-      className="relative flex h-full w-[280px] shrink-0 flex-col border-r"
-      style={{ background: "var(--color-sidebar)", borderColor: "var(--color-sidebar-border)" }}
+      className="relative flex h-full shrink-0 flex-col border-r"
+      style={{
+        width,
+        background: "var(--color-sidebar)",
+        borderColor: "var(--color-sidebar-border)",
+      }}
     >
+      {/* Drag handle on the right edge; double-click resets to the default. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        title="Drag to resize · double-click to reset"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          dragFrom.current = { x: e.clientX, width };
+          document.body.style.cursor = "col-resize";
+        }}
+        onDoubleClick={() => {
+          setWidth(SIDEBAR_WIDTH_DEFAULT);
+          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_WIDTH_DEFAULT));
+        }}
+        className="absolute -right-0.5 top-0 z-30 h-full w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/40 active:bg-[var(--color-primary)]/60"
+      />
       {folderOver && (
         <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-[var(--color-primary)] bg-[var(--color-primary)]/10">
           <span className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-[var(--color-primary-foreground)] shadow">

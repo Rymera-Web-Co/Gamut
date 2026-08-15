@@ -36,6 +36,12 @@ pub enum AppError {
     #[error("path escapes the repository root")]
     PathEscapesRoot,
 
+    /// A path offered for registration is not a directory (e.g. a file dropped
+    /// onto the sidebar, or a file path sent over the control channel). Only
+    /// directories can be repos or folder entries.
+    #[error("not a directory: {0}")]
+    NotADirectory(String),
+
     /// GitHub returned a primary or secondary rate-limit response (#138).
     /// A typed variant rather than a stringly `Other` for a common,
     /// distinguishable case the frontend (and retry logic) can switch on; it
