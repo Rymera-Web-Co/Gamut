@@ -81,7 +81,8 @@ function activityLabel(kind: TermActivityKind): string {
  * One terminal session row in the flat, cross-group rail at the top of the
  * sidebar. Clicking focuses that terminal (group + tab + pane); the hover X
  * kills its panes' PTYs and drops the tab (ports the popup close control,
- * #280).
+ * #280). Right-click opens a session menu (focus / rename / copy path / open
+ * repo workspace / close); rename happens inline in the row.
  */
 function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
@@ -90,14 +91,33 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const termActivity = useUiStore((s) => s.termActivity);
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
+  const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const repos = useRepos();
 
   const activity = tabActivityKind(tab, termActivity);
   const current =
     terminalOpen && group.id === activeGroupId && terminals[group.id]?.activeTabId === tab.id;
   const cwd = tab.panes[0]?.cwd ?? "";
+  // The registered repo this session is rooted in, when its cwd matches one.
+  const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
 
-  function close(e: React.MouseEvent) {
-    e.stopPropagation();
+  const [menuAt, setMenuAt] = useState<ContextMenuPosition | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const renameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) renameRef.current?.select();
+  }, [editing]);
+
+  function commitRename() {
+    renameTerminalTab(group.id, tab.id, draft);
+    setEditing(false);
+  }
+
+  function closeTab() {
     tab.panes.forEach((pane) => {
       ipc.terminalKill(pane.id).catch(() => {});
     });
@@ -105,66 +125,155 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   }
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => focusTerminal(group.id, tab.id, tab.activePaneId)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          focusTerminal(group.id, tab.id, tab.activePaneId);
-        }
-      }}
-      className={cn(
-        "group/term flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
-        current
-          ? "border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
-          : "hover:bg-[var(--color-accent)]",
-      )}
-    >
-      <span
-        aria-hidden
-        className="size-[7px] shrink-0 rounded-full"
-        style={{
-          background: activity ? activityColor(activity) : "var(--color-primary)",
-          animation: activity ? undefined : "gamut-pulse 1.6s ease-in-out infinite",
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          if (!editing) focusTerminal(group.id, tab.id, tab.activePaneId);
         }}
-      />
-      <div className="min-w-0 flex-1">
-        <div
-          className={cn(
-            "truncate text-[12.5px] leading-[17px]",
-            current
-              ? "font-semibold text-[var(--color-foreground)]"
-              : "font-medium text-[var(--color-secondary-foreground)]",
-          )}
-        >
-          {termTabLabel(tab)}
-        </div>
-        <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
-          {group.name}
-          {cwd ? ` · ${basename(cwd)}` : ""}
-        </div>
-      </div>
-      {activity && (
-        <span
-          className="shrink-0 text-[11px] font-semibold group-focus-within/term:hidden group-hover/term:hidden"
-          style={{ color: activityColor(activity) }}
-        >
-          {activityLabel(activity)}
-        </span>
-      )}
-      {/* `hidden` would drop the control from the tab order, so keyboard users
-          could never reach it — reveal on focus-within too (row + button). */}
-      <button
-        aria-label={`Close ${termTabLabel(tab)} terminal`}
-        title="Close terminal"
-        onClick={close}
-        className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-foreground)] group-focus-within/term:flex group-hover/term:flex"
+        onKeyDown={(e) => {
+          if (editing) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            focusTerminal(group.id, tab.id, tab.activePaneId);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenuAt({ x: e.clientX, y: e.clientY });
+        }}
+        className={cn(
+          "group/term flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
+          current
+            ? "border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
+            : "hover:bg-[var(--color-accent)]",
+        )}
       >
-        <X className="size-3.5" />
-      </button>
-    </div>
+        <span
+          aria-hidden
+          className="size-[7px] shrink-0 rounded-full"
+          style={{
+            background: activity ? activityColor(activity) : "var(--color-primary)",
+            animation: activity ? undefined : "gamut-pulse 1.6s ease-in-out infinite",
+          }}
+        />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              ref={renameRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              aria-label="Rename terminal"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] px-1 text-[12.5px] leading-[17px] text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+            />
+          ) : (
+            <div
+              className={cn(
+                "truncate text-[12.5px] leading-[17px]",
+                current
+                  ? "font-semibold text-[var(--color-foreground)]"
+                  : "font-medium text-[var(--color-secondary-foreground)]",
+              )}
+            >
+              {termTabLabel(tab)}
+            </div>
+          )}
+          <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
+            {group.name}
+            {cwd ? ` · ${basename(cwd)}` : ""}
+          </div>
+        </div>
+        {activity && (
+          <span
+            className="shrink-0 text-[11px] font-semibold group-focus-within/term:hidden group-hover/term:hidden"
+            style={{ color: activityColor(activity) }}
+          >
+            {activityLabel(activity)}
+          </span>
+        )}
+        {/* `hidden` would drop the control from the tab order, so keyboard users
+          could never reach it — reveal on focus-within too (row + button). */}
+        <button
+          aria-label={`Close ${termTabLabel(tab)} terminal`}
+          title="Close terminal"
+          onClick={(e) => {
+            e.stopPropagation();
+            closeTab();
+          }}
+          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-foreground)] group-focus-within/term:flex group-hover/term:flex"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {/* Session menu — a sibling of the row so overlay/menu clicks never
+          bubble into the row's focus handler. */}
+      <ContextMenu at={menuAt} onClose={() => setMenuAt(null)}>
+        <ContextMenuItem
+          onClick={() => {
+            focusTerminal(group.id, tab.id, tab.activePaneId);
+            setMenuAt(null);
+          }}
+        >
+          <SquareTerminal />
+          Open terminal
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            setDraft(termTabLabel(tab));
+            setEditing(true);
+            setMenuAt(null);
+          }}
+        >
+          <Pencil />
+          Rename terminal
+        </ContextMenuItem>
+        {cwd && (
+          <ContextMenuItem
+            onClick={() => {
+              void copy(cwd, "Copied path");
+              setMenuAt(null);
+            }}
+          >
+            <LinkIcon />
+            Copy path
+          </ContextMenuItem>
+        )}
+        {cwdRepo && (
+          <ContextMenuItem
+            onClick={() => {
+              setActiveGroup(group.id);
+              setActiveRepo(cwdRepo.id);
+              ipc.touchRepo(cwdRepo.id);
+              setTerminalOpen(false);
+              setMenuAt(null);
+            }}
+          >
+            <FolderGit2 />
+            Open repo workspace
+          </ContextMenuItem>
+        )}
+        <div className="my-1 border-t border-[var(--color-border)]" />
+        <ContextMenuItem
+          className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+          onClick={() => {
+            closeTab();
+            setMenuAt(null);
+          }}
+        >
+          <Trash2 />
+          Close terminal
+        </ContextMenuItem>
+      </ContextMenu>
+    </>
   );
 }
 
@@ -185,6 +294,7 @@ function WorktreeRow({
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const active = activeRepoId === repo.id && activeWorktreePath === worktree.path;
   const label =
@@ -194,6 +304,8 @@ function WorktreeRow({
     if (worktree.missing) return;
     setActiveRepo(repo.id, worktree.path);
     ipc.touchRepo(repo.id);
+    // Selecting a worktree means "show me the workspace" — leave the terminal.
+    setTerminalOpen(false);
   };
 
   return (
@@ -272,6 +384,7 @@ function RepoRow({
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const active =
     activeRepoId === repo.id && activeGroupId === groupId && activeWorktreePath == null;
@@ -285,6 +398,8 @@ function RepoRow({
     setActiveGroup(groupId);
     setActiveRepo(repo.id);
     ipc.touchRepo(repo.id);
+    // Selecting a repo means "show me the workspace" — leave the terminal.
+    setTerminalOpen(false);
   };
 
   return (
@@ -399,6 +514,7 @@ export function Sidebar() {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
   const openRepoConfig = useUiStore((s) => s.openRepoConfig);
   const terminals = useUiStore((s) => s.terminals);
@@ -485,6 +601,8 @@ export function Sidebar() {
     }
     setExpandedId(g.id);
     setActiveGroup(g.id);
+    // Opening a group means "show me its workspace" — leave the terminal view.
+    setTerminalOpen(false);
   }
 
   async function addRepo(group: Group) {

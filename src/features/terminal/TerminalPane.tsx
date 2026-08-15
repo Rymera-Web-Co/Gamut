@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, RotateCw, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useGroups, useRepos } from "@/features/repos/api";
@@ -8,7 +8,6 @@ import { useSettings } from "@/lib/settings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/store/ui";
 import { ActivityDot } from "./activity";
-import { TerminalTabBar } from "./TerminalTabBar";
 import { xtermTheme } from "./terminalTheme";
 import { useTerminalSessions } from "./useTerminalSessions";
 import { useTerminalShortcuts } from "./useTerminalShortcuts";
@@ -16,10 +15,10 @@ import { useTerminalShortcuts } from "./useTerminalShortcuts";
 /**
  * The integrated terminal pane: a per-group set of tabs, each with one or more
  * side-by-side split panes. The live xterm instances, their layout/spawn and
- * theme/resize coordination live in {@link useTerminalSessions}; the tab strip
- * is {@link TerminalTabBar} and the keyboard shortcuts are
- * {@link useTerminalShortcuts}. This component wires them together and renders
- * the viewport host the sessions mount into (#143).
+ * theme/resize coordination live in {@link useTerminalSessions}; the keyboard
+ * shortcuts are {@link useTerminalShortcuts}. The sidebar's terminal rail is
+ * the tab list, and the header above carries the session controls — this
+ * component renders the viewport host the sessions mount into (#143).
  */
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
@@ -27,12 +26,9 @@ export function TerminalPane() {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const terminals = useUiStore((s) => s.terminals);
-  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const splitTerminal = useUiStore((s) => s.splitTerminal);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
-  const reorderTerminalTab = useUiStore((s) => s.reorderTerminalTab);
-  const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
   const setActivePane = useUiStore((s) => s.setActivePane);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const closeTerminalPane = useUiStore((s) => s.closeTerminalPane);
@@ -151,28 +147,23 @@ export function TerminalPane() {
       className="flex h-full min-h-0 flex-col"
       style={{ background: xtermTheme(theme).background }}
     >
-      <TerminalTabBar
-        tabs={tabs}
-        activeGroupId={activeGroupId}
-        activeTabId={gt?.activeTabId ?? null}
-        activeTab={activeTab}
-        termActivity={termActivity}
-        canNewTab={canNewTab}
-        activeDead={activeDead}
-        selectTerminalTab={selectTerminalTab}
-        reorderTerminalTab={reorderTerminalTab}
-        renameTerminalTab={renameTerminalTab}
-        onNewTab={handleNewTab}
-        onSplit={handleSplit}
-        onCloseTab={handleCloseTab}
-        onRestart={() => activeTab && restart(activeTab.activePaneId)}
-        onHide={() => setTerminalOpen(false)}
-      />
-
       {/* Viewport. Pane nodes are appended/positioned imperatively into the
-          host; the overlay carries React-managed per-split close buttons. */}
+          host; the overlay carries React-managed per-split close buttons.
+          There is no tab strip — the sidebar's terminal rail is the tab list;
+          split/new/close stay reachable via the header and shortcuts. */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={hostRef} className="pointer-events-none absolute inset-1.5" />
+        {/* The active shell exited — offer a restart where the strip's
+            Restart button used to live. */}
+        {activeDead && activeTab && (
+          <button
+            onClick={() => restart(activeTab.activePaneId)}
+            className="absolute right-3 top-2 z-10 flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] px-2.5 py-1 text-xs font-medium text-[var(--color-secondary-foreground)] hover:text-[var(--color-foreground)]"
+          >
+            <RotateCw className="size-3.5" />
+            Restart shell
+          </button>
+        )}
         {/* Per-split close buttons (only when the active tab is split). */}
         {n > 1 &&
           activePanes.map((pane, i) => (

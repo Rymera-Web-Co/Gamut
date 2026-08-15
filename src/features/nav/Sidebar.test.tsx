@@ -137,13 +137,24 @@ describe("Sidebar groups accordion", () => {
     expect(screen.getByText("Folders")).toBeTruthy();
   });
 
-  it("clicking a repo row activates the repo and touches it", async () => {
+  it("clicking a repo row activates the repo, touches it, and leaves the terminal view", async () => {
+    useUiStore.setState({ terminalOpen: true });
     renderSidebar();
     const rowA = await screen.findByTitle(A.path);
 
     fireEvent.click(rowA);
     expect(useUiStore.getState().activeRepoId).toBe(A.id);
     expect(mocks.touchRepo).toHaveBeenCalledWith(A.id);
+    expect(useUiStore.getState().terminalOpen).toBe(false);
+  });
+
+  it("expanding a group leaves the terminal view", async () => {
+    useUiStore.setState({ terminalOpen: true });
+    renderSidebar();
+    await screen.findByTitle(A.path);
+
+    fireEvent.click(screen.getByText("Tools"));
+    expect(useUiStore.getState().terminalOpen).toBe(false);
   });
 });
 
@@ -210,6 +221,34 @@ describe("Sidebar terminal rail", () => {
     expect(mocks.terminalKill).toHaveBeenCalledWith("term-3");
     expect(useUiStore.getState().terminals[2].tabs).toHaveLength(0);
     expect(screen.queryByText("beta shell")).toBeNull();
+  });
+
+  it("the context menu closes a terminal (kills PTYs, drops the tab)", async () => {
+    seedTerminals();
+    renderSidebar();
+    const row = (await screen.findByText("beta shell")).closest('[role="button"]')!;
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(screen.getByText("Close terminal"));
+
+    expect(mocks.terminalKill).toHaveBeenCalledWith("term-2");
+    expect(mocks.terminalKill).toHaveBeenCalledWith("term-3");
+    expect(useUiStore.getState().terminals[2].tabs).toHaveLength(0);
+  });
+
+  it("the context menu renames a terminal inline", async () => {
+    seedTerminals();
+    renderSidebar();
+    const row = (await screen.findByText("alpha shell")).closest('[role="button"]')!;
+
+    fireEvent.contextMenu(row);
+    fireEvent.click(screen.getByText("Rename terminal"));
+    const input = screen.getByLabelText("Rename terminal");
+    fireEvent.change(input, { target: { value: "build loop" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(useUiStore.getState().terminals[1].tabs[0].customTitle).toBe("build loop");
+    expect(screen.getByText("build loop")).toBeTruthy();
   });
 
   it("New terminal roots at the active repo and opens in the active group", async () => {

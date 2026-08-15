@@ -1,22 +1,28 @@
-import { Folder } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Folder, SplitSquareHorizontal } from "lucide-react";
 
-import { useGroups } from "@/features/repos/api";
+import { useGroups, useRepos } from "@/features/repos/api";
+import { ipc } from "@/lib/ipc";
 import { termTabLabel, useUiStore } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
 
 /**
- * Header bar above the full-view terminal: a group / folder / session
- * breadcrumb on the left and an "Open repo workspace" button on the right,
- * which switches the main area back to the repo views (Files, History,
- * Review, Pull Requests).
+ * Header bar above the full-view terminal: a clickable group / folder /
+ * session breadcrumb on the left (group and folder jump back to the repo
+ * workspace; the session name renames the terminal in place) and split +
+ * "Open repo workspace" controls on the right.
  */
 export function TerminalHeader() {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
+  const splitTerminal = useUiStore((s) => s.splitTerminal);
 
   const groups = useGroups();
+  const repos = useRepos();
   const group = (groups.data ?? []).find((g) => g.id === activeGroupId);
 
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
@@ -24,6 +30,35 @@ export function TerminalHeader() {
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
   const folder = cwd?.split(/[\\/]/).filter(Boolean).pop();
   const activity = tab ? tabActivityKind(tab, termActivity) : undefined;
+  // The repo this session is rooted in, when its cwd is a registered repo (or
+  // one of its worktrees isn't resolved here — plain path match only).
+  const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
+
+  // Inline rename of the session name. Committing an empty draft reverts the
+  // tab to its auto-derived title (renameTerminalTab's contract).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+  // Switching tabs mid-edit would commit the draft onto the wrong tab — drop it.
+  useEffect(() => setEditing(false), [tab?.id]);
+
+  function commitRename() {
+    if (activeGroupId != null && tab) renameTerminalTab(activeGroupId, tab.id, draft);
+    setEditing(false);
+  }
+
+  // Jump back to the repo workspace, selecting the repo the session is rooted
+  // in when we can resolve one.
+  function openWorkspace(repoId?: number) {
+    if (repoId != null) {
+      setActiveRepo(repoId);
+      ipc.touchRepo(repoId);
+    }
+    setTerminalOpen(false);
+  }
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b bg-[var(--color-card)] px-4">
@@ -38,23 +73,73 @@ export function TerminalHeader() {
       <div className="flex min-w-0 items-baseline gap-2 text-[13px]">
         {group && (
           <>
-            <span className="truncate text-[var(--color-muted-foreground)]">{group.name}</span>
+            <button
+              title={`Open ${group.name} in the repo workspace`}
+              onClick={() => openWorkspace(cwdRepo?.id)}
+              className="truncate text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:underline"
+            >
+              {group.name}
+            </button>
             <span className="text-[var(--color-faint)]">/</span>
           </>
         )}
         {folder && (
           <>
-            <span className="truncate text-[var(--color-muted-foreground)]">{folder}</span>
+            <button
+              title={
+                cwdRepo ? `Open ${cwdRepo.name} in the repo workspace` : "Open the repo workspace"
+              }
+              onClick={() => openWorkspace(cwdRepo?.id)}
+              className="truncate text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:underline"
+            >
+              {folder}
+            </button>
             <span className="text-[var(--color-faint)]">/</span>
           </>
         )}
-        <span className="truncate font-semibold text-[var(--color-foreground)]">
-          {tab ? termTabLabel(tab) : "Terminal"}
-        </span>
+        {editing && tab ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            aria-label="Rename terminal"
+            className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-1.5 py-0.5 text-[13px] font-semibold text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+          />
+        ) : (
+          <button
+            title={tab ? "Rename terminal" : undefined}
+            disabled={!tab}
+            onClick={() => {
+              if (!tab) return;
+              setDraft(termTabLabel(tab));
+              setEditing(true);
+            }}
+            className="truncate font-semibold text-[var(--color-foreground)]"
+          >
+            {tab ? termTabLabel(tab) : "Terminal"}
+          </button>
+        )}
       </div>
       <div className="flex-1" />
       <button
-        onClick={() => setTerminalOpen(false)}
+        aria-label="Split terminal"
+        title="Split terminal (⌘D)"
+        disabled={!tab}
+        onClick={() => {
+          if (activeGroupId == null || !tab || !cwd) return;
+          splitTerminal(activeGroupId, cwd);
+        }}
+        className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+      >
+        <SplitSquareHorizontal className="size-3.5" />
+      </button>
+      <button
+        onClick={() => openWorkspace(cwdRepo?.id)}
         className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-[var(--color-muted)] px-2.5 text-xs font-medium text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
       >
         <Folder className="size-3.5" />
