@@ -47,7 +47,6 @@ export type ShortcutId =
   | "toggleTheme"
   | "commandPalette"
   | "toggleTerminal"
-  | "maximizeTerminal"
   | "openSettings"
   | "toggleWordWrap"
   | "push"
@@ -219,13 +218,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Toggle terminal",
     category: "Layout",
     defaultBinding: { mod: true, code: "Backquote" },
-    whenTyping: true,
-  },
-  {
-    id: "maximizeTerminal",
-    label: "Maximize / restore terminal",
-    category: "Layout",
-    defaultBinding: { mod: true, shift: true, code: "Backquote" },
     whenTyping: true,
   },
   {

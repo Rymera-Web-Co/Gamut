@@ -216,12 +216,10 @@ interface UiState {
   // app-level dialog rather than the popover anchored to a row's push button.
   // Carries the branch name so the dialog needs no query of its own.
   pushConfirm: { repoId: number; branch: string } | null;
-  // Integrated terminal pane. `terminalOpen` (persisted) toggles the bottom
-  // pane; `terminals` holds each group's tabs/panes (in-memory, by group id).
+  // Integrated terminal view. `terminalOpen` (persisted) switches the main
+  // area to the full-height terminal; `terminals` holds each group's
+  // tabs/panes (in-memory, by group id).
   terminalOpen: boolean;
-  // Whether the terminal pane is maximized to (near) full content-area height.
-  // In-memory only — distinct from open/close and reset when the pane is hidden.
-  terminalMaximized: boolean;
   terminals: Record<number, GroupTerminals>;
   // Per-group memory of the last-selected repo and view tab, keyed by group id.
   // Switching groups restores the entry for the group being entered (the repo
@@ -306,8 +304,6 @@ interface UiState {
   clearPushConfirm: () => void;
   setTerminalOpen: (open: boolean) => void;
   toggleTerminal: () => void;
-  setTerminalMaximized: (max: boolean) => void;
-  toggleTerminalMaximized: () => void;
   /** Open a new terminal tab in a group rooted at `cwd` and return the new pane's
    * id (so callers can queue input for it). Reveals the pane and makes the tab
    * active, unless `opts.background` — a background tab is appended without
@@ -371,7 +367,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   repoSidebarHidden: storedRepoSidebarHidden(),
   pushConfirm: null,
   terminalOpen: storedTerminalOpen(),
-  terminalMaximized: false,
   terminals: restoredTerminals.terminals,
   groupSelections: {},
   termActivity: {},
@@ -452,16 +447,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearPushConfirm: () => set({ pushConfirm: null }),
   setTerminalOpen: (open) => {
     localStorage.setItem(TERMINAL_OPEN_KEY, open ? "1" : "0");
-    // Hiding the pane drops the maximized state so reopening starts from the
-    // normal split height rather than a stale "maximized" flag.
-    set(open ? { terminalOpen: true } : { terminalOpen: false, terminalMaximized: false });
+    set({ terminalOpen: open });
   },
   toggleTerminal: () => get().setTerminalOpen(!get().terminalOpen),
-  setTerminalMaximized: (max) => {
-    if (max) get().setTerminalOpen(true);
-    set({ terminalMaximized: max });
-  },
-  toggleTerminalMaximized: () => get().setTerminalMaximized(!get().terminalMaximized),
   addTerminalTab: (groupId, cwd, title, opts) => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;

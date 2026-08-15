@@ -23,8 +23,6 @@ import { useTerminalShortcuts } from "./useTerminalShortcuts";
  */
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
-  const terminalMaximized = useUiStore((s) => s.terminalMaximized);
-  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
@@ -159,7 +157,6 @@ export function TerminalPane() {
         activeTabId={gt?.activeTabId ?? null}
         activeTab={activeTab}
         termActivity={termActivity}
-        terminalMaximized={terminalMaximized}
         canNewTab={canNewTab}
         activeDead={activeDead}
         selectTerminalTab={selectTerminalTab}
@@ -169,7 +166,6 @@ export function TerminalPane() {
         onSplit={handleSplit}
         onCloseTab={handleCloseTab}
         onRestart={() => activeTab && restart(activeTab.activePaneId)}
-        onToggleMaximized={toggleTerminalMaximized}
         onHide={() => setTerminalOpen(false)}
       />
 

@@ -40,7 +40,6 @@ export function useKeyboardShortcuts() {
   const setView = useUiStore((s) => s.setView);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
-  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
@@ -80,7 +79,6 @@ export function useKeyboardShortcuts() {
     setView,
     toggleRepoSidebar,
     toggleTerminal,
-    toggleTerminalMaximized,
     toggleSettings,
     toggleCommandPalette,
     focusRepoSearch,
@@ -165,7 +163,6 @@ export function useKeyboardShortcuts() {
       toggleTheme: () => ref.current.toggleTheme(),
       commandPalette: () => ref.current.toggleCommandPalette(),
       toggleTerminal: () => ref.current.toggleTerminal(),
-      maximizeTerminal: () => ref.current.toggleTerminalMaximized(),
       openSettings: () => ref.current.toggleSettings(),
       toggleWordWrap: () => {
         // Flip the persisted setting; every editor/diff/blame surface reads it

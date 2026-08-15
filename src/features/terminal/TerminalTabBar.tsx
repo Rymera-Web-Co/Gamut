@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Maximize2, Minimize2, Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
+import { Plus, RotateCw, SplitSquareHorizontal, X } from "lucide-react";
 
 import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,6 @@ interface TerminalTabBarProps {
   activeTabId: string | null;
   activeTab: TermTab | undefined;
   termActivity: Record<string, TermActivityKind>;
-  terminalMaximized: boolean;
   canNewTab: boolean;
   /** The active pane's shell has exited — show the Restart control. */
   activeDead: boolean;
@@ -28,12 +27,11 @@ interface TerminalTabBarProps {
   onSplit: () => void;
   onCloseTab: (tabId: string) => void;
   onRestart: () => void;
-  onToggleMaximized: () => void;
   onHide: () => void;
 }
 
 /**
- * The terminal tab strip + window controls (split / new / maximize / hide),
+ * The terminal tab strip + window controls (split / new / hide),
  * extracted from TerminalPane (#143). Owns the inline-rename and drag-reorder
  * interaction state, which is local to the strip.
  */
@@ -43,7 +41,6 @@ export function TerminalTabBar({
   activeTabId,
   activeTab,
   termActivity,
-  terminalMaximized,
   canNewTab,
   activeDead,
   selectTerminalTab,
@@ -53,7 +50,6 @@ export function TerminalTabBar({
   onSplit,
   onCloseTab,
   onRestart,
-  onToggleMaximized,
   onHide,
 }: TerminalTabBarProps) {
   // Inline tab-rename state: which tab's label is being edited, and its draft.
@@ -84,15 +80,7 @@ export function TerminalTabBar({
   }
 
   return (
-    <div
-      className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs"
-      // Double-clicking the empty part of the bar toggles maximize, mirroring
-      // the desktop window-title convention. The guard limits this to the bar
-      // itself so tab labels (rename) and control buttons keep their handlers.
-      onDoubleClick={(e) => {
-        if (e.target === e.currentTarget) onToggleMaximized();
-      }}
-    >
+    <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs">
       {tabs.map((tab) => (
         <TabButton
           key={tab.id}
@@ -142,15 +130,6 @@ export function TerminalTabBar({
           className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40 disabled:hover:bg-transparent"
         >
           <Plus className="size-4" />
-        </button>
-        <button
-          title={terminalMaximized ? "Restore terminal (⌘⇧`)" : "Maximize terminal (⌘⇧`)"}
-          aria-label={terminalMaximized ? "Restore terminal" : "Maximize terminal"}
-          aria-pressed={terminalMaximized}
-          onClick={onToggleMaximized}
-          className="flex size-6 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
-        >
-          {terminalMaximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
         </button>
         <button
           title="Hide terminal (⌘`)"
