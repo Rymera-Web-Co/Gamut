@@ -469,8 +469,13 @@ export function Sidebar() {
         ? { path: activeGroup.folder_path, title: activeGroup.name }
         : null;
 
+  // Git repos list first, plain folders after them (matching the old
+  // sidebar's git / "Folders" section order).
   function groupRepos(g: Group): Repo[] {
-    return visibleRepos(allRepos, g).filter((r) => showSyncedRoot || !rootRepoIds.has(r.id));
+    const visible = visibleRepos(allRepos, g).filter(
+      (r) => showSyncedRoot || !rootRepoIds.has(r.id),
+    );
+    return [...visible.filter((r) => r.is_git_repo), ...visible.filter((r) => !r.is_git_repo)];
   }
 
   function toggleGroup(g: Group) {
@@ -749,22 +754,30 @@ export function Sidebar() {
                       No repositories. Use + on the group, or drop a folder here.
                     </p>
                   ) : (
-                    reposIn.map((r) => (
-                      <RepoRow
-                        key={r.id}
-                        repo={r}
-                        groupId={g.id}
-                        status={statusById.get(r.id)}
-                        isSyncedRoot={rootRepoIds.has(r.id)}
-                        onContextMenu={(e) =>
-                          setMenu({
-                            at: { x: e.clientX, y: e.clientY },
-                            kind: "repo",
-                            repo: r,
-                            groupId: g.id,
-                          })
-                        }
-                      />
+                    reposIn.map((r, i) => (
+                      <div key={r.id} className="contents">
+                        {/* Divider where the git repos end and plain folders
+                            begin (reposIn is ordered git-first). */}
+                        {!r.is_git_repo && i > 0 && reposIn[i - 1].is_git_repo && (
+                          <div className="mb-0.5 mt-1.5 px-2 text-[9.5px] font-semibold uppercase tracking-wide text-[var(--color-faint)]">
+                            Folders
+                          </div>
+                        )}
+                        <RepoRow
+                          repo={r}
+                          groupId={g.id}
+                          status={statusById.get(r.id)}
+                          isSyncedRoot={rootRepoIds.has(r.id)}
+                          onContextMenu={(e) =>
+                            setMenu({
+                              at: { x: e.clientX, y: e.clientY },
+                              kind: "repo",
+                              repo: r,
+                              groupId: g.id,
+                            })
+                          }
+                        />
+                      </div>
                     ))
                   )}
                 </div>

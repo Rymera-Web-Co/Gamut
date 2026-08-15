@@ -125,6 +125,18 @@ describe("Sidebar groups accordion", () => {
     expect(screen.queryByTitle(A.path)).toBeNull();
   });
 
+  it("lists git repos before plain folders, under a Folders divider", async () => {
+    // The folder comes FIRST in the source list — the sidebar must reorder.
+    const folder = repo(3, "assets", { is_git_repo: false, group_ids: [] });
+    renderSidebar([folder, A, B]);
+    const rowFolder = await screen.findByTitle(folder.path);
+    const rowA = screen.getByTitle(A.path);
+
+    // rowA precedes rowFolder in document order.
+    expect(rowA.compareDocumentPosition(rowFolder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Folders")).toBeTruthy();
+  });
+
   it("clicking a repo row activates the repo and touches it", async () => {
     renderSidebar();
     const rowA = await screen.findByTitle(A.path);

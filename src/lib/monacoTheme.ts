@@ -5,15 +5,17 @@
 import type { editor } from "monaco-editor";
 
 /** Theme id used by the editors in dark mode. */
-export const GITHUB_DARK = "github-dark-dimmed";
+export const GITHUB_DARK = "gamut-dark";
 
-// A Monaco theme matching the app's GitHub "dark dimmed" palette so the editor
-// blends with the surrounding UI.
+// A Monaco theme matching the app's dark palette (see `index.css`) so the
+// editor blends with the surrounding UI. Syntax colours stay GitHub-dimmed —
+// they read well on the darker surface — while the chrome (background, gutter,
+// widgets, selection) uses the app's surface and accent tokens.
 export const githubDarkTheme: editor.IStandaloneThemeData = {
   base: "vs-dark",
   inherit: true,
   rules: [
-    { token: "", foreground: "adbac7", background: "22272e" },
+    { token: "", foreground: "c3c6d6", background: "14161d" },
     { token: "comment", foreground: "768390", fontStyle: "italic" },
     { token: "keyword", foreground: "f47067" },
     { token: "operator", foreground: "f47067" },
@@ -30,19 +32,19 @@ export const githubDarkTheme: editor.IStandaloneThemeData = {
     { token: "delimiter", foreground: "adbac7" },
   ],
   colors: {
-    "editor.background": "#22272e",
-    "editor.foreground": "#adbac7",
-    "editorLineNumber.foreground": "#545d68",
-    "editorLineNumber.activeForeground": "#adbac7",
-    "editor.selectionBackground": "#316dca44",
-    "editor.lineHighlightBackground": "#2d333b",
-    "editorGutter.background": "#22272e",
-    "editorWidget.background": "#2d333b",
-    "editorWidget.border": "#444c56",
-    "editorIndentGuide.background": "#373e47",
-    "diffEditor.insertedTextBackground": "#347d3933",
-    "diffEditor.removedTextBackground": "#e5534b33",
-    "diffEditor.insertedLineBackground": "#347d3926",
-    "diffEditor.removedLineBackground": "#e5534b26",
+    "editor.background": "#14161d",
+    "editor.foreground": "#c3c6d6",
+    "editorLineNumber.foreground": "#6b7089",
+    "editorLineNumber.activeForeground": "#e7e8f0",
+    "editor.selectionBackground": "#16c2ae33",
+    "editor.lineHighlightBackground": "#1a1c25",
+    "editorGutter.background": "#14161d",
+    "editorWidget.background": "#1a1c25",
+    "editorWidget.border": "#262935",
+    "editorIndentGuide.background": "#20232d",
+    "diffEditor.insertedTextBackground": "#16c2ae2e",
+    "diffEditor.removedTextBackground": "#e5645a33",
+    "diffEditor.insertedLineBackground": "#16c2ae21",
+    "diffEditor.removedLineBackground": "#e5645a26",
   },
 };
