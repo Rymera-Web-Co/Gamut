@@ -501,6 +501,8 @@ fn set_auto_pull(conn: &Connection, repo_id: i64, enabled: bool) -> AppResult<()
 
 /// Persist a new ordering for repos (drag-and-drop). `repo_ids` is the desired
 /// order; each repo's `sort` is set to its index.
+/// NOTE: no frontend caller since the Model C redesign (PR #311) dropped
+/// repo drag-and-drop reordering; kept for now — remove or re-expose with that feature's return.
 #[tauri::command]
 pub fn reorder_repos(state: State<AppState>, repo_ids: Vec<i64>) -> AppResult<()> {
     let mut conn = lock(&state)?;

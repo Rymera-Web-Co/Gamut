@@ -5,13 +5,13 @@
 import type { editor } from "monaco-editor";
 
 /** Theme id used by the editors in dark mode. */
-export const GITHUB_DARK = "gamut-dark";
+export const GAMUT_DARK = "gamut-dark";
 
 // A Monaco theme matching the app's dark palette (see `index.css`) so the
 // editor blends with the surrounding UI. Syntax colours stay GitHub-dimmed —
 // they read well on the darker surface — while the chrome (background, gutter,
 // widgets, selection) uses the app's surface and accent tokens.
-export const githubDarkTheme: editor.IStandaloneThemeData = {
+export const gamutDarkTheme: editor.IStandaloneThemeData = {
   base: "vs-dark",
   inherit: true,
   rules: [

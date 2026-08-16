@@ -46,8 +46,8 @@ import {
 import { activityColor, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
-import { GROUP_ICONS, groupInitials } from "@/lib/groupIcons";
-import { repoInGroup, visibleRepos } from "@/lib/groupRepos";
+import { GROUP_ICONS, groupColor, groupInitials } from "@/lib/groupIcons";
+import { groupToReveal, visibleRepos } from "@/lib/groupRepos";
 import {
   ipc,
   pickDirectory,
@@ -56,13 +56,16 @@ import {
   type Repo,
   type RepoStatus,
 } from "@/lib/ipc";
+import { pathBasename } from "@/lib/format";
 import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
 
 // Resizable sidebar width, persisted across launches. Clamped so it can
 // neither collapse into uselessness nor swallow the workspace.
-const SIDEBAR_WIDTH_KEY = "gamut.sidebarWidth";
+// Under the gamut.layout prefix so Settings' "Reset saved panel layouts"
+// clears it along with the other persisted layout state.
+const SIDEBAR_WIDTH_KEY = "gamut.layout.sidebarWidth";
 const SIDEBAR_WIDTH_DEFAULT = 280;
 const SIDEBAR_WIDTH_MIN = 220;
 const SIDEBAR_WIDTH_MAX = 480;
@@ -74,11 +77,6 @@ function clampSidebarWidth(w: number): number {
 function storedSidebarWidth(): number {
   const n = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
   return Number.isFinite(n) && n > 0 ? clampSidebarWidth(n) : SIDEBAR_WIDTH_DEFAULT;
-}
-
-/** Last path segment of a cwd, for the terminal row's meta line. */
-function basename(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
 /** Right-aligned state label for a terminal row's unseen activity. */
@@ -143,18 +141,13 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
 
   return (
     <>
+      {/* A plain div, not role="button": the row nests real buttons (label,
+          close), and interactive descendants inside a button role are invalid
+          ARIA. Mouse users click anywhere on the row; keyboard users get the
+          focusable label button. */}
       <div
-        role="button"
-        tabIndex={0}
         onClick={() => {
           if (!editing) focusTerminal(group.id, tab.id, tab.activePaneId);
-        }}
-        onKeyDown={(e) => {
-          if (editing) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            focusTerminal(group.id, tab.id, tab.activePaneId);
-          }
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -170,11 +163,8 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
       >
         <span
           aria-hidden
-          className="size-[7px] shrink-0 rounded-full"
-          style={{
-            background: activity ? activityColor(activity) : "var(--color-primary)",
-            animation: activity ? undefined : "gamut-pulse 1.6s ease-in-out infinite",
-          }}
+          className={cn("size-[7px] shrink-0 rounded-full", !activity && "gamut-pulse")}
+          style={{ background: activity ? activityColor(activity) : "var(--color-primary)" }}
         />
         <div className="min-w-0 flex-1">
           {editing ? (
@@ -193,20 +183,25 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] px-1 text-[12.5px] leading-[17px] text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
             />
           ) : (
-            <div
+            <button
+              aria-current={current || undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                focusTerminal(group.id, tab.id, tab.activePaneId);
+              }}
               className={cn(
-                "truncate text-[12.5px] leading-[17px]",
+                "block w-full min-w-0 truncate text-left text-[12.5px] leading-[17px]",
                 current
                   ? "font-semibold text-[var(--color-foreground)]"
                   : "font-medium text-[var(--color-secondary-foreground)]",
               )}
             >
               {termTabLabel(tab)}
-            </div>
+            </button>
           )}
           <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
             {group.name}
-            {cwd ? ` · ${basename(cwd)}` : ""}
+            {cwd ? ` · ${pathBasename(cwd)}` : ""}
           </div>
         </div>
         {activity && (
@@ -268,16 +263,11 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
           <ContextMenuItem
             onClick={() => {
               // The repo may have left the session's group since the terminal
-              // opened — open a group that actually contains it so the
-              // reconciler can't swap in a different repo.
-              if (repoInGroup(cwdRepo, group)) {
-                setActiveGroup(group.id);
-              } else {
-                const list = groups.data ?? [];
-                const fallback = list.find((g) => g.is_default) ?? list[0];
-                const target = cwdRepo.group_ids[0] ?? fallback?.id ?? null;
-                if (target != null) setActiveGroup(target);
-              }
+              // opened — open a group that actually contains it (shared rule,
+              // see groupToReveal) so the reconciler can't swap in a
+              // different repo.
+              const target = groupToReveal(cwdRepo, group, groups.data ?? []);
+              if (target != null) setActiveGroup(target);
               setActiveRepo(cwdRepo.id);
               ipc.touchRepo(cwdRepo.id);
               setTerminalOpen(false);
@@ -324,8 +314,7 @@ function WorktreeRow({
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const active = activeRepoId === repo.id && activeWorktreePath === worktree.path;
-  const label =
-    worktree.branch ?? worktree.path.split(/[\\/]/).filter(Boolean).pop() ?? worktree.path;
+  const label = worktree.branch ?? pathBasename(worktree.path);
 
   const activate = () => {
     if (worktree.missing) return;
@@ -336,17 +325,11 @@ function WorktreeRow({
   };
 
   return (
+    // Plain div (see TerminalRow): the focusable activation control is the
+    // label button, so nested buttons stay valid ARIA.
     <div
-      role="button"
-      tabIndex={0}
       title={worktree.missing ? "Checkout folder no longer exists on disk" : worktree.path}
       onClick={activate}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          activate();
-        }
-      }}
       className={cn(
         "group/wt ml-5 flex cursor-pointer items-center gap-2 rounded-md border border-transparent py-1 pl-2 pr-2 text-xs",
         worktree.missing && "cursor-default opacity-60",
@@ -365,14 +348,20 @@ function WorktreeRow({
           )}
         />
       )}
-      <span
+      <button
+        aria-current={active || undefined}
+        disabled={worktree.missing}
+        onClick={(e) => {
+          e.stopPropagation();
+          activate();
+        }}
         className={cn(
-          "min-w-0 flex-1 truncate leading-tight",
+          "min-w-0 flex-1 truncate text-left leading-tight",
           worktree.missing && "line-through decoration-[var(--color-destructive)]/60",
         )}
       >
         {label}
-      </span>
+      </button>
       {/* Revealed on focus-within too so keyboard users can reach it. */}
       {!worktree.missing && (
         <button
@@ -398,6 +387,7 @@ function RepoRow({
   status,
   isSyncedRoot = false,
   onContextMenu,
+  onRequestRemove,
 }: {
   repo: Repo;
   groupId: number;
@@ -405,6 +395,7 @@ function RepoRow({
   /** This repo is a folder-bound group's synced root — tagged with a badge. */
   isSyncedRoot?: boolean;
   onContextMenu: (e: React.MouseEvent) => void;
+  onRequestRemove: (repo: Repo) => void;
 }) {
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
@@ -432,16 +423,8 @@ function RepoRow({
   return (
     <>
       <div
-        role="button"
-        tabIndex={0}
         title={repo.missing ? "Folder no longer exists on disk" : repo.path}
         onClick={activate}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            activate();
-          }
-        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -470,14 +453,19 @@ function RepoRow({
             aria-label="Not a git repository"
           />
         )}
-        <span
+        <button
+          aria-current={active || undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            activate();
+          }}
           className={cn(
-            "min-w-0 flex-1 truncate leading-tight",
+            "min-w-0 flex-1 truncate text-left leading-tight",
             repo.missing && "line-through decoration-[var(--color-destructive)]/60",
           )}
         >
           {repo.name}
-        </span>
+        </button>
         {isSyncedRoot && (
           <span
             title="This group’s synced folder (root)"
@@ -488,17 +476,26 @@ function RepoRow({
         )}
         {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
           <span
+            role="img"
             aria-label="Uncommitted changes"
             title="Uncommitted changes"
             className="size-1.5 shrink-0 rounded-full bg-[var(--color-warning)]"
           />
         )}
-        {status?.branch && (
-          <span className="shrink-0 text-[11px] text-[var(--color-faint)] group-focus-within/repo:hidden group-hover/repo:hidden">
-            {status.branch}
-          </span>
-        )}
-        {/* Revealed on focus-within too so keyboard users can reach it. */}
+        <span className="flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden">
+          {status != null && status.ahead > 0 && (
+            <span
+              title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead of upstream`}
+              className="text-[11px] font-semibold text-[var(--color-warning)]"
+            >
+              {status.ahead}↑
+            </span>
+          )}
+          {status?.branch && (
+            <span className="text-[11px] text-[var(--color-faint)]">{status.branch}</span>
+          )}
+        </span>
+        {/* Revealed on focus-within too so keyboard users can reach them. */}
         {!repo.missing && (
           <button
             aria-label={`Open terminal in ${repo.name}`}
@@ -512,6 +509,17 @@ function RepoRow({
             <SquareTerminal className="size-3.5" />
           </button>
         )}
+        <button
+          aria-label={`Remove ${repo.name} from Gamut`}
+          title="Remove from Gamut"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRequestRemove(repo);
+          }}
+          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-destructive)] group-focus-within/repo:flex group-hover/repo:flex"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
       </div>
       {(worktrees.data ?? []).map((w) => (
         <WorktreeRow key={w.path} repo={repo} groupId={groupId} worktree={w} />
@@ -559,56 +567,50 @@ export function Sidebar() {
     if (activeGroupId != null) setExpandedId(activeGroupId);
   }, [activeGroupId]);
 
-  // Keep the active group valid, mirroring the old rail's fallback.
-  const groupsData = groups.data;
-  useEffect(() => {
-    if (!groupsData || groupsData.length === 0) return;
-    if (!groupsData.some((g) => g.id === activeGroupId)) {
-      const fallback = groupsData.find((g) => g.is_default) ?? groupsData[0];
-      setActiveGroup(fallback?.id ?? null);
-    }
-  }, [groupsData, activeGroupId, setActiveGroup]);
-
-  // Drag-resizable width (persisted). The drag tracks window-level pointer
-  // events so fast drags that leave the handle keep resizing; pointercancel
-  // (OS interruption, app switch) releases the drag like pointerup so the
-  // col-resize cursor and drag state can't get stuck. The live width rides a
-  // ref so persisting happens outside any state updater.
+  // Drag-resizable width (persisted). Listeners attach on pointerdown and
+  // detach on release, and the drag writes the aside's width imperatively so
+  // pointermove never re-renders the whole sidebar; the React state (and
+  // localStorage) commit once on release. pointercancel (OS interruption, app
+  // switch) releases exactly like pointerup so the col-resize cursor and drag
+  // state can't get stuck.
   const [width, setWidthState] = useState(storedSidebarWidth);
   const widthRef = useRef(width);
-  const dragFrom = useRef<{ x: number; width: number } | null>(null);
   function applyWidth(w: number, persist: boolean) {
     const clamped = clampSidebarWidth(w);
     widthRef.current = clamped;
     setWidthState(clamped);
     if (persist) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
   }
-  useEffect(() => {
-    function onMove(e: PointerEvent) {
-      const from = dragFrom.current;
-      if (!from) return;
-      applyWidth(from.width + (e.clientX - from.x), false);
-    }
-    function endDrag() {
-      if (!dragFrom.current) return;
-      dragFrom.current = null;
-      document.body.style.cursor = "";
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(widthRef.current));
-    }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", endDrag);
-    window.addEventListener("pointercancel", endDrag);
-    return () => {
+  function beginResizeDrag(e: React.PointerEvent) {
+    e.preventDefault();
+    const from = { x: e.clientX, width: widthRef.current };
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) => {
+      widthRef.current = clampSidebarWidth(from.width + (ev.clientX - from.x));
+      const el = asideRef.current;
+      if (el) el.style.width = `${widthRef.current}px`;
+    };
+    const endDrag = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
+      document.body.style.cursor = "";
+      applyWidth(widthRef.current, true);
     };
-  }, []);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+  }
 
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<Repo[] | null>(null);
+  // A group switch (⌘1–9 works while the dialog is open) changes what's on
+  // screen — drop a pending remove confirmation rather than confirm blind.
+  useEffect(() => {
+    setRemoveTarget(null);
+  }, [activeGroupId]);
   const [folderOver, setFolderOver] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
   const [menu, setMenu] = useState<
@@ -627,6 +629,11 @@ export function Sidebar() {
   const termEntries = list.flatMap((g) =>
     (terminals[g.id]?.tabs ?? []).map((tab) => ({ group: g, tab })),
   );
+  // "Running" approximates the design's state column with what we can know:
+  // a session counts until its shell exits (unseen-exit activity).
+  const runningCount = termEntries.filter(
+    ({ tab }) => tabActivityKind(tab, termActivity) !== "exit",
+  ).length;
 
   // Root repos of folder-bound groups get hidden when the setting is off.
   const rootRepoIds = new Set(
@@ -640,7 +647,7 @@ export function Sidebar() {
   const newTermTarget = activeWorktreePath
     ? {
         path: activeWorktreePath,
-        title: activeRepo ? activeRepo.name : basename(activeWorktreePath),
+        title: activeRepo ? activeRepo.name : pathBasename(activeWorktreePath),
       }
     : activeRepo
       ? { path: activeRepo.path, title: activeRepo.name }
@@ -689,7 +696,8 @@ export function Sidebar() {
           setRepoGroups.mutate({ repoId: repo.id, groupIds: [group.id] });
         }
       } catch {
-        // register_repo surfaces its own error toast; keep going with the rest.
+        // The global MutationCache onError handler (lib/queryClient.ts) already
+        // toasts the failure; swallow here so the rest of the batch continues.
       }
     }
   }
@@ -739,7 +747,10 @@ export function Sidebar() {
     };
   }, []);
 
-  const { data: dbHealth } = useQuery({ queryKey: ["db-health"], queryFn: ipc.dbHealth });
+  const { data: dbHealth, isError: dbError } = useQuery({
+    queryKey: ["db-health"],
+    queryFn: ipc.dbHealth,
+  });
 
   return (
     <aside
@@ -763,11 +774,7 @@ export function Sidebar() {
         aria-valuemax={SIDEBAR_WIDTH_MAX}
         aria-valuenow={width}
         title="Drag or use arrow keys to resize · double-click or Home to reset"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          dragFrom.current = { x: e.clientX, width };
-          document.body.style.cursor = "col-resize";
-        }}
+        onPointerDown={beginResizeDrag}
         onDoubleClick={() => applyWidth(SIDEBAR_WIDTH_DEFAULT, true)}
         onKeyDown={(e) => {
           if (e.key === "ArrowLeft") applyWidth(width - 16, true);
@@ -795,10 +802,9 @@ export function Sidebar() {
           <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--color-muted-foreground)]">
             <span
               aria-hidden
-              className="size-1.5 rounded-full bg-[var(--color-primary)]"
-              style={{ animation: "gamut-pulse 1.6s ease-in-out infinite" }}
+              className="gamut-pulse size-1.5 rounded-full bg-[var(--color-primary)]"
             />
-            {termEntries.length} open
+            {runningCount} running
           </div>
         )}
       </div>
@@ -846,17 +852,11 @@ export function Sidebar() {
           const running = (terminals[g.id]?.tabs.length ?? 0) > 0;
           return (
             <div key={g.id} className="flex flex-col">
+              {/* Plain div (see TerminalRow): the focusable expand/activate
+                  control is the label button, so the nested action buttons
+                  stay valid ARIA. */}
               <div
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
                 onClick={() => toggleGroup(g)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleGroup(g);
-                  }
-                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "group", group: g });
@@ -874,12 +874,26 @@ export function Sidebar() {
                     open && "rotate-90",
                   )}
                 />
-                <span className="flex size-4 shrink-0 items-center justify-center rounded bg-[var(--color-primary-soft)] text-[8px] font-bold text-[var(--color-primary)]">
+                {/* Per-group identity colour (derived from the name — no
+                    schema change), echoing the design's colour squares. */}
+                <span
+                  aria-hidden
+                  className="flex size-4 shrink-0 items-center justify-center rounded text-[8px] font-bold text-white"
+                  style={{ background: groupColor(g.name) }}
+                >
                   {Icon ? <Icon className="size-3" /> : groupInitials(g.name)}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-[var(--color-secondary-foreground)]">
+                <button
+                  aria-expanded={open}
+                  aria-current={g.id === activeGroupId || undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleGroup(g);
+                  }}
+                  className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold text-[var(--color-secondary-foreground)]"
+                >
                   {g.name}
-                </span>
+                </button>
                 <div className="flex items-center gap-1.5 pr-0.5 group-focus-within/grp:hidden group-hover/grp:hidden">
                   {activity && (
                     <span
@@ -891,16 +905,15 @@ export function Sidebar() {
                   {!activity && running && (
                     <span
                       aria-hidden
-                      className="size-1.5 rounded-full bg-[var(--color-primary)]"
-                      style={{ animation: "gamut-pulse 1.6s ease-in-out infinite" }}
+                      className="gamut-pulse size-1.5 rounded-full bg-[var(--color-primary)]"
                     />
                   )}
                   <span className="text-[11px] tabular-nums text-[var(--color-faint)]">
                     {reposIn.length}
                   </span>
                 </div>
-                {/* Revealed on focus-within too (the row is focusable), so
-                    keyboard users can Tab into these once the row has focus. */}
+                {/* Revealed on focus-within too, so keyboard users reach
+                    these after tabbing to the group's label button. */}
                 <div className="hidden items-center group-focus-within/grp:flex group-hover/grp:flex">
                   <button
                     aria-label={`Fetch all in ${g.name}`}
@@ -910,7 +923,7 @@ export function Sidebar() {
                       e.stopPropagation();
                       fetchGroup.mutate(fetchableIds);
                     }}
-                    className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] disabled:pointer-events-none disabled:opacity-40"
+                    className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] disabled:opacity-40"
                   >
                     {fetchGroup.isPending ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -979,6 +992,7 @@ export function Sidebar() {
                           groupId={g.id}
                           status={statusById.get(r.id)}
                           isSyncedRoot={rootRepoIds.has(r.id)}
+                          onRequestRemove={(repo) => setRemoveTarget([repo])}
                           onContextMenu={(e) =>
                             setMenu({
                               at: { x: e.clientX, y: e.clientY },
@@ -1016,9 +1030,13 @@ export function Sidebar() {
       >
         <GitHubConnect />
         <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-muted-foreground)]">
-          {dbHealth
-            ? `db ok · ${dbHealth.migrations.length} migration${dbHealth.migrations.length === 1 ? "" : "s"}`
-            : "connecting…"}
+          {dbError ? (
+            <span className="text-[var(--color-destructive)]">backend offline</span>
+          ) : dbHealth ? (
+            `db ok · ${dbHealth.migrations.length} migration${dbHealth.migrations.length === 1 ? "" : "s"}`
+          ) : (
+            "connecting…"
+          )}
         </span>
         <button
           aria-label="Settings"

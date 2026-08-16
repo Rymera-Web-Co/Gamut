@@ -235,17 +235,17 @@ export function useUiNav() {
           break;
         case "view": {
           const v = asView(view);
-          if (v) ui.setView(v);
+          if (v) ui.showView(v);
           break;
         }
         case "open":
           if (repo_id != null) ui.setActiveRepo(repo_id);
-          ui.setView("files");
+          ui.showView("files");
           if (path) ui.setFilesPath(path);
           break;
         case "goto":
           if (repo_id != null) ui.setActiveRepo(repo_id);
-          ui.setView("history");
+          ui.showView("history");
           if (sha) ui.setHistorySha(sha);
           break;
         case "term":

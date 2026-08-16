@@ -15,6 +15,7 @@ import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { useGroups, useRepoStatuses, useRepos } from "@/features/repos/api";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { ActivityDot, groupActivityKind } from "@/features/terminal/activity";
+import { groupColor } from "@/lib/groupIcons";
 import { useActiveRepoIsGit } from "@/lib/useActiveRepo";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -94,6 +95,12 @@ export function WorkspaceHeader() {
             <div className="flex min-w-0 items-baseline gap-1.5 text-[13px]">
               {group && (
                 <>
+                  {/* Per-group identity colour (derived, matches the sidebar chip). */}
+                  <span
+                    aria-hidden
+                    className="size-2 shrink-0 self-center rounded-[3px]"
+                    style={{ background: groupColor(group.name) }}
+                  />
                   <span className="hidden truncate text-[var(--color-muted-foreground)] sm:inline">
                     {group.name}
                   </span>
@@ -109,6 +116,7 @@ export function WorkspaceHeader() {
                 <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
                 {status?.has_uncommitted_changes && (
                   <span
+                    role="img"
                     aria-label="Uncommitted changes"
                     title="Uncommitted changes"
                     className="size-1.5 rounded-full bg-[var(--color-warning)]"

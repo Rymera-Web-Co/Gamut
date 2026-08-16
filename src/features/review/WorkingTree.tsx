@@ -20,7 +20,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
 import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monacoTheme";
+import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
@@ -591,7 +591,7 @@ export function WorkingTree({ repoId }: { repoId: number }) {
             ) : (
               <CodeDiffEditor
                 height="100%"
-                theme={isDarkTheme() ? GITHUB_DARK : "light"}
+                theme={isDarkTheme() ? GAMUT_DARK : "light"}
                 language={languageFor(selected.file.path)}
                 original={diff.data.old_text ?? ""}
                 modified={diff.data.new_text ?? ""}

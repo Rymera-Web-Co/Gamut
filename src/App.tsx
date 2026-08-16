@@ -21,6 +21,7 @@ import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch, startUpdatePolling } from "@/lib/updater";
 import { useActiveRepoIsGit, useNonGitViewGuard } from "@/lib/useActiveRepo";
+import { useActiveGroupFallback } from "@/lib/useActiveGroupFallback";
 import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useAutoPull } from "@/lib/useAutoPull";
@@ -78,6 +79,7 @@ export default function App() {
   useAutoFetch();
   useAutoPull();
   useActiveRepoReconciler();
+  useActiveGroupFallback();
   useEmptyGroupSidebarReveal();
   useNonGitViewGuard();
   useMainThreadWatchdog();

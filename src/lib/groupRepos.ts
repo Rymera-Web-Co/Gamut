@@ -14,6 +14,23 @@ export function repoInGroup(repo: Repo, group: Group | undefined): boolean {
 }
 
 /** The repos shown for a group, in their original order. */
+/**
+ * The group to switch to so `repo` is actually visible: the current group when
+ * it already shows the repo, else the repo's first group, else the default
+ * group (ungrouped repos live there), else the first group at all. `null` only
+ * when there are no groups. One rule shared by the command palette, the
+ * terminal header, and the sidebar's terminal menu, so they can't drift.
+ */
+export function groupToReveal(
+  repo: Repo,
+  activeGroup: Group | undefined,
+  groups: Group[],
+): number | null {
+  if (activeGroup && repoInGroup(repo, activeGroup)) return activeGroup.id;
+  const fallback = groups.find((g) => g.is_default) ?? groups[0];
+  return repo.group_ids[0] ?? fallback?.id ?? null;
+}
+
 export function visibleRepos(repos: Repo[], group: Group | undefined): Repo[] {
   return repos.filter((r) => repoInGroup(r, group));
 }

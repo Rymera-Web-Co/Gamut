@@ -42,3 +42,18 @@ export function groupInitials(name: string): string {
   }
   return trimmed.slice(0, 2).toUpperCase();
 }
+
+/**
+ * Deterministic per-group identity colour, derived from the name so it is
+ * stable without a schema change. Hue spread over the wheel; saturation and
+ * lightness chosen to read on both themes (used for small identity squares
+ * and tinted chips, not for text).
+ */
+export function groupColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return `hsl(${hue} 55% 52%)`;
+}

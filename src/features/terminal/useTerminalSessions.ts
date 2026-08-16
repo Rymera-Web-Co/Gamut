@@ -170,7 +170,7 @@ async function openTerminalLink(uri: string) {
     const ref = await ipc.githubResolvePrUrl(uri);
     if (ref) {
       const ui = useUiStore.getState();
-      ui.setView("pulls");
+      ui.showView("pulls");
       ui.setActiveRepo(ref.repo_id);
       ui.setSelectedPr(ref.number);
       return;
@@ -273,7 +273,7 @@ async function openTerminalPath(raw: string, cwd: string) {
     // same order the control-channel `open` deep-link uses.
     const ui = useUiStore.getState();
     ui.setActiveRepo(repo_id);
-    ui.setView("files");
+    ui.showView("files");
     ui.setFilesPath(rel_path);
     return;
   }

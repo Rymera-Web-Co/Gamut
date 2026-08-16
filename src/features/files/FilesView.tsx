@@ -11,7 +11,7 @@ import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import { ipc } from "@/lib/ipc";
 import { isModalOpen } from "@/lib/dom";
 import { isDarkTheme, isHtmlPath, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monacoTheme";
+import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
@@ -593,7 +593,7 @@ export function FilesView() {
           ) : (
             <Editor
               height="100%"
-              theme={isDark ? GITHUB_DARK : "light"}
+              theme={isDark ? GAMUT_DARK : "light"}
               path={selectedPath}
               language={languageFor(selectedPath)}
               value={value}

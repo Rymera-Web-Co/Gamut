@@ -161,3 +161,21 @@ describe("parseStoredTerminals", () => {
     expect(parseStoredTerminals(raw).nextTermId).toBe(43);
   });
 });
+
+describe("showView (intentional workspace navigation)", () => {
+  it("sets the view and leaves the full-screen terminal", () => {
+    useUiStore.setState({ view: "files", terminalOpen: true });
+    useUiStore.getState().showView("history");
+    const s = useUiStore.getState();
+    expect(s.view).toBe("history");
+    expect(s.terminalOpen).toBe(false);
+  });
+
+  it("plain setView never touches the terminal (guards keep using it)", () => {
+    useUiStore.setState({ view: "history", terminalOpen: true });
+    useUiStore.getState().setView("files");
+    const s = useUiStore.getState();
+    expect(s.view).toBe("files");
+    expect(s.terminalOpen).toBe(true);
+  });
+});

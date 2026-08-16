@@ -22,10 +22,11 @@
   --secondary: #eff0f6;
   --secondary-foreground: #494b66;
   --muted: #f1f1f8;
-  --muted-foreground: #6e7191;
-  /* Darker than the mock's #a0a3bd: this token colors small text (branch
-     labels, counts, section headers), so it must hold ~4.5:1 on white. */
-  --faint: #767a99;
+  /* Both grey text tokens are darker than the mock's (#6e7191 / #a0a3bd):
+     they colour small text, so they must hold WCAG AA 4.5:1 on the deepest
+     light surface (#f1f1f8) — measured 5.07:1 and 4.68:1 respectively. */
+  --muted-foreground: #616580;
+  --faint: #666a89;
   --warning: #b7791f;
   --accent: #ececf4;
   --accent-foreground: #22233a;
@@ -52,8 +53,10 @@
   --secondary: #20232d;
   --secondary-foreground: #c3c6d6;
   --muted: #161821;
+  /* Dark greys hold 4.5:1 on the lightest dark surface (#1a1c25):
+     5.30:1 and 4.66:1 respectively. */
   --muted-foreground: #8a8fa6;
-  --faint: #7d829b;
+  --faint: #80859d;
   --warning: #e0a33e;
   --accent: #232733;
   --accent-foreground: #e7e8f0;
@@ -120,7 +123,8 @@
   }
 }
 
-/* Soft pulse for the "session running" dot in the sidebar's terminal rows. */
+/* Soft pulse for the "session running" dots. A class (not inline styles) so
+   the animation can be disabled wholesale for reduced-motion users. */
 @keyframes gamut-pulse {
   0%,
   100% {
@@ -130,6 +134,14 @@
   50% {
     opacity: 0.35;
     transform: scale(0.82);
+  }
+}
+.gamut-pulse {
+  animation: gamut-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gamut-pulse {
+    animation: none;
   }
 }
 

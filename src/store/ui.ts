@@ -268,6 +268,13 @@ interface UiState {
   // jumping to it.
   terminalBgQueue: string[];
   setView: (view: View) => void;
+  /**
+   * Intentional navigation to a workspace view (palette, CLI nav, in-terminal
+   * links): sets the view AND leaves the full-screen terminal so the change is
+   * actually visible. Guards/reconcilers that merely correct `view` keep using
+   * plain `setView`, which never yanks the user out of a terminal.
+   */
+  showView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null, worktreePath?: string | null) => void;
   setActiveGroup: (id: number | null) => void;
@@ -345,6 +352,10 @@ interface UiState {
 // on first paint (#155). The panes themselves respawn lazily when their group's
 // tab is first viewed — TerminalPane spawns a fresh PTY per pane at its cwd.
 const restoredTerminals = storedTerminals();
+// The terminal view now takes over the whole main area, so booting into it
+// only makes sense when there are restored sessions to show — otherwise a
+// persisted `terminalOpen` would greet the user with an empty terminal.
+const hasRestoredTabs = Object.keys(restoredTerminals.terminals).length > 0;
 
 export const useUiStore = create<UiState>((set, get) => ({
   view: "files",
@@ -355,7 +366,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
   pushConfirm: null,
-  terminalOpen: storedTerminalOpen(),
+  terminalOpen: storedTerminalOpen() && hasRestoredTabs,
   terminals: restoredTerminals.terminals,
   groupSelections: {},
   termActivity: {},
@@ -372,6 +383,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   terminalFocusNonce: 0,
   terminalBgQueue: [],
   setView: (view) => set({ view }),
+  showView: (view) => {
+    localStorage.setItem(TERMINAL_OPEN_KEY, "0");
+    set({ view, terminalOpen: false });
+  },
   setReviewMode: (reviewMode) => set({ reviewMode }),
   // Reset the selected PR when switching repos — it's repo-specific.
   setActiveRepo: (id, worktreePath = null) =>
@@ -419,9 +434,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   focusRepoSearch: () => {
     localStorage.setItem(FILES_PANEL_KEY, "search");
+    // An intentional workspace navigation — leave the full-screen terminal.
+    localStorage.setItem(TERMINAL_OPEN_KEY, "0");
     set((s) => ({
       view: "files",
       filesPanel: "search",
+      terminalOpen: false,
       searchFocusNonce: s.searchFocusNonce + 1,
     }));
   },

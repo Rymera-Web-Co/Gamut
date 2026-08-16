@@ -196,7 +196,7 @@ describe("Sidebar terminal rail", () => {
     renderSidebar();
     expect(await screen.findByText("alpha shell")).toBeTruthy();
     expect(screen.getByText("beta shell")).toBeTruthy();
-    expect(screen.getByText("2 open")).toBeTruthy();
+    expect(screen.getByText("2 running")).toBeTruthy();
   });
 
   it("clicking a terminal row focuses it (group + tab + panel)", async () => {
@@ -213,7 +213,7 @@ describe("Sidebar terminal rail", () => {
   it("the hover close control kills every pane PTY and drops the tab (#280)", async () => {
     seedTerminals();
     renderSidebar();
-    const row = (await screen.findByText("beta shell")).closest('[role="button"]')!;
+    const row = (await screen.findByText("beta shell")).closest('[class*="group/term"]')!;
 
     fireEvent.click(within(row as HTMLElement).getByLabelText("Close beta shell terminal"));
 
@@ -226,7 +226,7 @@ describe("Sidebar terminal rail", () => {
   it("the context menu closes a terminal (kills PTYs, drops the tab)", async () => {
     seedTerminals();
     renderSidebar();
-    const row = (await screen.findByText("beta shell")).closest('[role="button"]')!;
+    const row = (await screen.findByText("beta shell")).closest('[class*="group/term"]')!;
 
     fireEvent.contextMenu(row);
     fireEvent.click(screen.getByText("Close terminal"));
@@ -239,7 +239,7 @@ describe("Sidebar terminal rail", () => {
   it("the context menu renames a terminal inline", async () => {
     seedTerminals();
     renderSidebar();
-    const row = (await screen.findByText("alpha shell")).closest('[role="button"]')!;
+    const row = (await screen.findByText("alpha shell")).closest('[class*="group/term"]')!;
 
     fireEvent.contextMenu(row);
     fireEvent.click(screen.getByText("Rename terminal"));

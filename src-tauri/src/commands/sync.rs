@@ -392,6 +392,8 @@ async fn push_one(
 /// This is a full `git pull`, matching what the per-repo pull button does — not
 /// the fast-forward-only, opt-in-gated [`git_pull_ff_many`] that backs background
 /// auto-pull.
+/// NOTE: no frontend caller since the Model C redesign (PR #311) dropped
+/// the bulk-selection sync bar; kept for now — remove or re-expose with that feature's return.
 #[tauri::command]
 pub async fn git_pull_many(
     state: State<'_, AppState>,
@@ -413,6 +415,8 @@ pub async fn git_pull_many(
 /// [`git_pull_many`], with the same independent-per-repo semantics and the same
 /// first-push upstream handling as the single-repo [`git_push`]: a branch with no
 /// upstream gets one set on its first push.
+/// NOTE: no frontend caller since the Model C redesign (PR #311) dropped
+/// the bulk-selection sync bar; kept for now — remove or re-expose with that feature's return.
 #[tauri::command]
 pub async fn git_push_many(
     state: State<'_, AppState>,

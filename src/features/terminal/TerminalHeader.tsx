@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Folder, PanelLeft, PanelLeftClose, SplitSquareHorizontal } from "lucide-react";
 
 import { useGroups, useRepos } from "@/features/repos/api";
+import { pathBasename } from "@/lib/format";
 import { repoInGroup } from "@/lib/groupRepos";
 import { ipc, type Repo } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
 
@@ -32,7 +34,7 @@ export function TerminalHeader() {
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
   const tab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
-  const folder = cwd?.split(/[\\/]/).filter(Boolean).pop();
+  const folder = cwd ? pathBasename(cwd) : undefined;
   const activity = tab ? tabActivityKind(tab, termActivity) : undefined;
   // The repo this session is rooted in, when its cwd is a registered repo (or
   // one of its worktrees isn't resolved here — plain path match only).
@@ -90,11 +92,8 @@ export function TerminalHeader() {
       </button>
       <span
         aria-hidden
-        className="size-2 shrink-0 rounded-full"
-        style={{
-          background: activity ? activityColor(activity) : "var(--color-primary)",
-          animation: activity ? undefined : "gamut-pulse 1.6s ease-in-out infinite",
-        }}
+        className={cn("size-2 shrink-0 rounded-full", !activity && "gamut-pulse")}
+        style={{ background: activity ? activityColor(activity) : "var(--color-primary)" }}
       />
       <div className="flex min-w-0 items-baseline gap-2 text-[13px]">
         {group && (

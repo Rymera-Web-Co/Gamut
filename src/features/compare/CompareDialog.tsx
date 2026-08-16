@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc, pickFile, type CompareResult } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monacoTheme";
+import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useRepos } from "@/features/repos/api";
 import { useUiStore } from "@/store/ui";
@@ -451,7 +451,7 @@ export function ResultView({
             // Remount on a new comparison/swap so editor content + dirty reset.
             key={`${result.left_label} ${result.right_label}`}
             height="100%"
-            theme={isDarkTheme() ? GITHUB_DARK : "light"}
+            theme={isDarkTheme() ? GAMUT_DARK : "light"}
             language={lang}
             original={result.left_text ?? ""}
             modified={result.right_text ?? ""}
