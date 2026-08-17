@@ -107,8 +107,11 @@ export function CommandPalette() {
     // like the matching Group/Terminal entry does (revealing clears activity).
     const runGroup = (id: number) => () => {
       setActiveGroup(id);
-      // Jumping to a group means "show me its workspace" — leave the terminal.
-      setTerminalOpen(false);
+      // Keep the terminal view only when the target group has sessions to show
+      // (same rule as the ⌘1–9 / ⌘↑↓ group jumps); otherwise show the
+      // workspace instead of an empty terminal.
+      const gt = useUiStore.getState().terminals[id];
+      if (!gt?.tabs.length) setTerminalOpen(false);
       close();
     };
     const runTerminal = (groupId: number, tabId: string, paneId: string) => () => {

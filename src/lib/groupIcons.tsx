@@ -45,9 +45,10 @@ export function groupInitials(name: string): string {
 
 /**
  * Deterministic per-group identity colour, derived from the name so it is
- * stable without a schema change. Hue spread over the wheel; saturation and
- * lightness chosen to read on both themes (used for small identity squares
- * and tinted chips, not for text).
+ * stable without a schema change. The chip renders white glyphs on this
+ * colour, so lightness is hue-banded: yellow-green-cyan hues (which are far
+ * brighter at equal HSL lightness) drop to 30% so white text holds ≥4.5:1 at
+ * every hue (measured worst case 4.75:1 at hue 60).
  */
 export function groupColor(name: string): string {
   let hash = 0;
@@ -55,5 +56,6 @@ export function groupColor(name: string): string {
     hash = (hash * 31 + name.charCodeAt(i)) | 0;
   }
   const hue = ((hash % 360) + 360) % 360;
-  return `hsl(${hue} 55% 52%)`;
+  const lightness = hue > 15 && hue < 215 ? 30 : 46;
+  return `hsl(${hue} 55% ${lightness}%)`;
 }

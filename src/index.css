@@ -27,7 +27,8 @@
      light surface (#f1f1f8) — measured 5.07:1 and 4.68:1 respectively. */
   --muted-foreground: #616580;
   --faint: #666a89;
-  --warning: #b7791f;
+  /* Dark enough for 11px text uses (ahead counts): 4.90:1 on #f1f1f8. */
+  --warning: #8f5f10;
   --accent: #ececf4;
   --accent-foreground: #22233a;
   --destructive: #d0463b;

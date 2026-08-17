@@ -3,7 +3,7 @@ import { Folder, PanelLeft, PanelLeftClose, SplitSquareHorizontal } from "lucide
 
 import { useGroups, useRepos } from "@/features/repos/api";
 import { pathBasename } from "@/lib/format";
-import { repoInGroup } from "@/lib/groupRepos";
+import { groupToReveal } from "@/lib/groupRepos";
 import { ipc, type Repo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore } from "@/store/ui";
@@ -59,17 +59,13 @@ export function TerminalHeader() {
   // Jump back to the repo workspace, selecting the repo the session is rooted
   // in when we can resolve one. The repo may have left the session's group
   // since the terminal opened — switch to a group that actually contains it
-  // (its first group, or the default group for ungrouped repos) so the
-  // reconciler can't silently swap in a different repo. Mirrors the command
-  // palette's visibility rule.
+  // (the shared groupToReveal rule) so the reconciler can't silently swap in
+  // a different repo.
   function openWorkspace(target?: Repo) {
     if (target) {
       const activeGroup = (groups.data ?? []).find((g) => g.id === activeGroupId);
-      if (!repoInGroup(target, activeGroup)) {
-        const defaultGroup = (groups.data ?? []).find((g) => g.is_default);
-        const groupId = target.group_ids[0] ?? defaultGroup?.id ?? null;
-        if (groupId != null) setActiveGroup(groupId);
-      }
+      const groupId = groupToReveal(target, activeGroup, groups.data ?? []);
+      if (groupId != null) setActiveGroup(groupId);
       setActiveRepo(target.id);
       ipc.touchRepo(target.id);
     }
