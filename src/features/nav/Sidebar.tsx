@@ -407,6 +407,10 @@ function RepoRow({
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const active =
     activeRepoId === repo.id && activeGroupId === groupId && activeWorktreePath == null;
+  // The publish-branch confirmation is a portal anchored to the push button;
+  // while it's open the hover/focus reveal must stay pinned visible, or the
+  // anchor collapses to display:none and the popover loses its position.
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
 
   // Only run `git worktree list` for repos that actually have linked worktrees
   // (live status flag wins once loaded; the persisted flag gates the first scan).
@@ -515,6 +519,8 @@ function RepoRow({
             passive ahead/behind counts for the pull/push controls, so any repo
             can sync without being selected first. */}
         {!repo.missing && repo.is_git_repo && status?.branch && (
+          // 22px = line one's icon (size-3.5, 14px) + gap-2 (8px), so the
+          // branch starts flush under the repo name.
           <div className="flex min-h-6 items-center gap-1.5 pb-0.5 pl-[22px]">
             <span
               className="min-w-0 flex-1 truncate text-[11px] leading-tight text-[var(--color-faint)]"
@@ -522,7 +528,15 @@ function RepoRow({
             >
               {status.branch}
             </span>
-            <span className="flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden">
+            <span
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden",
+                // The pinned-open confirmation keeps the sync controls visible
+                // while the pointer is off the row — hide the passive counts
+                // then too, or both render at once.
+                syncConfirmOpen && "hidden",
+              )}
+            >
               {status.behind > 0 && (
                 <span
                   title={`${status.behind} commit${status.behind === 1 ? "" : "s"} behind upstream`}
@@ -544,9 +558,22 @@ function RepoRow({
                 bubble into the row's activate(). */}
             <span
               onClick={(e) => e.stopPropagation()}
-              className="hidden shrink-0 group-focus-within/repo:block group-hover/repo:block"
+              className={cn(
+                "shrink-0",
+                syncConfirmOpen
+                  ? "block"
+                  : "hidden group-focus-within/repo:block group-hover/repo:block",
+              )}
             >
-              <SyncControls repoId={repo.id} ahead={status.ahead} behind={status.behind} />
+              {/* No ⌘⇧P/⌘⇧K hints: those shortcuts act on the ACTIVE repo,
+                  which this row usually isn't. */}
+              <SyncControls
+                repoId={repo.id}
+                ahead={status.ahead}
+                behind={status.behind}
+                showShortcuts={false}
+                onConfirmOpenChange={setSyncConfirmOpen}
+              />
             </span>
           </div>
         )}

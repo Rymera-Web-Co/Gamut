@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   gitPull: vi.fn(),
   gitPush: vi.fn(),
   gitSyncStatus: vi.fn(),
+  repoStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -25,7 +26,9 @@ vi.mock("@/lib/ipc", () => ({
     listRepos: mocks.listRepos,
     listGroups: mocks.listGroups,
     repoStatuses: mocks.repoStatuses,
-    repoStatus: vi.fn().mockRejectedValue(new Error("unused")),
+    // Called on every successful pull/push (`useSyncActions.refreshRepoStatus`);
+    // resolves so the sync tests take the normal cache-patch path.
+    repoStatus: mocks.repoStatus,
     gitPull: mocks.gitPull,
     gitPush: mocks.gitPush,
     gitSyncStatus: mocks.gitSyncStatus,
@@ -110,6 +113,14 @@ beforeEach(() => {
   mocks.gitSyncStatus
     .mockReset()
     .mockResolvedValue({ upstream: "origin/main", ahead: 0, behind: 0, unpublished_branch: null });
+  mocks.repoStatus.mockReset().mockResolvedValue({
+    id: A.id,
+    branch: "feat/very-long-branch-name",
+    ahead: 0,
+    behind: 2,
+    has_uncommitted_changes: false,
+    has_worktrees: false,
+  });
   useUiStore.setState({
     activeGroupId: 1,
     activeRepoId: null,
@@ -211,12 +222,43 @@ describe("Sidebar repo row branch line (#312)", () => {
     expect(screen.getByTitle("2 commits behind upstream").textContent).toBe("2↓");
   });
 
-  it("omits the branch line for non-git repos and repos without a branch", async () => {
-    const folder = repo(3, "assets", { is_git_repo: false, group_ids: [] });
+  it("omits the branch line for a git repo with no branch", async () => {
     seedStatus({ branch: null });
-    renderSidebar([A, folder]);
+    renderSidebar([A]);
+    const row = await screen.findByTitle(A.path);
+    // Line one only — no second (branch) line rendered.
+    expect(row.querySelectorAll(":scope > div")).toHaveLength(1);
+    expect(screen.queryByTitle("Pull")).toBeNull();
+  });
+
+  it("omits the branch line for a non-git folder even when a status carries a branch", async () => {
+    const folder = repo(3, "assets", { is_git_repo: false, group_ids: [] });
+    mocks.repoStatuses.mockResolvedValue([
+      {
+        id: folder.id,
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        has_uncommitted_changes: false,
+        has_worktrees: false,
+      },
+    ]);
+    renderSidebar([folder]);
     await screen.findByTitle(folder.path);
-    expect(screen.queryByTitle("Pull (⌘⇧P)")).toBeNull();
+    expect(screen.queryByText("main")).toBeNull();
+    expect(screen.queryByTitle("Pull")).toBeNull();
+  });
+
+  it("keeps the sync controls inside the hover/focus reveal wrapper", async () => {
+    seedStatus();
+    renderSidebar();
+    const pull = await screen.findByTitle("Pull");
+    // jsdom can't exercise :hover, so pin the reveal contract structurally:
+    // hidden at rest, revealed by row hover or focus-within.
+    const wrapper = pull.closest("span[class*='group-hover/repo']");
+    expect(wrapper).not.toBeNull();
+    expect(wrapper!.className).toContain("hidden");
+    expect(wrapper!.className).toContain("group-focus-within/repo:block");
   });
 
   it("the row's pull button pulls that repo without activating it", async () => {
@@ -224,7 +266,7 @@ describe("Sidebar repo row branch line (#312)", () => {
     renderSidebar();
     await screen.findByText("feat/very-long-branch-name");
 
-    fireEvent.click(screen.getByTitle("Pull (⌘⇧P)"));
+    fireEvent.click(screen.getByTitle("Pull"));
 
     await vi.waitFor(() => expect(mocks.gitPull).toHaveBeenCalledWith(A.id));
     expect(useUiStore.getState().activeRepoId).toBeNull();
@@ -235,11 +277,34 @@ describe("Sidebar repo row branch line (#312)", () => {
     renderSidebar();
     await screen.findByText("feat/very-long-branch-name");
 
-    fireEvent.click(screen.getByTitle("Push (⌘⇧K)"));
+    fireEvent.click(screen.getByTitle("Push"));
 
     // The pre-push publish check resolves (tracking branch), then pushes.
-    expect(await screen.findByTitle("Push (⌘⇧K)")).toBeTruthy();
     await vi.waitFor(() => expect(mocks.gitPush).toHaveBeenCalledWith(A.id));
+    expect(useUiStore.getState().activeRepoId).toBeNull();
+  });
+
+  it("the relocated terminal action still opens a terminal for its repo", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByLabelText(`Open terminal in ${A.name}`));
+
+    const s = useUiStore.getState();
+    expect(s.terminals[1]?.tabs).toHaveLength(1);
+    expect(s.terminals[1].tabs[0].panes[0].cwd).toBe(A.path);
+    expect(s.activeRepoId).toBeNull();
+  });
+
+  it("the relocated remove action opens the remove dialog, not the repo", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByLabelText(`Remove ${A.name} from Gamut`));
+
+    expect(await screen.findByText("Remove 1 repository folder?")).toBeTruthy();
     expect(useUiStore.getState().activeRepoId).toBeNull();
   });
 });
