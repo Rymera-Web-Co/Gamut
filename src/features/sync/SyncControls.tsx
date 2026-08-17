@@ -11,10 +11,26 @@ export function SyncControls({
   repoId,
   ahead = 0,
   behind = 0,
+  showShortcuts = true,
+  onConfirmOpenChange,
 }: {
   repoId: number;
   ahead?: number;
   behind?: number;
+  /**
+   * The ⌘⇧P/⌘⇧K hints are only true where the control's repo IS the active
+   * repo (the shortcuts act on the active repo — see useKeyboardShortcuts).
+   * Hosts rendering per-row controls for non-active repos must turn them off.
+   */
+  showShortcuts?: boolean;
+  /**
+   * Fires with `true` when the publish-branch confirmation opens and `false`
+   * once it has closed AND focus has been restored. A host that reveals these
+   * controls on hover/focus must keep them visible (and thus measurable) while
+   * the confirmation is open — the popover is anchored to the push button, and
+   * a `display: none` anchor sends it to the viewport origin.
+   */
+  onConfirmOpenChange?: (open: boolean) => void;
 }) {
   const { pull, push, busy } = useSyncActions(repoId);
 
@@ -38,8 +54,12 @@ export function SyncControls({
     setChecking(true);
     try {
       const branch = await branchAwaitingPublish(repoId);
-      if (branch) setPublishing(branch);
-      else push.mutate();
+      if (branch) {
+        setPublishing(branch);
+        onConfirmOpenChange?.(true);
+      } else {
+        push.mutate();
+      }
     } finally {
       setChecking(false);
     }
@@ -53,7 +73,7 @@ export function SyncControls({
         size="sm"
         variant="ghost"
         className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-        title="Pull (⌘⇧P)"
+        title={showShortcuts ? "Pull (⌘⇧P)" : "Pull"}
         disabled={busy || checking}
         onClick={() => pull.mutate()}
       >
@@ -73,7 +93,7 @@ export function SyncControls({
             size="sm"
             variant="ghost"
             className="h-6 gap-0.5 px-1.5 text-[11px] [&_svg]:size-3"
-            title="Push (⌘⇧K)"
+            title={showShortcuts ? "Push (⌘⇧K)" : "Push"}
             disabled={busy || checking}
             onClick={onPush}
           >
@@ -97,6 +117,9 @@ export function SyncControls({
             e.preventDefault();
             const button = pushButton.current;
             (button?.disabled ? controls.current : button)?.focus();
+            // Release the host's pin only after focus has landed back inside
+            // the controls, so a focus-within reveal takes over seamlessly.
+            onConfirmOpenChange?.(false);
           }}
           // Likewise, a click on the anchor would dismiss and then immediately
           // re-open via the button's own handler. Let the button toggle instead.
