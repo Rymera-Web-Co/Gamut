@@ -28,6 +28,7 @@ import {
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
+import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
 import { AutoPullMenuItem } from "@/features/repos/AutoPullMenuItem";
 import { ConfirmRemoveReposDialog } from "@/features/repos/ConfirmRemoveReposDialog";
@@ -515,18 +516,22 @@ function RepoRow({
           </button>
         </div>
         {/* Branch line: the branch gets its own row so it never crowds the repo
-            name out of line one (#312). Hovering (or keyboard focus) swaps the
-            passive ahead/behind counts for the pull/push controls, so any repo
-            can sync without being selected first. */}
+            name out of line one (#312). The name is a switcher (#315), so any
+            repo can change branches without being selected first; hovering (or
+            keyboard focus) swaps the passive ahead/behind counts for the
+            pull/push controls, so any repo can sync without being selected
+            first too. */}
         {!repo.missing && repo.is_git_repo && status?.branch && (
           // 22px = line one's icon (size-3.5, 14px) + gap-2 (8px), so the
           // branch starts flush under the repo name.
           <div className="flex min-h-6 items-center gap-1.5 pb-0.5 pl-[22px]">
-            <span
-              className="min-w-0 flex-1 truncate text-[11px] leading-tight text-[var(--color-faint)]"
-              title={status.branch}
-            >
-              {status.branch}
+            {/* Clicks must not bubble into the row's activate(). */}
+            <span onClick={(e) => e.stopPropagation()} className="flex min-w-0 flex-1">
+              <BranchSwitcher
+                repoId={repo.id}
+                currentBranch={status.branch}
+                className="min-w-0 max-w-full"
+              />
             </span>
             <span
               className={cn(

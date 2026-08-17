@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   gitPush: vi.fn(),
   gitSyncStatus: vi.fn(),
   repoStatus: vi.fn(),
+  listBranches: vi.fn(),
+  listGitTags: vi.fn(),
+  checkoutBranch: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -42,6 +45,10 @@ vi.mock("@/lib/ipc", () => ({
     discoverRepos: vi.fn(),
     setRepoAutoPull: vi.fn(),
     terminalKill: mocks.terminalKill,
+    listBranches: mocks.listBranches,
+    listGitTags: mocks.listGitTags,
+    checkoutBranch: mocks.checkoutBranch,
+    createBranch: vi.fn(),
     terminalRegistryReport: vi.fn(() => Promise.resolve()),
     dbHealth: vi.fn().mockResolvedValue({ migrations: [], repo_count: 0 }),
   },
@@ -113,6 +120,14 @@ beforeEach(() => {
   mocks.gitSyncStatus
     .mockReset()
     .mockResolvedValue({ upstream: "origin/main", ahead: 0, behind: 0, unpublished_branch: null });
+  mocks.listBranches
+    .mockReset()
+    .mockResolvedValue([
+      { name: "feat/very-long-branch-name", is_head: true, is_remote: false },
+      { name: "main", is_head: false, is_remote: false },
+    ]);
+  mocks.listGitTags.mockReset().mockResolvedValue([]);
+  mocks.checkoutBranch.mockReset().mockResolvedValue(undefined);
   mocks.repoStatus.mockReset().mockResolvedValue({
     id: A.id,
     branch: "feat/very-long-branch-name",
@@ -259,6 +274,31 @@ describe("Sidebar repo row branch line (#312)", () => {
     expect(wrapper).not.toBeNull();
     expect(wrapper!.className).toContain("hidden");
     expect(wrapper!.className).toContain("group-focus-within/repo:block");
+  });
+
+  it("the branch name opens the switcher and lists branches without activating the repo (#315)", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByTitle("Switch branch or tag"));
+
+    // The lazy branch query fires for THIS row's repo, and the row's
+    // activate() never ran.
+    await vi.waitFor(() => expect(mocks.listBranches).toHaveBeenCalled());
+    expect(useUiStore.getState().activeRepoId).toBeNull();
+  });
+
+  it("picking a branch checks it out on that repo without activating it (#315)", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByTitle("Switch branch or tag"));
+    fireEvent.click(await screen.findByText("main"));
+
+    await vi.waitFor(() => expect(mocks.checkoutBranch).toHaveBeenCalledWith(A.id, "main"));
+    expect(useUiStore.getState().activeRepoId).toBeNull();
   });
 
   it("the row's pull button pulls that repo without activating it", async () => {

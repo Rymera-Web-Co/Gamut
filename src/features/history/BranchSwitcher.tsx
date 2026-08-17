@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
+import { cn } from "@/lib/utils";
 import { useRepos } from "@/features/repos/api";
 import { CleanupStaleDialog } from "./CleanupStaleDialog";
 
@@ -32,9 +33,13 @@ const HEAD_SENTINEL = "__head__";
 export function BranchSwitcher({
   repoId,
   currentBranch,
+  className,
 }: {
   repoId: number;
   currentBranch?: string | null;
+  /** Extra classes for the trigger button — hosts that need a different width
+   * (e.g. the sidebar's full-width branch line) override the default cap. */
+  className?: string;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -191,19 +196,24 @@ export function BranchSwitcher({
           <button
             title="Switch branch or tag"
             aria-busy={switching}
-            className={`flex items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)] ${
-              switching ? "pointer-events-none opacity-60" : ""
-            }`}
+            className={cn(
+              // max-w on the button (not the label span) so hosts can widen the
+              // whole trigger via `className`; the label truncates to whatever
+              // room the button ends up with.
+              "flex max-w-40 items-center gap-1 rounded px-1 py-0.5 text-[11px] font-medium text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] data-[state=open]:bg-[var(--color-accent)]",
+              switching && "pointer-events-none opacity-60",
+              className,
+            )}
           >
             {switching ? (
-              <Loader2 className="size-3 animate-spin text-[var(--color-muted-foreground)]" />
+              <Loader2 className="size-3 shrink-0 animate-spin text-[var(--color-muted-foreground)]" />
             ) : (
-              <GitBranch className="size-3 text-[var(--color-muted-foreground)]" />
+              <GitBranch className="size-3 shrink-0 text-[var(--color-muted-foreground)]" />
             )}
-            <span title={current} className="max-w-28 truncate">
+            <span title={current} className="min-w-0 truncate">
               {current}
             </span>
-            <ChevronDown className="size-2.5 opacity-60" />
+            <ChevronDown className="size-2.5 shrink-0 opacity-60" />
           </button>
         </PopoverTrigger>
 
