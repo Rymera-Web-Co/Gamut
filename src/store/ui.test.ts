@@ -162,6 +162,98 @@ describe("parseStoredTerminals", () => {
   });
 });
 
+describe("splitTerminal direction (#316)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useUiStore.setState({
+      terminals: {
+        1: {
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "t",
+              panes: [{ id: "term-1", cwd: "/repo" }],
+              activePaneId: "term-1",
+            },
+          ],
+        },
+      },
+      nextTermId: 2,
+    });
+  });
+
+  it("defaults to a row split", () => {
+    useUiStore.getState().splitTerminal(1, "/repo");
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    expect(tab.panes).toHaveLength(2);
+    expect(tab.direction).toBe("row");
+  });
+
+  it("splits down when asked (column)", () => {
+    useUiStore.getState().splitTerminal(1, "/repo", "column");
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    expect(tab.panes).toHaveLength(2);
+    expect(tab.direction).toBe("column");
+  });
+
+  it("an already-split tab keeps its direction — a later split only adds a pane", () => {
+    useUiStore.getState().splitTerminal(1, "/repo", "column");
+    useUiStore.getState().splitTerminal(1, "/repo", "row");
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    expect(tab.panes).toHaveLength(3);
+    expect(tab.direction).toBe("column");
+  });
+
+  it("a tab back down to one pane can re-split the other way", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "row");
+    const added = useUiStore.getState().terminals[1].tabs[0].panes[1].id;
+    s.closeTerminalPane(1, "tab-1", added);
+    useUiStore.getState().splitTerminal(1, "/repo", "column");
+    expect(useUiStore.getState().terminals[1].tabs[0].direction).toBe("column");
+  });
+});
+
+describe("parseStoredTerminals split direction (#316)", () => {
+  function tabWith(direction: unknown) {
+    return JSON.stringify({
+      terminals: {
+        1: {
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "t",
+              direction,
+              panes: [
+                { id: "term-1", cwd: "/a" },
+                { id: "term-2", cwd: "/a" },
+              ],
+              activePaneId: "term-1",
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  it("restores a persisted column direction", () => {
+    const { terminals } = parseStoredTerminals(tabWith("column"));
+    expect(terminals[1].tabs[0].direction).toBe("column");
+  });
+
+  it("accepts a tab with no direction (older blobs)", () => {
+    const { terminals } = parseStoredTerminals(blob());
+    expect(terminals[1].tabs[0].direction).toBeUndefined();
+  });
+
+  it("drops a tab whose direction is malformed", () => {
+    const { terminals } = parseStoredTerminals(tabWith("diagonal"));
+    expect(terminals[1]).toBeUndefined();
+  });
+});
+
 describe("showView (intentional workspace navigation)", () => {
   it("sets the view and leaves the full-screen terminal", () => {
     useUiStore.setState({ view: "files", terminalOpen: true });

@@ -96,7 +96,38 @@ describe("TerminalHeader", () => {
     render(<TerminalHeader />);
     const name = screen.getByText("Terminal").closest("button")!;
     expect(name.disabled).toBe(true);
-    expect((screen.getByLabelText("Split terminal") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Split terminal right") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByLabelText("Split terminal down") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("split right and split down add a pane in the chosen direction (#316)", () => {
+    seedTerminal();
+    render(<TerminalHeader />);
+
+    fireEvent.click(screen.getByLabelText("Split terminal down"));
+
+    const tab = useUiStore.getState().terminals[2].tabs[0];
+    expect(tab.panes).toHaveLength(2);
+    expect(tab.direction).toBe("column");
+  });
+
+  it("disables the other-direction split once a tab is split (#316)", () => {
+    seedTerminal();
+    render(<TerminalHeader />);
+
+    fireEvent.click(screen.getByLabelText("Split terminal right"));
+
+    // The tab is now a row split — split-down is off, split-right still on.
+    expect((screen.getByLabelText("Split terminal down") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByLabelText("Split terminal right") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 
   it("breadcrumb click opens the workspace with the session's repo", () => {

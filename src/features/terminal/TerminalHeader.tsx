@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, PanelLeft, PanelLeftClose, SplitSquareHorizontal } from "lucide-react";
+import {
+  Folder,
+  PanelLeft,
+  PanelLeftClose,
+  SplitSquareHorizontal,
+  SplitSquareVertical,
+} from "lucide-react";
 
 import { useGroups, useRepos } from "@/features/repos/api";
 import { pathBasename } from "@/lib/format";
@@ -147,17 +153,41 @@ export function TerminalHeader() {
         )}
       </div>
       <div className="flex-1" />
+      {/* One split direction per tab (#316): once a tab is split, the
+          other-direction button is disabled until it's back to one pane. */}
       <button
-        aria-label="Split terminal"
-        title="Split terminal (⌘D)"
-        disabled={!tab || !cwd || activeGroupId == null}
+        aria-label="Split terminal right"
+        title="Split right (⌘D)"
+        disabled={
+          !tab ||
+          !cwd ||
+          activeGroupId == null ||
+          (tab.panes.length > 1 && (tab.direction ?? "row") !== "row")
+        }
         onClick={() => {
           if (activeGroupId == null || !tab || !cwd) return;
-          splitTerminal(activeGroupId, cwd);
+          splitTerminal(activeGroupId, cwd, "row");
         }}
         className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
       >
         <SplitSquareHorizontal className="size-3.5" />
+      </button>
+      <button
+        aria-label="Split terminal down"
+        title="Split down (⌘⇧D)"
+        disabled={
+          !tab ||
+          !cwd ||
+          activeGroupId == null ||
+          (tab.panes.length > 1 && (tab.direction ?? "row") !== "column")
+        }
+        onClick={() => {
+          if (activeGroupId == null || !tab || !cwd) return;
+          splitTerminal(activeGroupId, cwd, "column");
+        }}
+        className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+      >
+        <SplitSquareVertical className="size-3.5" />
       </button>
       <button
         onClick={() => openWorkspace(cwdRepo)}

@@ -29,8 +29,9 @@ export interface CompareSelection {
 /**
  * Integrated-terminal model. Terminals are scoped to a **group**: each group
  * keeps its own set of tabs, so switching repos never disturbs them and
- * switching groups swaps the whole set. A tab holds one or more side-by-side
- * panes (a split); each pane is an independent PTY session keyed by `pane.id`.
+ * switching groups swaps the whole set. A tab holds one or more split panes —
+ * side by side (`row`) or stacked (`column`), one direction per tab (#316);
+ * each pane is an independent PTY session keyed by `pane.id`.
  */
 export interface TermPane {
   /** Opaque, process-unique PTY session id (the backend treats it as a key). */
@@ -50,10 +51,19 @@ export const ACTIVITY_PRIORITY: Record<TermActivityKind, number> = {
   bell: 1,
   exit: 2,
 };
+/** How a tab lays out its split panes: side by side or stacked. */
+export type SplitDirection = "row" | "column";
+
 export interface TermTab {
   id: string;
   /** Auto-derived default label (group/repo name), set once at creation. */
   title: string;
+  /**
+   * The tab's split direction: `row` = panes side by side (the default when
+   * absent), `column` = panes stacked. One direction per tab — set by the
+   * first split and kept until the tab is back to a single pane (#316).
+   */
+  direction?: SplitDirection;
   /**
    * User-chosen label that overrides `title` when set. Cleared (back to the
    * default) by renaming to an empty string. In-memory like the rest of the
@@ -126,6 +136,7 @@ function isValidTab(t: unknown): t is TermTab {
     typeof tab.id === "string" &&
     typeof tab.title === "string" &&
     (tab.customTitle === undefined || typeof tab.customTitle === "string") &&
+    (tab.direction === undefined || tab.direction === "row" || tab.direction === "column") &&
     Array.isArray(tab.panes) &&
     tab.panes.length > 0 &&
     tab.panes.every(isValidPane) &&
@@ -325,8 +336,13 @@ interface UiState {
   requestBackgroundTerminal: (paneId: string) => void;
   /** Drop a pane id from the background-spawn queue once it's been spawned. */
   clearBackgroundTerminal: (paneId: string) => void;
-  /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
-  splitTerminal: (groupId: number, cwd: string) => void;
+  /**
+   * Split the group's active tab, adding a pane rooted at `cwd`. `direction`
+   * (default `row` = side by side, `column` = stacked) only takes effect on the
+   * first split — an already-split tab keeps its direction and just gains a
+   * pane (#316).
+   */
+  splitTerminal: (groupId: number, cwd: string, direction?: SplitDirection) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
   renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
@@ -491,7 +507,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     ),
   clearBackgroundTerminal: (paneId) =>
     set((s) => ({ terminalBgQueue: s.terminalBgQueue.filter((id) => id !== paneId) })),
-  splitTerminal: (groupId, cwd) => {
+  splitTerminal: (groupId, cwd, direction = "row") => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;
     set((s) => {
@@ -499,7 +515,14 @@ export const useUiStore = create<UiState>((set, get) => ({
       if (!g || !g.activeTabId) return {};
       const tabs = g.tabs.map((t) =>
         t.id === g.activeTabId
-          ? { ...t, panes: [...t.panes, { id: paneId, cwd }], activePaneId: paneId }
+          ? {
+              ...t,
+              // The first split fixes the tab's direction; later splits only
+              // add a pane in that same direction (#316).
+              direction: t.panes.length > 1 ? (t.direction ?? "row") : direction,
+              panes: [...t.panes, { id: paneId, cwd }],
+              activePaneId: paneId,
+            }
           : t,
       );
       return {

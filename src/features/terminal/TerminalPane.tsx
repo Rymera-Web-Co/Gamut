@@ -6,7 +6,7 @@ import { useGroups, useRepos } from "@/features/repos/api";
 import { visibleRepos } from "@/lib/groupRepos";
 import { useSettings } from "@/lib/settings";
 import { useTheme } from "@/lib/theme";
-import { useUiStore } from "@/store/ui";
+import { useUiStore, type SplitDirection } from "@/store/ui";
 import { ActivityDot } from "./activity";
 import { xtermTheme } from "./terminalTheme";
 import { useTerminalSessions } from "./useTerminalSessions";
@@ -49,8 +49,10 @@ export function TerminalPane() {
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
   const activeTab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const activePanes = activeTab?.panes ?? [];
-  // Stable dep so the layout effect re-runs on tab/split changes.
-  const paneKey = `${activeGroupId}|${activeTab?.id ?? ""}|${activePanes
+  // Stable dep so the layout effect re-runs on tab/split changes. Includes the
+  // split direction so a direction flip relays the panes out (#316).
+  const direction = activeTab?.direction ?? "row";
+  const paneKey = `${activeGroupId}|${activeTab?.id ?? ""}|${direction}|${activePanes
     .map((p) => p.id)
     .join(",")}`;
 
@@ -107,11 +109,11 @@ export function TerminalPane() {
     }
   }
 
-  function handleSplit() {
+  function handleSplit(splitDirection: SplitDirection = "row") {
     if (activeGroupId == null || !activeTab) return;
     const active =
       activeTab.panes.find((p) => p.id === activeTab.activePaneId) ?? activeTab.panes[0];
-    splitTerminal(activeGroupId, active.cwd);
+    splitTerminal(activeGroupId, active.cwd, splitDirection);
   }
 
   function handleCloseTab(tabId: string) {
@@ -164,7 +166,8 @@ export function TerminalPane() {
             Restart shell
           </button>
         )}
-        {/* Per-split close buttons (only when the active tab is split). */}
+        {/* Per-split close buttons (only when the active tab is split), pinned
+            to each pane's top-right corner in either direction (#316). */}
         {n > 1 &&
           activePanes.map((pane, i) => (
             <button
@@ -172,14 +175,19 @@ export function TerminalPane() {
               title="Close split"
               aria-label="Close split"
               onClick={() => handleClosePane(pane.id)}
-              style={{ left: `calc(${((i + 1) * 100) / n}% - 1.5rem)`, top: "0.25rem" }}
+              style={
+                direction === "column"
+                  ? { right: "0.25rem", top: `calc(${(i * 100) / n}% + 0.25rem)` }
+                  : { left: `calc(${((i + 1) * 100) / n}% - 1.5rem)`, top: "0.25rem" }
+              }
               className="absolute z-10 flex size-5 items-center justify-center rounded bg-[var(--color-sidebar)]/80 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
             >
               <X className="size-3.5" />
             </button>
           ))}
         {/* Per-split activity markers: which split changed while you were away.
-            The focused pane is cleared, so this only marks the others. */}
+            The focused pane is cleared, so this only marks the others. Pinned
+            to each pane's top-left corner in either direction (#316). */}
         {n > 1 &&
           activePanes.map((pane, i) => {
             const kind = termActivity[pane.id];
@@ -190,7 +198,11 @@ export function TerminalPane() {
               <span
                 key={`act-${pane.id}`}
                 title="Unseen activity in this pane"
-                style={{ left: `calc(${(i * 100) / n}% + 0.5rem)`, top: "0.5rem" }}
+                style={
+                  direction === "column"
+                    ? { left: "0.5rem", top: `calc(${(i * 100) / n}% + 0.5rem)` }
+                    : { left: `calc(${(i * 100) / n}% + 0.5rem)`, top: "0.5rem" }
+                }
                 className="absolute z-10"
               >
                 <ActivityDot kind={kind} />

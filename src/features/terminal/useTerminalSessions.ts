@@ -438,8 +438,8 @@ export function useTerminalSessions({
     if (existing) return existing;
     const el = document.createElement("div");
     el.style.position = "absolute";
-    el.style.top = "0";
-    el.style.bottom = "0";
+    // top/height (and left/width) are assigned per layout pass — a pane's slot
+    // depends on the tab's split direction (#316).
     el.style.display = "none";
     // The host is pointer-events:none (so empty-state/overlay controls stay
     // clickable through it); panes re-enable events to receive terminal input.
@@ -603,8 +603,11 @@ export function useTerminalSessions({
       });
   }
 
-  // Lay out the active tab's panes side by side; hide everything else. Spawn
-  // each visible pane lazily once the pane is actually open.
+  // Lay out the active tab's panes — side by side (`row`) or stacked
+  // (`column`, #316) per the tab's split direction; hide everything else.
+  // Spawn each visible pane lazily once the pane is actually open. Both axes
+  // are reassigned every pass (a pane node outlives its tab's direction, e.g.
+  // when a split collapses to one pane and re-splits the other way).
   useEffect(() => {
     if (!hostRef.current) return;
     for (const entry of sessionsRef.current.values()) {
@@ -613,12 +616,25 @@ export function useTerminalSessions({
     if (!terminalOpen || activePanes.length === 0) return;
 
     const n = activePanes.length;
+    const stacked = (activeTab?.direction ?? "row") === "column";
     activePanes.forEach((pane, i) => {
       const e = ensureEntry(pane);
       e.el.style.display = "block";
-      e.el.style.left = `${(i * 100) / n}%`;
-      e.el.style.width = `${100 / n}%`;
-      e.el.style.borderLeft = i > 0 ? "1px solid var(--color-border)" : "";
+      if (stacked) {
+        e.el.style.left = "0";
+        e.el.style.width = "100%";
+        e.el.style.top = `${(i * 100) / n}%`;
+        e.el.style.height = `${100 / n}%`;
+        e.el.style.borderTop = i > 0 ? "1px solid var(--color-border)" : "";
+        e.el.style.borderLeft = "";
+      } else {
+        e.el.style.left = `${(i * 100) / n}%`;
+        e.el.style.width = `${100 / n}%`;
+        e.el.style.top = "0";
+        e.el.style.height = "100%";
+        e.el.style.borderLeft = i > 0 ? "1px solid var(--color-border)" : "";
+        e.el.style.borderTop = "";
+      }
     });
 
     const raf = requestAnimationFrame(() => {
