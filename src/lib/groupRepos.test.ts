@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { Group, Repo } from "@/lib/ipc";
-import { repoInGroup, repoPathRelativeToGroupFolder, visibleRepos } from "@/lib/groupRepos";
+import {
+  groupToReveal,
+  repoInGroup,
+  repoPathRelativeToGroupFolder,
+  visibleRepos,
+} from "@/lib/groupRepos";
 
 function makeRepo(id: number, group_ids: number[]): Repo {
   return {
@@ -88,5 +93,35 @@ describe("repoPathRelativeToGroupFolder", () => {
   it("tolerates trailing slashes and mixed separators", () => {
     expect(repoPathRelativeToGroupFolder("/work/foo/bar/", "/work/")).toBe("foo/bar");
     expect(repoPathRelativeToGroupFolder("C:\\work\\foo\\bar", "C:\\work")).toBe("foo/bar");
+  });
+});
+
+describe("groupToReveal", () => {
+  const def = makeGroup(1, true);
+  const g2 = makeGroup(2, false);
+  const g3 = makeGroup(3, false);
+
+  it("keeps the active group when it already contains the repo", () => {
+    expect(groupToReveal(makeRepo(1, [2, 3]), g2, [def, g2, g3])).toBe(2);
+  });
+
+  it("keeps the default group active for an ungrouped repo", () => {
+    expect(groupToReveal(makeRepo(1, []), def, [def, g2])).toBe(1);
+  });
+
+  it("jumps to the repo's first group when the active group doesn't show it", () => {
+    expect(groupToReveal(makeRepo(1, [3]), g2, [def, g2, g3])).toBe(3);
+  });
+
+  it("falls back to the default group for an ungrouped repo seen from elsewhere", () => {
+    expect(groupToReveal(makeRepo(1, []), g2, [g2, def, g3])).toBe(1);
+  });
+
+  it("falls back to the first group when no group is flagged default", () => {
+    expect(groupToReveal(makeRepo(1, []), g3, [g2, g3])).toBe(2);
+  });
+
+  it("returns null when there are no groups at all", () => {
+    expect(groupToReveal(makeRepo(1, []), undefined, [])).toBeNull();
   });
 });

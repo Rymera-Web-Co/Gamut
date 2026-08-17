@@ -1,17 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ImperativePanelHandle } from "react-resizable-panels";
 
-import { GroupRail } from "@/features/repos/GroupRail";
 import { RepoConfigDialog } from "@/features/repos/RepoConfigDialog";
-import { RepoSidebar } from "@/features/repos/RepoSidebar";
-import { TopTabs } from "@/components/layout/TopTabs";
-import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
+import { Sidebar } from "@/features/nav/Sidebar";
+import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 import { Toaster } from "@/components/ui/toaster";
 import { FilesView } from "@/features/files/FilesView";
 import { HistoryView } from "@/features/history/HistoryView";
 import { ReviewView } from "@/features/review/ReviewView";
 import { PullsView } from "@/features/review/PullsView";
+import { TerminalHeader } from "@/features/terminal/TerminalHeader";
 import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { SettingsDialog } from "@/features/settings/SettingsDialog";
 import { CommandPalette } from "@/features/palette/CommandPalette";
@@ -23,6 +21,7 @@ import { ipc } from "@/lib/ipc";
 import { useSettings } from "@/lib/settings";
 import { checkForUpdatesOnLaunch, startUpdatePolling } from "@/lib/updater";
 import { useActiveRepoIsGit, useNonGitViewGuard } from "@/lib/useActiveRepo";
+import { useActiveGroupFallback } from "@/lib/useActiveGroupFallback";
 import { useActiveRepoReconciler } from "@/lib/useActiveRepoReconciler";
 import { useAutoFetch } from "@/lib/useAutoFetch";
 import { useAutoPull } from "@/lib/useAutoPull";
@@ -39,9 +38,12 @@ function StatusBar() {
     queryKey: ["db-health"],
     queryFn: ipc.dbHealth,
   });
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminals = useUiStore((s) => s.terminals);
+  const groupTerms = activeGroupId != null ? (terminals[activeGroupId]?.tabs.length ?? 0) : 0;
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t px-3 text-xs text-[var(--color-muted-foreground)]">
+    <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-[var(--color-sidebar)] px-3 text-[11px] text-[var(--color-muted-foreground)]">
       <span>Gamut</span>
       <span aria-hidden>·</span>
       {isError ? (
@@ -54,6 +56,12 @@ function StatusBar() {
       ) : (
         <span>connecting…</span>
       )}
+      {groupTerms > 0 && (
+        <span className="text-[var(--color-primary)]">
+          {groupTerms} terminal{groupTerms === 1 ? "" : "s"} in this group
+        </span>
+      )}
+      <span className="ml-auto hidden sm:inline">⌘K jump · ⌘` terminal · ⌘B sidebar</span>
     </footer>
   );
 }
@@ -62,8 +70,6 @@ export default function App() {
   const view = useUiStore((s) => s.view);
   const repoSidebarHidden = useUiStore((s) => s.repoSidebarHidden);
   const terminalOpen = useUiStore((s) => s.terminalOpen);
-  const terminalMaximized = useUiStore((s) => s.terminalMaximized);
-  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const loadSettings = useSettings((s) => s.load);
   const isGitRepo = useActiveRepoIsGit();
   useKeyboardShortcuts();
@@ -73,6 +79,7 @@ export default function App() {
   useAutoFetch();
   useAutoPull();
   useActiveRepoReconciler();
+  useActiveGroupFallback();
   useEmptyGroupSidebarReveal();
   useNonGitViewGuard();
   useMainThreadWatchdog();
@@ -107,100 +114,31 @@ export default function App() {
     return () => document.removeEventListener("contextmenu", onContextMenu);
   }, []);
 
-  // Imperatively collapse/expand the terminal panel to match `terminalOpen`,
-  // which can change from the keyboard shortcut, the close button, or opening a
-  // group terminal. The guard avoids a feedback loop with onCollapse/onExpand.
-  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
-  useEffect(() => {
-    const panel = terminalPanelRef.current;
-    if (!panel) return;
-    if (terminalOpen && panel.isCollapsed()) panel.expand();
-    else if (!terminalOpen && panel.isExpanded()) panel.collapse();
-  }, [terminalOpen]);
-
-  // Maximize/restore the terminal panel. Maximizing collapses the content panel
-  // to zero (its minSize drops to 0 while maximized) so the terminal fills the
-  // whole right column below the persistent top bar; restoring returns it to the
-  // size captured just before maximizing. Resets while the pane is hidden so
-  // reopening never restores into a stale size.
-  const preMaximizeSizeRef = useRef<number | null>(null);
-  useEffect(() => {
-    const panel = terminalPanelRef.current;
-    if (!panel) return;
-    if (!terminalOpen) {
-      preMaximizeSizeRef.current = null;
-      return;
-    }
-    if (terminalMaximized) {
-      preMaximizeSizeRef.current = panel.getSize();
-      panel.resize(100);
-    } else if (preMaximizeSizeRef.current != null) {
-      panel.resize(preMaximizeSizeRef.current);
-      preMaximizeSizeRef.current = null;
-    }
-  }, [terminalMaximized, terminalOpen]);
-
   return (
     <div className="flex h-full w-full flex-col">
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
-        <GroupRail />
-        {/* Vertical split to the right of the group rail: main content on top,
-            the integrated terminal pinned to the bottom. The rail stays outside
-            so the terminal spans the full width minus the rail. While the
-            terminal is maximized the content panel collapses to zero, so a
-            persistent top bar is rendered above the split to keep view tabs and
-            the maximize toggle reachable. */}
+        {!repoSidebarHidden && <Sidebar />}
+        {/* The main area shows one thing at a time: the full-height terminal
+            (when a terminal is open/focused) or the repo workspace. Both stay
+            mounted — the terminal is CSS-hidden rather than unmounted so its
+            xterm buffers and PTY sessions survive switching back and forth. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {terminalMaximized && <TopTabs />}
-          <PanelGroup direction="vertical" className="min-h-0 flex-1">
-            <Panel id="content" order={1} minSize={terminalMaximized ? 0 : 20} className="min-h-0">
-              <PanelGroup direction="horizontal" autoSaveId="gamut.layout.main" className="min-w-0">
-                {!repoSidebarHidden && (
-                  <Panel
-                    id="repos"
-                    order={1}
-                    defaultSize={20}
-                    minSize={12}
-                    maxSize={40}
-                    className="min-w-0"
-                  >
-                    <RepoSidebar />
-                  </Panel>
-                )}
-                {!repoSidebarHidden && <ResizeHandle />}
-                <Panel id="main" order={2} className="min-w-0">
-                  <main className="flex h-full min-w-0 flex-col">
-                    <TopTabs />
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      {view === "files" && <FilesView />}
-                      {isGitRepo && view === "history" && <HistoryView />}
-                      {isGitRepo && view === "review" && <ReviewView />}
-                      {isGitRepo && view === "pulls" && <PullsView />}
-                    </div>
-                  </main>
-                </Panel>
-              </PanelGroup>
-            </Panel>
-            <ResizeHandle
-              horizontal
-              className={terminalOpen && !terminalMaximized ? "" : "hidden"}
-            />
-            <Panel
-              id="terminal"
-              order={2}
-              ref={terminalPanelRef}
-              collapsible
-              collapsedSize={0}
-              defaultSize={terminalOpen ? 32 : 0}
-              minSize={12}
-              onCollapse={() => setTerminalOpen(false)}
-              onExpand={() => setTerminalOpen(true)}
-              className="min-h-0"
-            >
+          <div className={terminalOpen ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+            <TerminalHeader />
+            <div className="min-h-0 flex-1">
               <TerminalPane />
-            </Panel>
-          </PanelGroup>
+            </div>
+          </div>
+          <main className={terminalOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+            <WorkspaceHeader />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {view === "files" && <FilesView />}
+              {isGitRepo && view === "history" && <HistoryView />}
+              {isGitRepo && view === "review" && <ReviewView />}
+              {isGitRepo && view === "pulls" && <PullsView />}
+            </div>
+          </main>
         </div>
       </div>
       <StatusBar />

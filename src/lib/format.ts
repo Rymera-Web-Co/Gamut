@@ -92,3 +92,8 @@ export function formatTimestampMs(atMs: number): string {
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   return `${date} ${time}`;
 }
+
+/** Last path segment of a filesystem path (either separator style). */
+export function pathBasename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}

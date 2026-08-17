@@ -20,13 +20,13 @@ import { useUiStore } from "@/store/ui";
  * Global keyboard shortcuts, dispatched from the user-configurable binding map
  * (see `lib/shortcuts.ts` for the command set and `Settings → Keyboard` for
  * remapping). Defaults:
- *   ⌘/Ctrl+1–9 → select the Nth group in the rail (cmux-style; issue #95)
+ *   ⌘/Ctrl+1–9 → select the Nth group in the sidebar (cmux-style; issue #95)
  *   ⌃1–4 → Files / History / Review / Pull Requests
- *   ⌘/Ctrl+B repo sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
- *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal   ⌘/Ctrl+⇧+` maximize terminal
+ *   ⌘/Ctrl+B sidebar   ⌘/Ctrl+⇧+F repo-wide search   ⌘/Ctrl+J theme
+ *   ⌘/Ctrl+K command palette   ⌘/Ctrl+` terminal view
  *   ⌘/Ctrl+, settings   ⌥Z toggle editor word wrap
  *   ⌘/Ctrl+⇧+K push   ⌘/Ctrl+⇧+P pull
- *   ⌘/Ctrl+⌥+F fetch group   ⌘/Ctrl+↑/↓ cycle groups in the rail
+ *   ⌘/Ctrl+⌥+F fetch group   ⌘/Ctrl+↑/↓ cycle groups in the sidebar
  *   ⌃Tab / ⌃⇧Tab cycle repos in the active group
  *
  * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view, and
@@ -37,16 +37,16 @@ import { useUiStore } from "@/store/ui";
  * clash with editor bindings such as Monaco's ⌘⇧K (delete line).
  */
 export function useKeyboardShortcuts() {
-  const setView = useUiStore((s) => s.setView);
+  const showView = useUiStore((s) => s.showView);
   const toggleRepoSidebar = useUiStore((s) => s.toggleRepoSidebar);
   const toggleTerminal = useUiStore((s) => s.toggleTerminal);
-  const toggleTerminalMaximized = useUiStore((s) => s.toggleTerminalMaximized);
   const toggleSettings = useUiStore((s) => s.toggleSettings);
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const focusRepoSearch = useUiStore((s) => s.focusRepoSearch);
   const requestPushConfirm = useUiStore((s) => s.requestPushConfirm);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const toggleTheme = useTheme((s) => s.toggle);
@@ -77,10 +77,10 @@ export function useKeyboardShortcuts() {
     requestPushConfirm,
     setActiveRepo,
     setActiveGroup,
-    setView,
+    setTerminalOpen,
+    showView,
     toggleRepoSidebar,
     toggleTerminal,
-    toggleTerminalMaximized,
     toggleSettings,
     toggleCommandPalette,
     focusRepoSearch,
@@ -95,7 +95,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     // The repos shown in the active group, in sidebar order — kept in sync with
-    // RepoSidebar's own filter so cycling and group-fetch match what's visible.
+    // the Sidebar's group filter so cycling and group-fetch match what's visible.
     function visibleRepos() {
       const s = ref.current;
       const group = (s.groups ?? []).find((g) => g.id === s.activeGroupId);
@@ -117,6 +117,8 @@ export function useKeyboardShortcuts() {
       const next = cur < 0 ? visible[0] : visible[(cur + dir + visible.length) % visible.length];
       s.setActiveRepo(next.id);
       ipc.touchRepo(next.id);
+      // Cycling repos means "show me the workspace" — leave the terminal view.
+      s.setTerminalOpen(false);
       return true;
     }
 
@@ -147,10 +149,10 @@ export function useKeyboardShortcuts() {
     // anything else means handled → preventDefault. Most always handle; only
     // repo-cycling declines when there's nothing to cycle to.
     const handlers: Record<ShortcutId, () => boolean | void> = {
-      "view.files": () => ref.current.setView("files"),
-      "view.history": () => ref.current.setView("history"),
-      "view.review": () => ref.current.setView("review"),
-      "view.pulls": () => ref.current.setView("pulls"),
+      "view.files": () => ref.current.showView("files"),
+      "view.history": () => ref.current.showView("history"),
+      "view.review": () => ref.current.showView("review"),
+      "view.pulls": () => ref.current.showView("pulls"),
       selectGroup1: () => selectGroup(1),
       selectGroup2: () => selectGroup(2),
       selectGroup3: () => selectGroup(3),
@@ -165,7 +167,6 @@ export function useKeyboardShortcuts() {
       toggleTheme: () => ref.current.toggleTheme(),
       commandPalette: () => ref.current.toggleCommandPalette(),
       toggleTerminal: () => ref.current.toggleTerminal(),
-      maximizeTerminal: () => ref.current.toggleTerminalMaximized(),
       openSettings: () => ref.current.toggleSettings(),
       toggleWordWrap: () => {
         // Flip the persisted setting; every editor/diff/blame surface reads it
@@ -210,11 +211,21 @@ export function useKeyboardShortcuts() {
 
     // Select the Nth group in the rail (1-based), in rail order (`groups.data`).
     // Returns false for an out-of-range number so the key isn't swallowed.
+    // Group jumps keep the full-screen terminal only when the target group has
+    // sessions to show (cmux-style terminal cycling); a session-less group
+    // falls back to its workspace instead of the empty terminal state. Same
+    // rule as the palette's group jump.
+    function leaveTerminalIfGroupHasNoSessions(groupId: number) {
+      const gt = useUiStore.getState().terminals[groupId];
+      if (!gt?.tabs.length) ref.current.setTerminalOpen(false);
+    }
+
     function selectGroup(n: number): boolean {
       const s = ref.current;
       const group = (s.groups ?? [])[n - 1];
       if (!group) return false;
       s.setActiveGroup(group.id);
+      leaveTerminalIfGroupHasNoSessions(group.id);
       return true;
     }
 
@@ -228,6 +239,7 @@ export function useKeyboardShortcuts() {
       const cur = list.findIndex((g) => g.id === s.activeGroupId);
       const next = cur < 0 ? list[0] : list[(cur + dir + list.length) % list.length];
       s.setActiveGroup(next.id);
+      leaveTerminalIfGroupHasNoSessions(next.id);
       return true;
     }
 

@@ -597,14 +597,6 @@ export interface FetchResult {
   error: string | null;
 }
 
-/** Per-repo outcome of a batch pull or push (`gitPullMany` / `gitPushMany`). One
- * repo failing never aborts the batch, so callers report the mix. */
-export interface SyncResult {
-  repo_id: number;
-  ok: boolean;
-  error: string | null;
-}
-
 /** Repo-wide find & replace query. `includes`/`excludes` are gitignore-style
  * globs (e.g. `src/**`, `*.rs`); empty `includes` means "everything". */
 export interface SearchQuery {
@@ -731,7 +723,6 @@ export const ipc = {
   /** Turn this repo's background auto-pull opt-in on or off (#299). */
   setRepoAutoPull: (repoId: number, enabled: boolean) =>
     invoke<void>("set_repo_auto_pull", { repoId, enabled }),
-  reorderRepos: (repoIds: number[]) => invoke<void>("reorder_repos", { repoIds }),
   discoverRepos: (root: string, maxDepth?: number) =>
     invoke<DiscoveredRepo[]>("discover_repos", { root, maxDepth }),
   listBranches: (repoId: number) => invoke<BranchInfo[]>("list_branches", { repoId }),
@@ -762,9 +753,6 @@ export const ipc = {
   gitFetch: (repoId: number) => invoke<string>("git_fetch", { repoId }),
   gitFetchMany: (repoIds: number[]) => invoke<FetchResult[]>("git_fetch_many", { repoIds }),
   gitPull: (repoId: number) => invoke<string>("git_pull", { repoId }),
-  /** Pull several repos in one round trip — a full `git pull` each, with bounded
-   * concurrency and per-repo results (not the ff-only auto-pull batch). */
-  gitPullMany: (repoIds: number[]) => invoke<SyncResult[]>("git_pull_many", { repoIds }),
   /**
    * Fast-forward the auto-pull-enabled repos among `repoIds` (#299). The backend
    * owns the safety decision: an ineligible repo (dirty, diverged, no upstream)
@@ -772,8 +760,6 @@ export const ipc = {
    */
   gitPullFfMany: (repoIds: number[]) => invoke<AutoPullResult[]>("git_pull_ff_many", { repoIds }),
   gitPush: (repoId: number) => invoke<string>("git_push", { repoId }),
-  /** Push several repos in one round trip; a branch with no upstream gets one set. */
-  gitPushMany: (repoIds: number[]) => invoke<SyncResult[]>("git_push_many", { repoIds }),
   gitCheckoutPr: (repoId: number, number: number, headRef: string) =>
     invoke<string>("git_checkout_pr", { repoId, number, headRef }),
 
@@ -820,7 +806,6 @@ export const ipc = {
     invoke<void>("bind_group_folder", { id, folderPath }),
   /** Detach a group from its bound folder (keeps existing members). */
   unbindGroupFolder: (id: number) => invoke<void>("unbind_group_folder", { id }),
-  reorderGroups: (groupIds: number[]) => invoke<void>("reorder_groups", { groupIds }),
   deleteGroup: (id: number) => invoke<void>("delete_group", { id }),
   setRepoGroups: (repoId: number, groupIds: number[]) =>
     invoke<void>("set_repo_groups", { repoId, groupIds }),

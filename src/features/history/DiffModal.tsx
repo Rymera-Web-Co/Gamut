@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monacoTheme";
+import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { useBlame, useFileDiff } from "./api";
@@ -120,7 +120,7 @@ export function DiffModal({
           ) : mode === "diff" ? (
             <CodeDiffEditor
               height="100%"
-              theme={isDark ? GITHUB_DARK : "light"}
+              theme={isDark ? GAMUT_DARK : "light"}
               language={languageFor(path)}
               original={diff.data?.old_text ?? ""}
               modified={diff.data?.new_text ?? ""}

@@ -1,0 +1,1188 @@
+import { useEffect, useRef, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ChevronRight,
+  Copy,
+  Folder,
+  FolderGit2,
+  FolderSearch,
+  GitBranch,
+  Globe,
+  Link as LinkIcon,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Settings,
+  SquareTerminal,
+  Trash2,
+  X,
+} from "lucide-react";
+
+import {
+  ContextMenu,
+  ContextMenuItem,
+  type ContextMenuPosition,
+} from "@/components/ui/context-menu";
+import { GitHubConnect } from "@/features/github/GitHubConnect";
+import { AutoPullMenuItem } from "@/features/repos/AutoPullMenuItem";
+import { ConfirmRemoveReposDialog } from "@/features/repos/ConfirmRemoveReposDialog";
+import { DiscoverDialog } from "@/features/repos/DiscoverDialog";
+import { GroupDialog } from "@/features/repos/GroupDialog";
+import {
+  useFetchGroup,
+  useGroups,
+  useLinkedWorktrees,
+  useRegisterRepo,
+  useRemoveRepos,
+  useRepoRemoteUrl,
+  useRepoStatuses,
+  useRepos,
+  useSetRepoGroups,
+} from "@/features/repos/api";
+import { activityColor, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
+import { canAutoPull } from "@/lib/autoPull";
+import { copy } from "@/lib/clipboard";
+import { GROUP_ICONS, groupColor, groupInitials } from "@/lib/groupIcons";
+import { groupToReveal, visibleRepos } from "@/lib/groupRepos";
+import {
+  ipc,
+  pickDirectory,
+  type Group,
+  type LinkedWorktree,
+  type Repo,
+  type RepoStatus,
+} from "@/lib/ipc";
+import { pathBasename } from "@/lib/format";
+import { useSettings } from "@/lib/settings";
+import { cn } from "@/lib/utils";
+import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
+
+// Resizable sidebar width, persisted across launches. Clamped so it can
+// neither collapse into uselessness nor swallow the workspace.
+// Under the gamut.layout prefix so Settings' "Reset saved panel layouts"
+// clears it along with the other persisted layout state.
+const SIDEBAR_WIDTH_KEY = "gamut.layout.sidebarWidth";
+const SIDEBAR_WIDTH_DEFAULT = 280;
+const SIDEBAR_WIDTH_MIN = 220;
+const SIDEBAR_WIDTH_MAX = 480;
+
+function clampSidebarWidth(w: number): number {
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(w)));
+}
+
+function storedSidebarWidth(): number {
+  const n = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  return Number.isFinite(n) && n > 0 ? clampSidebarWidth(n) : SIDEBAR_WIDTH_DEFAULT;
+}
+
+/** Right-aligned state label for a terminal row's unseen activity. */
+function activityLabel(kind: TermActivityKind): string {
+  switch (kind) {
+    case "exit":
+      return "exited";
+    case "bell":
+      return "needs input";
+    default:
+      return "active";
+  }
+}
+
+/**
+ * One terminal session row in the flat, cross-group rail at the top of the
+ * sidebar. Clicking focuses that terminal (group + tab + pane); the hover X
+ * kills its panes' PTYs and drops the tab (ports the popup close control,
+ * #280). Right-click opens a session menu (focus / rename / copy path / open
+ * repo workspace / close); rename happens inline in the row.
+ */
+function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const terminals = useUiStore((s) => s.terminals);
+  const termActivity = useUiStore((s) => s.termActivity);
+  const focusTerminal = useUiStore((s) => s.focusTerminal);
+  const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
+  const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const repos = useRepos();
+  const groups = useGroups();
+
+  const activity = tabActivityKind(tab, termActivity);
+  const current =
+    terminalOpen && group.id === activeGroupId && terminals[group.id]?.activeTabId === tab.id;
+  const cwd = tab.panes[0]?.cwd ?? "";
+  // The registered repo this session is rooted in, when its cwd matches one.
+  const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
+
+  const [menuAt, setMenuAt] = useState<ContextMenuPosition | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const renameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) renameRef.current?.select();
+  }, [editing]);
+
+  function commitRename() {
+    renameTerminalTab(group.id, tab.id, draft);
+    setEditing(false);
+  }
+
+  function closeTab() {
+    tab.panes.forEach((pane) => {
+      ipc.terminalKill(pane.id).catch(() => {});
+    });
+    closeTerminalTab(group.id, tab.id);
+  }
+
+  return (
+    <>
+      {/* A plain div, not role="button": the row nests real buttons (label,
+          close), and interactive descendants inside a button role are invalid
+          ARIA. Mouse users click anywhere on the row; keyboard users get the
+          focusable label button. */}
+      <div
+        onClick={() => {
+          if (!editing) focusTerminal(group.id, tab.id, tab.activePaneId);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenuAt({ x: e.clientX, y: e.clientY });
+        }}
+        className={cn(
+          "group/term flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
+          current
+            ? "border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
+            : "hover:bg-[var(--color-accent)]",
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn("size-[7px] shrink-0 rounded-full", !activity && "gamut-pulse")}
+          style={{ background: activity ? activityColor(activity) : "var(--color-primary)" }}
+        />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              ref={renameRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              aria-label="Rename terminal"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] px-1 text-[12.5px] leading-[17px] text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+            />
+          ) : (
+            <button
+              aria-current={current || undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                focusTerminal(group.id, tab.id, tab.activePaneId);
+              }}
+              className={cn(
+                "block w-full min-w-0 truncate text-left text-[12.5px] leading-[17px]",
+                current
+                  ? "font-semibold text-[var(--color-foreground)]"
+                  : "font-medium text-[var(--color-secondary-foreground)]",
+              )}
+            >
+              {termTabLabel(tab)}
+            </button>
+          )}
+          <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
+            {group.name}
+            {cwd ? ` · ${pathBasename(cwd)}` : ""}
+          </div>
+        </div>
+        {activity && (
+          <span
+            className="shrink-0 text-[11px] font-semibold group-focus-within/term:hidden group-hover/term:hidden"
+            style={{ color: activityColor(activity) }}
+          >
+            {activityLabel(activity)}
+          </span>
+        )}
+        {/* `hidden` would drop the control from the tab order, so keyboard users
+          could never reach it — reveal on focus-within too (row + button). */}
+        <button
+          aria-label={`Close ${termTabLabel(tab)} terminal`}
+          title="Close terminal"
+          onClick={(e) => {
+            e.stopPropagation();
+            closeTab();
+          }}
+          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-foreground)] group-focus-within/term:flex group-hover/term:flex"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {/* Session menu — a sibling of the row so overlay/menu clicks never
+          bubble into the row's focus handler. */}
+      <ContextMenu at={menuAt} onClose={() => setMenuAt(null)}>
+        <ContextMenuItem
+          onClick={() => {
+            focusTerminal(group.id, tab.id, tab.activePaneId);
+            setMenuAt(null);
+          }}
+        >
+          <SquareTerminal />
+          Open terminal
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={() => {
+            setDraft(termTabLabel(tab));
+            setEditing(true);
+            setMenuAt(null);
+          }}
+        >
+          <Pencil />
+          Rename terminal
+        </ContextMenuItem>
+        {cwd && (
+          <ContextMenuItem
+            onClick={() => {
+              void copy(cwd, "Copied path");
+              setMenuAt(null);
+            }}
+          >
+            <LinkIcon />
+            Copy path
+          </ContextMenuItem>
+        )}
+        {cwdRepo && (
+          <ContextMenuItem
+            onClick={() => {
+              // The repo may have left the session's group since the terminal
+              // opened — open a group that actually contains it (shared rule,
+              // see groupToReveal) so the reconciler can't swap in a
+              // different repo.
+              const target = groupToReveal(cwdRepo, group, groups.data ?? []);
+              if (target != null) setActiveGroup(target);
+              setActiveRepo(cwdRepo.id);
+              ipc.touchRepo(cwdRepo.id);
+              setTerminalOpen(false);
+              setMenuAt(null);
+            }}
+          >
+            <FolderGit2 />
+            Open repo workspace
+          </ContextMenuItem>
+        )}
+        <div className="my-1 border-t border-[var(--color-border)]" />
+        <ContextMenuItem
+          className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+          onClick={() => {
+            closeTab();
+            setMenuAt(null);
+          }}
+        >
+          <Trash2 />
+          Close terminal
+        </ContextMenuItem>
+      </ContextMenu>
+    </>
+  );
+}
+
+/**
+ * One linked worktree, nested under its repo row. Selecting it keeps the repo
+ * active for the content views but roots new terminals at the worktree's
+ * checkout.
+ */
+function WorktreeRow({
+  repo,
+  groupId,
+  worktree,
+}: {
+  repo: Repo;
+  groupId: number;
+  worktree: LinkedWorktree;
+}) {
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
+  const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const active = activeRepoId === repo.id && activeWorktreePath === worktree.path;
+  const label = worktree.branch ?? pathBasename(worktree.path);
+
+  const activate = () => {
+    if (worktree.missing) return;
+    setActiveRepo(repo.id, worktree.path);
+    ipc.touchRepo(repo.id);
+    // Selecting a worktree means "show me the workspace" — leave the terminal.
+    setTerminalOpen(false);
+  };
+
+  return (
+    // Plain div (see TerminalRow): the focusable activation control is the
+    // label button, so nested buttons stay valid ARIA.
+    <div
+      title={worktree.missing ? "Checkout folder no longer exists on disk" : worktree.path}
+      onClick={activate}
+      className={cn(
+        "group/wt ml-5 flex cursor-pointer items-center gap-2 rounded-md border border-transparent py-1 pl-2 pr-2 text-xs",
+        worktree.missing && "cursor-default opacity-60",
+        active
+          ? "border-[var(--color-border)] bg-[var(--color-card)] font-medium text-[var(--color-foreground)]"
+          : "text-[var(--color-secondary-foreground)] hover:bg-[var(--color-accent)]",
+      )}
+    >
+      {worktree.missing ? (
+        <AlertTriangle className="size-3.5 shrink-0 text-[var(--color-destructive)]" />
+      ) : (
+        <GitBranch
+          className={cn(
+            "size-3.5 shrink-0",
+            active ? "text-[var(--color-primary)]" : "text-[var(--color-muted-foreground)]",
+          )}
+        />
+      )}
+      <button
+        aria-current={active || undefined}
+        disabled={worktree.missing}
+        onClick={(e) => {
+          e.stopPropagation();
+          activate();
+        }}
+        className={cn(
+          "min-w-0 flex-1 truncate text-left leading-tight",
+          worktree.missing && "line-through decoration-[var(--color-destructive)]/60",
+        )}
+      >
+        {label}
+      </button>
+      {/* Revealed on focus-within too so keyboard users can reach it. */}
+      {!worktree.missing && (
+        <button
+          aria-label={`Open terminal in ${repo.name} (${label})`}
+          title="Open terminal here"
+          onClick={(e) => {
+            e.stopPropagation();
+            addTerminalTab(groupId, worktree.path, `${repo.name} (${label})`);
+          }}
+          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] group-focus-within/wt:flex group-hover/wt:flex"
+        >
+          <SquareTerminal className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** One repo row inside an expanded group. */
+function RepoRow({
+  repo,
+  groupId,
+  status,
+  isSyncedRoot = false,
+  onContextMenu,
+  onRequestRemove,
+}: {
+  repo: Repo;
+  groupId: number;
+  status?: RepoStatus;
+  /** This repo is a folder-bound group's synced root — tagged with a badge. */
+  isSyncedRoot?: boolean;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onRequestRemove: (repo: Repo) => void;
+}) {
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
+  const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setActiveRepo = useUiStore((s) => s.setActiveRepo);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const active =
+    activeRepoId === repo.id && activeGroupId === groupId && activeWorktreePath == null;
+
+  // Only run `git worktree list` for repos that actually have linked worktrees
+  // (live status flag wins once loaded; the persisted flag gates the first scan).
+  const hasWorktrees = status?.has_worktrees ?? repo.has_worktrees;
+  const worktrees = useLinkedWorktrees(repo.id, repo.is_git_repo && !repo.missing && hasWorktrees);
+
+  const activate = () => {
+    setActiveGroup(groupId);
+    setActiveRepo(repo.id);
+    ipc.touchRepo(repo.id);
+    // Selecting a repo means "show me the workspace" — leave the terminal.
+    setTerminalOpen(false);
+  };
+
+  return (
+    <>
+      <div
+        title={repo.missing ? "Folder no longer exists on disk" : repo.path}
+        onClick={activate}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onContextMenu(e);
+        }}
+        className={cn(
+          "group/repo flex min-h-7 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 text-[12.5px]",
+          repo.missing && "opacity-60",
+          active
+            ? "border-[var(--color-border)] bg-[var(--color-card)] font-medium text-[var(--color-foreground)] shadow-sm"
+            : "text-[var(--color-secondary-foreground)] hover:bg-[var(--color-accent)]",
+        )}
+      >
+        {repo.missing ? (
+          <AlertTriangle className="size-3.5 shrink-0 text-[var(--color-destructive)]" />
+        ) : repo.is_git_repo ? (
+          <FolderGit2
+            className={cn(
+              "size-3.5 shrink-0",
+              active ? "text-[var(--color-primary)]" : "text-[var(--color-faint)]",
+            )}
+          />
+        ) : (
+          <Folder
+            className="size-3.5 shrink-0 text-[var(--color-faint)]"
+            aria-label="Not a git repository"
+          />
+        )}
+        <button
+          aria-current={active || undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            activate();
+          }}
+          className={cn(
+            "min-w-0 flex-1 truncate text-left leading-tight",
+            repo.missing && "line-through decoration-[var(--color-destructive)]/60",
+          )}
+        >
+          {repo.name}
+        </button>
+        {isSyncedRoot && (
+          <span
+            title="This group’s synced folder (root)"
+            className="shrink-0 rounded bg-[var(--color-primary-soft)] px-1 py-px text-[9px] font-semibold uppercase leading-tight tracking-wide text-[var(--color-primary)]"
+          >
+            root
+          </span>
+        )}
+        {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
+          <span
+            role="img"
+            aria-label="Uncommitted changes"
+            title="Uncommitted changes"
+            className="size-1.5 shrink-0 rounded-full bg-[var(--color-warning)]"
+          />
+        )}
+        <span className="flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden">
+          {status != null && status.ahead > 0 && (
+            <span
+              title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead of upstream`}
+              className="text-[11px] font-semibold text-[var(--color-warning)]"
+            >
+              {status.ahead}↑
+            </span>
+          )}
+          {status?.branch && (
+            <span className="text-[11px] text-[var(--color-faint)]">{status.branch}</span>
+          )}
+        </span>
+        {/* Revealed on focus-within too so keyboard users can reach them. */}
+        {!repo.missing && (
+          <button
+            aria-label={`Open terminal in ${repo.name}`}
+            title="Open terminal here"
+            onClick={(e) => {
+              e.stopPropagation();
+              addTerminalTab(groupId, repo.path, repo.name);
+            }}
+            className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] group-focus-within/repo:flex group-hover/repo:flex"
+          >
+            <SquareTerminal className="size-3.5" />
+          </button>
+        )}
+        <button
+          aria-label={`Remove ${repo.name} from Gamut`}
+          title="Remove from Gamut"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRequestRemove(repo);
+          }}
+          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-destructive)] group-focus-within/repo:flex group-hover/repo:flex"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      </div>
+      {(worktrees.data ?? []).map((w) => (
+        <WorktreeRow key={w.path} repo={repo} groupId={groupId} worktree={w} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * The unified left sidebar ("Model C"): a flat terminal rail on top — every
+ * open session across all groups, one move away — and the groups below as an
+ * accordion holding their repos. One group is expanded at a time; selecting a
+ * repo opens the repo workspace on the right.
+ */
+export function Sidebar() {
+  const groups = useGroups();
+  const repos = useRepos();
+  const statuses = useRepoStatuses();
+  const registerRepo = useRegisterRepo();
+  const removeRepos = useRemoveRepos();
+  const setRepoGroups = useSetRepoGroups();
+  const fetchGroup = useFetchGroup();
+  const showSyncedRoot = useSettings((s) => s.values.showSyncedRoot);
+
+  const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const activeRepoId = useUiStore((s) => s.activeRepoId);
+  const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
+  const addTerminalTab = useUiStore((s) => s.addTerminalTab);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
+  const toggleSettings = useUiStore((s) => s.toggleSettings);
+  const openRepoConfig = useUiStore((s) => s.openRepoConfig);
+  const terminals = useUiStore((s) => s.terminals);
+  const termActivity = useUiStore((s) => s.termActivity);
+
+  const list = groups.data ?? [];
+  const allRepos = repos.data ?? [];
+  const statusById = new Map((statuses.data ?? []).map((s) => [s.id, s]));
+  const defaultGroup = list.find((g) => g.is_default) ?? list[0];
+
+  // Accordion state: which group's repos are shown. Follows the active group
+  // (⌘1–9, palette, group memory) but can be collapsed independently.
+  const [expandedId, setExpandedId] = useState<number | null>(activeGroupId);
+  useEffect(() => {
+    if (activeGroupId != null) setExpandedId(activeGroupId);
+  }, [activeGroupId]);
+
+  // Drag-resizable width (persisted). Listeners attach on pointerdown and
+  // detach on release, and the drag writes the aside's width imperatively so
+  // pointermove never re-renders the whole sidebar; the React state (and
+  // localStorage) commit once on release. pointercancel (OS interruption, app
+  // switch) releases exactly like pointerup so the col-resize cursor and drag
+  // state can't get stuck.
+  const [width, setWidthState] = useState(storedSidebarWidth);
+  const widthRef = useRef(width);
+  function applyWidth(w: number, persist: boolean) {
+    const clamped = clampSidebarWidth(w);
+    widthRef.current = clamped;
+    setWidthState(clamped);
+    if (persist) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+  }
+  function beginResizeDrag(e: React.PointerEvent) {
+    e.preventDefault();
+    const from = { x: e.clientX, width: widthRef.current };
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) => {
+      widthRef.current = clampSidebarWidth(from.width + (ev.clientX - from.x));
+      const el = asideRef.current;
+      if (el) el.style.width = `${widthRef.current}px`;
+    };
+    const endDrag = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      document.body.style.cursor = "";
+      applyWidth(widthRef.current, true);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+  }
+
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<Repo[] | null>(null);
+  // A group switch (⌘1–9 works while the dialog is open) changes what's on
+  // screen — drop a pending remove confirmation rather than confirm blind.
+  useEffect(() => {
+    setRemoveTarget(null);
+  }, [activeGroupId]);
+  const [folderOver, setFolderOver] = useState(false);
+  const asideRef = useRef<HTMLElement>(null);
+  const [menu, setMenu] = useState<
+    | { at: ContextMenuPosition; kind: "repo"; repo: Repo; groupId: number }
+    | { at: ContextMenuPosition; kind: "group"; group: Group }
+    | null
+  >(null);
+
+  const menuRepo = menu?.kind === "repo" ? menu.repo : null;
+  const { data: remoteUrl } = useRepoRemoteUrl(
+    menuRepo?.id ?? null,
+    !!menuRepo && menuRepo.is_git_repo && !menuRepo.missing,
+  );
+
+  // Flat terminal rail: every open tab across all groups, in group order.
+  const termEntries = list.flatMap((g) =>
+    (terminals[g.id]?.tabs ?? []).map((tab) => ({ group: g, tab })),
+  );
+  // "Running" approximates the design's state column with what we can know:
+  // a session counts until its shell exits (unseen-exit activity).
+  const runningCount = termEntries.filter(
+    ({ tab }) => tabActivityKind(tab, termActivity) !== "exit",
+  ).length;
+
+  // Root repos of folder-bound groups get hidden when the setting is off.
+  const rootRepoIds = new Set(
+    list.map((g) => g.root_repo_id).filter((id): id is number => id != null),
+  );
+
+  const activeGroup = list.find((g) => g.id === activeGroupId);
+  const activeRepo = allRepos.find((r) => r.id === activeRepoId);
+  // Where the "New terminal" button roots its shell: the selected worktree,
+  // else the active repo, else the active group's bound folder.
+  const newTermTarget = activeWorktreePath
+    ? {
+        path: activeWorktreePath,
+        title: activeRepo ? activeRepo.name : pathBasename(activeWorktreePath),
+      }
+    : activeRepo
+      ? { path: activeRepo.path, title: activeRepo.name }
+      : activeGroup?.folder_path
+        ? { path: activeGroup.folder_path, title: activeGroup.name }
+        : null;
+
+  // Git repos list first, plain folders after them (matching the old
+  // sidebar's git / "Folders" section order).
+  function groupRepos(g: Group): Repo[] {
+    const visible = visibleRepos(allRepos, g).filter(
+      (r) => showSyncedRoot || !rootRepoIds.has(r.id),
+    );
+    return [...visible.filter((r) => r.is_git_repo), ...visible.filter((r) => !r.is_git_repo)];
+  }
+
+  function toggleGroup(g: Group) {
+    if (expandedId === g.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(g.id);
+    setActiveGroup(g.id);
+    // Opening a group means "show me its workspace" — leave the terminal view.
+    setTerminalOpen(false);
+  }
+
+  async function addRepo(group: Group) {
+    const dir = await pickDirectory("Choose a folder");
+    if (!dir) return;
+    let repo;
+    try {
+      repo = await registerRepo.mutateAsync(dir);
+    } catch {
+      // Toasted by the global MutationCache onError handler
+      // (lib/queryClient.ts); swallowed here so the fire-and-forget callers
+      // don't surface an unhandled rejection.
+      return;
+    }
+    if (!group.is_default) {
+      setRepoGroups.mutate({ repoId: repo.id, groupIds: [group.id] });
+    }
+    setExpandedId(group.id);
+    setActiveGroup(group.id);
+  }
+
+  // Register folders dropped from the OS file manager (into the active group).
+  async function addDroppedFolders(paths: string[]) {
+    const group = list.find((g) => g.id === activeGroupId);
+    for (const path of paths) {
+      try {
+        const repo = await registerRepo.mutateAsync(path);
+        if (group && !group.is_default) {
+          setRepoGroups.mutate({ repoId: repo.id, groupIds: [group.id] });
+        }
+      } catch {
+        // The global MutationCache onError handler (lib/queryClient.ts) already
+        // toasts the failure; swallow here so the rest of the batch continues.
+      }
+    }
+  }
+  const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
+  dropHandlerRef.current = (paths) => void addDroppedFolders(paths);
+
+  // Accept folders dropped from the OS file manager onto the sidebar. Native
+  // drag-drop only exists inside the Tauri webview, so this is a no-op in a
+  // plain browser (dev/tests). Scoped to the sidebar by hit-testing the drop
+  // position (physical px → CSS px) against it.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const isOverSidebar = (px: number, py: number) => {
+      const el = asideRef.current;
+      if (!el) return false;
+      const dpr = window.devicePixelRatio || 1;
+      const x = px / dpr;
+      const y = py / dpr;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setFolderOver(isOverSidebar(p.position.x, p.position.y));
+        } else if (p.type === "leave") {
+          setFolderOver(false);
+        } else if (p.type === "drop") {
+          const inside = isOverSidebar(p.position.x, p.position.y);
+          setFolderOver(false);
+          if (inside && p.paths.length > 0) dropHandlerRef.current(p.paths);
+        }
+      })
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const { data: dbHealth, isError: dbError } = useQuery({
+    queryKey: ["db-health"],
+    queryFn: ipc.dbHealth,
+  });
+
+  return (
+    <aside
+      ref={asideRef}
+      aria-label="Terminals and groups"
+      className="relative flex h-full shrink-0 flex-col border-r"
+      style={{
+        width,
+        background: "var(--color-sidebar)",
+        borderColor: "var(--color-sidebar-border)",
+      }}
+    >
+      {/* Drag handle on the right edge. Keyboard: arrows nudge, Home (or
+          double-click) resets to the default — the ARIA separator pattern. */}
+      <div
+        role="separator"
+        tabIndex={0}
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={SIDEBAR_WIDTH_MIN}
+        aria-valuemax={SIDEBAR_WIDTH_MAX}
+        aria-valuenow={width}
+        title="Drag or use arrow keys to resize · double-click or Home to reset"
+        onPointerDown={beginResizeDrag}
+        onDoubleClick={() => applyWidth(SIDEBAR_WIDTH_DEFAULT, true)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") applyWidth(width - 16, true);
+          else if (e.key === "ArrowRight") applyWidth(width + 16, true);
+          else if (e.key === "Home") applyWidth(SIDEBAR_WIDTH_DEFAULT, true);
+          else return;
+          e.preventDefault();
+        }}
+        className="absolute -right-0.5 top-0 z-30 h-full w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/40 focus-visible:bg-[var(--color-primary)]/40 focus-visible:outline-none active:bg-[var(--color-primary)]/60"
+      />
+      {folderOver && (
+        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-[var(--color-primary)] bg-[var(--color-primary)]/10">
+          <span className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-[var(--color-primary-foreground)] shadow">
+            Drop to add repositories
+          </span>
+        </div>
+      )}
+
+      {/* ── Terminals ───────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-3.5 pb-1.5 pt-3.5">
+        <div className="text-[10.5px] font-bold uppercase tracking-[.13em] text-[var(--color-faint)]">
+          Terminals
+        </div>
+        {termEntries.length > 0 && (
+          <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--color-muted-foreground)]">
+            <span
+              aria-hidden
+              className="gamut-pulse size-1.5 rounded-full bg-[var(--color-primary)]"
+            />
+            {runningCount} running
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-px px-2">
+        {termEntries.map(({ group, tab }) => (
+          <TerminalRow key={`${group.id}:${tab.id}`} group={group} tab={tab} />
+        ))}
+        <button
+          disabled={!newTermTarget || activeGroupId == null}
+          title={
+            newTermTarget
+              ? `New terminal in ${newTermTarget.title}`
+              : "Select a repo or a folder-bound group first"
+          }
+          onClick={() => {
+            if (!newTermTarget || activeGroupId == null) return;
+            addTerminalTab(activeGroupId, newTermTarget.path, newTermTarget.title);
+          }}
+          className="mt-1 flex h-7 items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-2 text-[12.5px] font-medium text-[var(--color-muted-foreground)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:pointer-events-none disabled:opacity-50"
+        >
+          <Plus className="size-3.5" />
+          New terminal
+        </button>
+      </div>
+
+      <div className="mx-2.5 my-3 h-px bg-[var(--color-border)]" />
+
+      {/* ── Groups ──────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-3.5 pb-1.5">
+        <div className="text-[10.5px] font-bold uppercase tracking-[.13em] text-[var(--color-faint)]">
+          Groups
+        </div>
+        <span className="text-[10.5px] text-[var(--color-muted-foreground)]">
+          {allRepos.length} repo{allRepos.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {list.map((g) => {
+          const open = expandedId === g.id;
+          const reposIn = groupRepos(g);
+          const fetchableIds = reposIn.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
+          const Icon = g.icon ? GROUP_ICONS[g.icon] : null;
+          const activity = groupActivityKind(terminals[g.id], termActivity);
+          const running = (terminals[g.id]?.tabs.length ?? 0) > 0;
+          return (
+            <div key={g.id} className="flex flex-col">
+              {/* Plain div (see TerminalRow): the focusable expand/activate
+                  control is the label button, so the nested action buttons
+                  stay valid ARIA. */}
+              <div
+                onClick={() => toggleGroup(g)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ at: { x: e.clientX, y: e.clientY }, kind: "group", group: g });
+                }}
+                className={cn(
+                  "group/grp flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-1.5 transition-colors",
+                  g.id === activeGroupId
+                    ? "border-[var(--color-border)] bg-[var(--color-card)]"
+                    : "hover:bg-[var(--color-accent)]",
+                )}
+              >
+                <ChevronRight
+                  className={cn(
+                    "size-3 shrink-0 text-[var(--color-faint)] transition-transform",
+                    open && "rotate-90",
+                  )}
+                />
+                {/* Per-group identity colour (derived from the name — no
+                    schema change), echoing the design's colour squares. */}
+                <span
+                  aria-hidden
+                  className="flex size-4 shrink-0 items-center justify-center rounded text-[8px] font-bold text-white"
+                  style={{ background: groupColor(g.name) }}
+                >
+                  {Icon ? <Icon className="size-3" /> : groupInitials(g.name)}
+                </span>
+                <button
+                  aria-expanded={open}
+                  aria-current={g.id === activeGroupId || undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleGroup(g);
+                  }}
+                  className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold text-[var(--color-secondary-foreground)]"
+                >
+                  {g.name}
+                </button>
+                <div className="flex items-center gap-1.5 pr-0.5 group-focus-within/grp:hidden group-hover/grp:hidden">
+                  {activity && (
+                    <span
+                      aria-hidden
+                      className="size-1.5 rounded-full"
+                      style={{ background: activityColor(activity) }}
+                    />
+                  )}
+                  {!activity && running && (
+                    <span
+                      aria-hidden
+                      className="gamut-pulse size-1.5 rounded-full bg-[var(--color-primary)]"
+                    />
+                  )}
+                  <span className="text-[11px] tabular-nums text-[var(--color-faint)]">
+                    {reposIn.length}
+                  </span>
+                </div>
+                {/* Revealed on focus-within too, so keyboard users reach
+                    these after tabbing to the group's label button. */}
+                <div className="hidden items-center group-focus-within/grp:flex group-hover/grp:flex">
+                  <button
+                    aria-label={`Fetch all in ${g.name}`}
+                    title="Fetch all repositories in this group"
+                    disabled={fetchGroup.isPending || fetchableIds.length === 0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fetchGroup.mutate(fetchableIds);
+                    }}
+                    className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] disabled:opacity-40"
+                  >
+                    {fetchGroup.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3.5" />
+                    )}
+                  </button>
+                  {g.folder_path && (
+                    <button
+                      aria-label={`New terminal in ${g.name}`}
+                      title="New terminal in group folder"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveGroup(g.id);
+                        addTerminalTab(g.id, g.folder_path ?? "", g.name);
+                      }}
+                      className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)]"
+                    >
+                      <SquareTerminal className="size-3.5" />
+                    </button>
+                  )}
+                  <button
+                    aria-label={`Add repository to ${g.name}`}
+                    title="Add repository"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void addRepo(g);
+                    }}
+                    className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)]"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                  <button
+                    aria-label="Scan a folder for repositories"
+                    title="Scan a folder for repositories"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveGroup(g.id);
+                      setDiscoverOpen(true);
+                    }}
+                    className="flex size-5.5 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)]"
+                  >
+                    <FolderSearch className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {open && (
+                <div className="mb-1.5 ml-[13px] mt-0.5 flex flex-col gap-px border-l border-[var(--color-border)] pl-2">
+                  {reposIn.length === 0 ? (
+                    <p className="px-2 py-2 text-[11px] text-[var(--color-faint)]">
+                      No repositories. Use + on the group, or drop a folder here.
+                    </p>
+                  ) : (
+                    reposIn.map((r, i) => (
+                      <div key={r.id} className="contents">
+                        {/* Divider where the git repos end and plain folders
+                            begin (reposIn is ordered git-first). */}
+                        {!r.is_git_repo && i > 0 && reposIn[i - 1].is_git_repo && (
+                          <div className="mb-0.5 mt-1.5 px-2 text-[9.5px] font-semibold uppercase tracking-wide text-[var(--color-faint)]">
+                            Folders
+                          </div>
+                        )}
+                        <RepoRow
+                          repo={r}
+                          groupId={g.id}
+                          status={statusById.get(r.id)}
+                          isSyncedRoot={rootRepoIds.has(r.id)}
+                          onRequestRemove={(repo) => setRemoveTarget([repo])}
+                          onContextMenu={(e) =>
+                            setMenu({
+                              at: { x: e.clientX, y: e.clientY },
+                              kind: "repo",
+                              repo: r,
+                              groupId: g.id,
+                            })
+                          }
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button
+          onClick={() => {
+            setEditingGroup(null);
+            setGroupDialogOpen(true);
+          }}
+          className="mt-1 flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-[12px] font-medium text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        >
+          <Plus className="size-3.5" />
+          New group
+        </button>
+      </div>
+
+      {/* ── Footer ──────────────────────────────────────────────────── */}
+      <div
+        className="flex shrink-0 items-center gap-1 border-t px-2 py-1.5"
+        style={{ borderColor: "var(--color-sidebar-border)" }}
+      >
+        <GitHubConnect />
+        <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-muted-foreground)]">
+          {dbError ? (
+            <span className="text-[var(--color-destructive)]">backend offline</span>
+          ) : dbHealth ? (
+            `db ok · ${dbHealth.migrations.length} migration${dbHealth.migrations.length === 1 ? "" : "s"}`
+          ) : (
+            "connecting…"
+          )}
+        </span>
+        <button
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          onClick={toggleSettings}
+          className="flex size-7 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+        >
+          <Settings className="size-4" />
+        </button>
+      </div>
+
+      <DiscoverDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
+
+      <GroupDialog
+        group={editingGroup}
+        open={groupDialogOpen}
+        onOpenChange={setGroupDialogOpen}
+        onCreated={(g) => {
+          setActiveGroup(g.id);
+          setExpandedId(g.id);
+        }}
+        onDeleted={() => setActiveGroup(defaultGroup?.id ?? null)}
+      />
+
+      <ConfirmRemoveReposDialog
+        repos={removeTarget ?? []}
+        hasRoot={removeTarget?.some((r) => rootRepoIds.has(r.id)) ?? false}
+        open={removeTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveTarget(null);
+        }}
+        onConfirm={() => {
+          if (removeTarget) removeRepos.mutate(removeTarget.map((r) => r.id));
+          setRemoveTarget(null);
+        }}
+      />
+
+      <ContextMenu at={menu?.at ?? null} onClose={() => setMenu(null)}>
+        {menu?.kind === "repo" ? (
+          <>
+            {!menu.repo.missing && (
+              <ContextMenuItem
+                onClick={() => {
+                  addTerminalTab(menu.groupId, menu.repo.path, menu.repo.name);
+                  setMenu(null);
+                }}
+              >
+                <SquareTerminal />
+                Open terminal here
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem
+              onClick={() => {
+                void copy(menu.repo.path, "Copied path");
+                setMenu(null);
+              }}
+            >
+              <LinkIcon />
+              Copy path
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                void copy(menu.repo.name, "Copied name");
+                setMenu(null);
+              }}
+            >
+              <Copy />
+              Copy repo name
+            </ContextMenuItem>
+            {/* Config is git-only — a plain folder has no .git/config to show. */}
+            {!menu.repo.missing && menu.repo.is_git_repo && (
+              <ContextMenuItem
+                onClick={() => {
+                  openRepoConfig(menu.repo.id);
+                  setMenu(null);
+                }}
+              >
+                <Settings />
+                Repo settings…
+              </ContextMenuItem>
+            )}
+            {canAutoPull(menu.repo) && (
+              <AutoPullMenuItem repo={menu.repo} onDone={() => setMenu(null)} />
+            )}
+            {remoteUrl && (
+              <ContextMenuItem
+                onClick={() => {
+                  openUrl(remoteUrl).catch(() => {});
+                  setMenu(null);
+                }}
+              >
+                <Globe />
+                Open remote repo
+              </ContextMenuItem>
+            )}
+            <div className="my-1 border-t border-[var(--color-border)]" />
+            <ContextMenuItem
+              className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+              onClick={() => {
+                setRemoveTarget([menu.repo]);
+                setMenu(null);
+              }}
+            >
+              <Trash2 />
+              Remove repo
+            </ContextMenuItem>
+          </>
+        ) : menu?.kind === "group" ? (
+          <>
+            {menu.group.folder_path ? (
+              <ContextMenuItem
+                onClick={() => {
+                  setActiveGroup(menu.group.id);
+                  addTerminalTab(menu.group.id, menu.group.folder_path ?? "", menu.group.name);
+                  setMenu(null);
+                }}
+              >
+                <SquareTerminal />
+                Open terminal
+              </ContextMenuItem>
+            ) : (
+              <div className="px-3 py-1.5 text-xs text-[var(--color-muted-foreground)]">
+                Bind a folder to open a terminal
+              </div>
+            )}
+            <ContextMenuItem
+              onClick={() => {
+                setEditingGroup(menu.group);
+                setGroupDialogOpen(true);
+                setMenu(null);
+              }}
+            >
+              <Pencil />
+              Edit group
+            </ContextMenuItem>
+          </>
+        ) : null}
+      </ContextMenu>
+    </aside>
+  );
+}

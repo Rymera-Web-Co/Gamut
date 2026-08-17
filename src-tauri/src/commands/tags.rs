@@ -285,6 +285,8 @@ pub fn unbind_group_folder(app: AppHandle, state: State<AppState>, id: i64) -> A
 /// Persist a new ordering for groups (drag-and-drop in the rail). Every group,
 /// including the default one, can be placed anywhere; list_groups returns rows
 /// in this persisted `sort` order.
+/// NOTE: no frontend caller since the Model C redesign (PR #311) dropped
+/// group drag-and-drop reordering; kept for now — remove or re-expose with that feature's return.
 #[tauri::command]
 pub fn reorder_groups(state: State<AppState>, group_ids: Vec<i64>) -> AppResult<()> {
     let mut conn = lock(&state)?;

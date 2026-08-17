@@ -9,7 +9,7 @@
 // @monaco-editor/react loader on first editor use, keeping the multi-megabyte
 // "monaco" chunk out of the cold-start path (#141). The lazy editor wrappers in
 // `@/components/MonacoEditor` await this before rendering.
-import { GITHUB_DARK, githubDarkTheme } from "./monacoTheme";
+import { GAMUT_DARK, gamutDarkTheme } from "./monacoTheme";
 
 let setup: Promise<void> | undefined;
 
@@ -30,7 +30,7 @@ export function ensureMonaco(): Promise<void> {
       },
     };
 
-    monaco.editor.defineTheme(GITHUB_DARK, githubDarkTheme);
+    monaco.editor.defineTheme(GAMUT_DARK, gamutDarkTheme);
     loader.config({ monaco });
     await loader.init();
   })();

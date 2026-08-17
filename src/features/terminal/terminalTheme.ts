@@ -21,10 +21,10 @@ export const FONT_FAMILY =
 export function xtermTheme(theme: Theme) {
   return theme === "dark"
     ? {
-        background: "#1c2128",
+        background: "#14161d",
         foreground: "#adbac7",
         cursor: "#adbac7",
-        selectionBackground: "#3392ff55",
+        selectionBackground: "#16c2ae44",
         black: "#545d68",
         red: "#f47067",
         green: "#57ab5a",
@@ -43,10 +43,10 @@ export function xtermTheme(theme: Theme) {
         brightWhite: "#cdd9e5",
       }
     : {
-        background: "#f4f2ec",
+        background: "#ffffff",
         foreground: "#2b2b28",
         cursor: "#2b2b28",
-        selectionBackground: "#2563eb33",
+        selectionBackground: "#00a89633",
         black: "#24292e",
         red: "#d73a49",
         green: "#28a745",

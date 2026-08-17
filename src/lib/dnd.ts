@@ -148,32 +148,3 @@ function teardown() {
   // Let hover indicators clear now the drag is gone.
   if (wasActive) notifyMove();
 }
-
-/** Return a new array with `srcId` moved to just before `targetId`. */
-export function moveBefore<T>(items: T[], srcId: T, targetId: T): T[] {
-  if (srcId === targetId) return items;
-  const without = items.filter((x) => x !== srcId);
-  const idx = without.indexOf(targetId);
-  if (idx === -1) return items;
-  without.splice(idx, 0, srcId);
-  return without;
-}
-
-/**
- * Return a new array with `srcId` moved adjacent to `targetId`. `position`
- * decides whether it lands before or after the target, which lets a drop
- * reach the very end of the list (after the last item), not just "before".
- */
-export function moveAdjacent<T>(
-  items: T[],
-  srcId: T,
-  targetId: T,
-  position: "before" | "after",
-): T[] {
-  if (srcId === targetId) return items;
-  const without = items.filter((x) => x !== srcId);
-  const idx = without.indexOf(targetId);
-  if (idx === -1) return items;
-  without.splice(position === "after" ? idx + 1 : idx, 0, srcId);
-  return without;
-}

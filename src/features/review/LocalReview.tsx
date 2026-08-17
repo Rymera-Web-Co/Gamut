@@ -9,7 +9,7 @@ import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
 import { isDarkTheme, languageFor } from "@/lib/lang";
-import { GITHUB_DARK } from "@/lib/monacoTheme";
+import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
 import { useReviewDrafts, useDraftsFor } from "@/store/reviewDrafts";
 import { useUiStore } from "@/store/ui";
@@ -279,7 +279,7 @@ export function LocalReview({
               <div className="relative h-full overflow-hidden">
                 <CodeDiffEditor
                   height="100%"
-                  theme={isDarkTheme() ? GITHUB_DARK : "light"}
+                  theme={isDarkTheme() ? GAMUT_DARK : "light"}
                   language={languageFor(selected.path)}
                   original={diff.data.old_text ?? ""}
                   modified={diff.data.new_text ?? ""}

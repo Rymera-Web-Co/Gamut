@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { useGroups, useRepos } from "@/features/repos/api";
 import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
-import { repoInGroup } from "@/lib/groupRepos";
+import { groupToReveal } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { parsePaletteOrder, useSettings, type PaletteCategory } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -75,6 +75,7 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
@@ -99,7 +100,6 @@ export function CommandPalette() {
     const repoList = repos.data ?? [];
     const groupList = groups.data ?? [];
     const groupName = new Map(groupList.map((g) => [g.id, g.name]));
-    const defaultGroup = groupList.find((g) => g.is_default) ?? groupList[0];
 
     const out: PaletteItem[] = [];
 
@@ -107,6 +107,11 @@ export function CommandPalette() {
     // like the matching Group/Terminal entry does (revealing clears activity).
     const runGroup = (id: number) => () => {
       setActiveGroup(id);
+      // Keep the terminal view only when the target group has sessions to show
+      // (same rule as the ⌘1–9 / ⌘↑↓ group jumps); otherwise show the
+      // workspace instead of an empty terminal.
+      const gt = useUiStore.getState().terminals[id];
+      if (!gt?.tabs.length) setTerminalOpen(false);
       close();
     };
     const runTerminal = (groupId: number, tabId: string, paneId: string) => () => {
@@ -211,19 +216,14 @@ export function CommandPalette() {
         label: r.name,
         sublabel: r.path,
         run: () => {
-          // Setting the active repo alone switches the main view, but the repo
-          // sidebar is scoped to a group — so reveal the repo there too by
-          // switching to a group that contains it (its first group, or the
-          // default group for ungrouped repos), unless the current group
-          // already shows it. Mirrors the visibility rule in RepoSidebar.
+          // Reveal the repo's group too (shared rule — see groupToReveal), and
+          // leave the full-screen terminal so the jump is actually visible.
           const activeGroup = groupList.find((g) => g.id === activeGroupId);
-          const shownHere = repoInGroup(r, activeGroup);
-          if (!shownHere) {
-            const target = r.group_ids[0] ?? defaultGroup?.id ?? null;
-            if (target != null) setActiveGroup(target);
-          }
+          const target = groupToReveal(r, activeGroup, groupList);
+          if (target != null && target !== activeGroupId) setActiveGroup(target);
           setActiveRepo(r.id);
           void ipc.touchRepo(r.id);
+          setTerminalOpen(false);
           close();
         },
       });
@@ -338,6 +338,7 @@ export function CommandPalette() {
     activeRepoId,
     setActiveRepo,
     setActiveGroup,
+    setTerminalOpen,
     focusTerminal,
   ]);
 

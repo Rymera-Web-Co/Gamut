@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { setPendingCommand } from "@/features/terminal/pendingCommands";
-import { repoInGroup } from "@/lib/groupRepos";
+import { groupToReveal } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { useUiStore, type View } from "@/store/ui";
 
@@ -68,11 +68,9 @@ async function openTerm(nav: UiNav): Promise<void> {
 
     if (repo) {
       const current = groups.find((g) => g.id === groupId);
-      // Stay in the current group if the repo already lives there; otherwise jump
-      // to the repo's first group, or the default group when it's ungrouped.
-      if (!(current && repoInGroup(repo, current))) {
-        groupId = repo.group_ids[0] ?? defaultGroupId;
-      }
+      // Stay in the current group if the repo already lives there; otherwise
+      // jump to a group that contains it (the shared groupToReveal rule).
+      groupId = groupToReveal(repo, current, groups) ?? groupId;
     } else if (groupId == null) {
       groupId = defaultGroupId;
     }
@@ -235,17 +233,17 @@ export function useUiNav() {
           break;
         case "view": {
           const v = asView(view);
-          if (v) ui.setView(v);
+          if (v) ui.showView(v);
           break;
         }
         case "open":
           if (repo_id != null) ui.setActiveRepo(repo_id);
-          ui.setView("files");
+          ui.showView("files");
           if (path) ui.setFilesPath(path);
           break;
         case "goto":
           if (repo_id != null) ui.setActiveRepo(repo_id);
-          ui.setView("history");
+          ui.showView("history");
           if (sha) ui.setHistorySha(sha);
           break;
         case "term":
