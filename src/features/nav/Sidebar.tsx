@@ -28,6 +28,7 @@ import {
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
+import { SyncControls } from "@/features/sync/SyncControls";
 import { AutoPullMenuItem } from "@/features/repos/AutoPullMenuItem";
 import { ConfirmRemoveReposDialog } from "@/features/repos/ConfirmRemoveReposDialog";
 import { DiscoverDialog } from "@/features/repos/DiscoverDialog";
@@ -431,95 +432,124 @@ function RepoRow({
           onContextMenu(e);
         }}
         className={cn(
-          "group/repo flex min-h-7 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 text-[12.5px]",
+          "group/repo cursor-pointer rounded-md border border-transparent px-2 text-[12.5px]",
           repo.missing && "opacity-60",
           active
             ? "border-[var(--color-border)] bg-[var(--color-card)] font-medium text-[var(--color-foreground)] shadow-sm"
             : "text-[var(--color-secondary-foreground)] hover:bg-[var(--color-accent)]",
         )}
       >
-        {repo.missing ? (
-          <AlertTriangle className="size-3.5 shrink-0 text-[var(--color-destructive)]" />
-        ) : repo.is_git_repo ? (
-          <FolderGit2
-            className={cn(
-              "size-3.5 shrink-0",
-              active ? "text-[var(--color-primary)]" : "text-[var(--color-faint)]",
-            )}
-          />
-        ) : (
-          <Folder
-            className="size-3.5 shrink-0 text-[var(--color-faint)]"
-            aria-label="Not a git repository"
-          />
-        )}
-        <button
-          aria-current={active || undefined}
-          onClick={(e) => {
-            e.stopPropagation();
-            activate();
-          }}
-          className={cn(
-            "min-w-0 flex-1 truncate text-left leading-tight",
-            repo.missing && "line-through decoration-[var(--color-destructive)]/60",
+        <div className="flex min-h-7 items-center gap-2">
+          {repo.missing ? (
+            <AlertTriangle className="size-3.5 shrink-0 text-[var(--color-destructive)]" />
+          ) : repo.is_git_repo ? (
+            <FolderGit2
+              className={cn(
+                "size-3.5 shrink-0",
+                active ? "text-[var(--color-primary)]" : "text-[var(--color-faint)]",
+              )}
+            />
+          ) : (
+            <Folder
+              className="size-3.5 shrink-0 text-[var(--color-faint)]"
+              aria-label="Not a git repository"
+            />
           )}
-        >
-          {repo.name}
-        </button>
-        {isSyncedRoot && (
-          <span
-            title="This group’s synced folder (root)"
-            className="shrink-0 rounded bg-[var(--color-primary-soft)] px-1 py-px text-[9px] font-semibold uppercase leading-tight tracking-wide text-[var(--color-primary)]"
-          >
-            root
-          </span>
-        )}
-        {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
-          <span
-            role="img"
-            aria-label="Uncommitted changes"
-            title="Uncommitted changes"
-            className="size-1.5 shrink-0 rounded-full bg-[var(--color-warning)]"
-          />
-        )}
-        <span className="flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden">
-          {status != null && status.ahead > 0 && (
-            <span
-              title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead of upstream`}
-              className="text-[11px] font-semibold text-[var(--color-warning)]"
-            >
-              {status.ahead}↑
-            </span>
-          )}
-          {status?.branch && (
-            <span className="text-[11px] text-[var(--color-faint)]">{status.branch}</span>
-          )}
-        </span>
-        {/* Revealed on focus-within too so keyboard users can reach them. */}
-        {!repo.missing && (
           <button
-            aria-label={`Open terminal in ${repo.name}`}
-            title="Open terminal here"
+            aria-current={active || undefined}
             onClick={(e) => {
               e.stopPropagation();
-              addTerminalTab(groupId, repo.path, repo.name);
+              activate();
             }}
-            className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] group-focus-within/repo:flex group-hover/repo:flex"
+            className={cn(
+              "min-w-0 flex-1 truncate text-left leading-tight",
+              repo.missing && "line-through decoration-[var(--color-destructive)]/60",
+            )}
           >
-            <SquareTerminal className="size-3.5" />
+            {repo.name}
           </button>
+          {isSyncedRoot && (
+            <span
+              title="This group’s synced folder (root)"
+              className="shrink-0 rounded bg-[var(--color-primary-soft)] px-1 py-px text-[9px] font-semibold uppercase leading-tight tracking-wide text-[var(--color-primary)]"
+            >
+              root
+            </span>
+          )}
+          {!repo.missing && repo.is_git_repo && status?.has_uncommitted_changes && (
+            <span
+              role="img"
+              aria-label="Uncommitted changes"
+              title="Uncommitted changes"
+              className="size-1.5 shrink-0 rounded-full bg-[var(--color-warning)]"
+            />
+          )}
+          {/* Revealed on focus-within too so keyboard users can reach them. */}
+          {!repo.missing && (
+            <button
+              aria-label={`Open terminal in ${repo.name}`}
+              title="Open terminal here"
+              onClick={(e) => {
+                e.stopPropagation();
+                addTerminalTab(groupId, repo.path, repo.name);
+              }}
+              className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-primary)] group-focus-within/repo:flex group-hover/repo:flex"
+            >
+              <SquareTerminal className="size-3.5" />
+            </button>
+          )}
+          <button
+            aria-label={`Remove ${repo.name} from Gamut`}
+            title="Remove from Gamut"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestRemove(repo);
+            }}
+            className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-destructive)] group-focus-within/repo:flex group-hover/repo:flex"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+        {/* Branch line: the branch gets its own row so it never crowds the repo
+            name out of line one (#312). Hovering (or keyboard focus) swaps the
+            passive ahead/behind counts for the pull/push controls, so any repo
+            can sync without being selected first. */}
+        {!repo.missing && repo.is_git_repo && status?.branch && (
+          <div className="flex min-h-6 items-center gap-1.5 pb-0.5 pl-[22px]">
+            <span
+              className="min-w-0 flex-1 truncate text-[11px] leading-tight text-[var(--color-faint)]"
+              title={status.branch}
+            >
+              {status.branch}
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5 group-focus-within/repo:hidden group-hover/repo:hidden">
+              {status.behind > 0 && (
+                <span
+                  title={`${status.behind} commit${status.behind === 1 ? "" : "s"} behind upstream`}
+                  className="text-[11px] font-semibold text-[var(--color-faint)]"
+                >
+                  {status.behind}↓
+                </span>
+              )}
+              {status.ahead > 0 && (
+                <span
+                  title={`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead of upstream`}
+                  className="text-[11px] font-semibold text-[var(--color-warning)]"
+                >
+                  {status.ahead}↑
+                </span>
+              )}
+            </span>
+            {/* Same reveal rules as the row actions above. Clicks must not
+                bubble into the row's activate(). */}
+            <span
+              onClick={(e) => e.stopPropagation()}
+              className="hidden shrink-0 group-focus-within/repo:block group-hover/repo:block"
+            >
+              <SyncControls repoId={repo.id} ahead={status.ahead} behind={status.behind} />
+            </span>
+          </div>
         )}
-        <button
-          aria-label={`Remove ${repo.name} from Gamut`}
-          title="Remove from Gamut"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRequestRemove(repo);
-          }}
-          className="hidden size-5 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-secondary)] hover:text-[var(--color-destructive)] group-focus-within/repo:flex group-hover/repo:flex"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
       </div>
       {(worktrees.data ?? []).map((w) => (
         <WorktreeRow key={w.path} repo={repo} groupId={groupId} worktree={w} />

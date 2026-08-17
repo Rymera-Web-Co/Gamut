@@ -14,13 +14,21 @@ const mocks = vi.hoisted(() => ({
   listGroups: vi.fn(),
   touchRepo: vi.fn(),
   terminalKill: vi.fn(() => Promise.resolve()),
+  repoStatuses: vi.fn(() => Promise.resolve([] as import("@/lib/ipc").RepoStatus[])),
+  gitPull: vi.fn(),
+  gitPush: vi.fn(),
+  gitSyncStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     listRepos: mocks.listRepos,
     listGroups: mocks.listGroups,
-    repoStatuses: () => Promise.resolve([]),
+    repoStatuses: mocks.repoStatuses,
+    repoStatus: vi.fn().mockRejectedValue(new Error("unused")),
+    gitPull: mocks.gitPull,
+    gitPush: mocks.gitPush,
+    gitSyncStatus: mocks.gitSyncStatus,
     repoRemoteUrl: vi.fn().mockResolvedValue(null),
     gitWorktreeList: vi.fn().mockResolvedValue([]),
     removeRepos: vi.fn().mockResolvedValue(undefined),
@@ -96,6 +104,12 @@ beforeEach(() => {
   mocks.listGroups.mockReset();
   mocks.touchRepo.mockReset().mockResolvedValue(undefined);
   mocks.terminalKill.mockClear();
+  mocks.repoStatuses.mockReset().mockResolvedValue([]);
+  mocks.gitPull.mockReset().mockResolvedValue("Already up to date.");
+  mocks.gitPush.mockReset().mockResolvedValue("");
+  mocks.gitSyncStatus
+    .mockReset()
+    .mockResolvedValue({ upstream: "origin/main", ahead: 0, behind: 0, unpublished_branch: null });
   useUiStore.setState({
     activeGroupId: 1,
     activeRepoId: null,
@@ -155,6 +169,78 @@ describe("Sidebar groups accordion", () => {
 
     fireEvent.click(screen.getByText("Tools"));
     expect(useUiStore.getState().terminalOpen).toBe(false);
+  });
+});
+
+describe("Sidebar repo row branch line (#312)", () => {
+  function seedStatus(overrides: Partial<import("@/lib/ipc").RepoStatus> = {}) {
+    mocks.repoStatuses.mockResolvedValue([
+      {
+        id: A.id,
+        branch: "feat/very-long-branch-name",
+        ahead: 3,
+        behind: 2,
+        has_uncommitted_changes: false,
+        has_worktrees: false,
+        ...overrides,
+      },
+    ]);
+  }
+
+  it("renders the branch on its own line under the repo name", async () => {
+    seedStatus();
+    renderSidebar();
+    const branch = await screen.findByText("feat/very-long-branch-name");
+    const name = screen.getByText("alpha");
+
+    // Different flex lines: the branch is NOT inside the same line container
+    // as the repo name button.
+    expect(name.parentElement).not.toBe(branch.parentElement);
+    expect(name.parentElement!.contains(branch)).toBe(false);
+    // Both still live in the same repo row.
+    const row = screen.getByTitle(A.path);
+    expect(row.contains(name)).toBe(true);
+    expect(row.contains(branch)).toBe(true);
+  });
+
+  it("shows ahead and behind counts on the branch line", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+    expect(screen.getByTitle("3 commits ahead of upstream").textContent).toBe("3↑");
+    expect(screen.getByTitle("2 commits behind upstream").textContent).toBe("2↓");
+  });
+
+  it("omits the branch line for non-git repos and repos without a branch", async () => {
+    const folder = repo(3, "assets", { is_git_repo: false, group_ids: [] });
+    seedStatus({ branch: null });
+    renderSidebar([A, folder]);
+    await screen.findByTitle(folder.path);
+    expect(screen.queryByTitle("Pull (⌘⇧P)")).toBeNull();
+  });
+
+  it("the row's pull button pulls that repo without activating it", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByTitle("Pull (⌘⇧P)"));
+
+    await vi.waitFor(() => expect(mocks.gitPull).toHaveBeenCalledWith(A.id));
+    expect(useUiStore.getState().activeRepoId).toBeNull();
+  });
+
+  it("the row's push button pushes that repo without activating it", async () => {
+    seedStatus();
+    renderSidebar();
+    await screen.findByText("feat/very-long-branch-name");
+
+    fireEvent.click(screen.getByTitle("Push (⌘⇧K)"));
+
+    // The pre-push publish check resolves (tracking branch), then pushes.
+    expect(await screen.findByTitle("Push (⌘⇧K)")).toBeTruthy();
+    await vi.waitFor(() => expect(mocks.gitPush).toHaveBeenCalledWith(A.id));
+    expect(useUiStore.getState().activeRepoId).toBeNull();
   });
 });
 
