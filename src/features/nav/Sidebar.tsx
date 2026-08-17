@@ -678,7 +678,15 @@ export function Sidebar() {
   async function addRepo(group: Group) {
     const dir = await pickDirectory("Choose a folder");
     if (!dir) return;
-    const repo = await registerRepo.mutateAsync(dir);
+    let repo;
+    try {
+      repo = await registerRepo.mutateAsync(dir);
+    } catch {
+      // Toasted by the global MutationCache onError handler
+      // (lib/queryClient.ts); swallowed here so the fire-and-forget callers
+      // don't surface an unhandled rejection.
+      return;
+    }
     if (!group.is_default) {
       setRepoGroups.mutate({ repoId: repo.id, groupIds: [group.id] });
     }
