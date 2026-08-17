@@ -95,6 +95,20 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByTestId("branch-switcher")).toBeNull();
   });
 
+  it("renders the sync controls next to the branch switcher, not in the right cluster (#314)", () => {
+    data.repos = [repo(1, "alpha")];
+    useUiStore.setState({ activeRepoId: 1 });
+    render(<WorkspaceHeader />);
+
+    const sync = screen.getByTestId("sync-controls");
+    const branch = screen.getByTestId("branch-switcher");
+    // Same immediate group as the branch switcher…
+    expect(sync.parentElement).toBe(branch.parentElement);
+    // …and that group is NOT the one holding the repo-settings button.
+    const settings = screen.getByLabelText("Repository settings");
+    expect(settings.parentElement!.contains(sync)).toBe(false);
+  });
+
   it("shows the repo breadcrumb name", () => {
     data.repos = [repo(7, "gamut-app")];
     useUiStore.setState({ activeRepoId: 7 });
