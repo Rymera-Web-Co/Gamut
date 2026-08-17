@@ -45,16 +45,29 @@ interface SessionEntry {
   disposeChannel?: () => void;
   /** GPU renderer, when WebGL is available; falls back to the DOM renderer otherwise. */
   webgl?: WebglAddon;
+  /**
+   * How many times this session's WebGL context was lost (or failed to
+   * construct). Re-shows retry the GPU renderer until this hits a small cap,
+   * then the session stays on the DOM renderer for good.
+   */
+  webglLosses?: number;
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
   lastCols?: number;
   lastRows?: number;
 }
 
+/** Give up on the GPU renderer for a session after this many context losses. */
+const WEBGL_LOSS_CAP = 3;
+
 /**
  * Load the WebGL renderer, which is far cheaper per repaint than xterm's
  * default DOM renderer (#204). Falls back to the DOM renderer when WebGL is
- * unavailable, and again on `onContextLoss` (e.g. GPU driver reset), since a
- * lost context can't be recovered in place.
+ * unavailable. A lost context (GPU driver reset, or the browser reclaiming
+ * the context while the terminal view is display:none) can't be recovered in
+ * place — the addon is disposed here and a fresh one is loaded on the next
+ * re-show (see the layout effect), when the canvas is visible and has real
+ * dimensions. `webglLosses` caps the retries so a flapping GPU settles on the
+ * DOM renderer instead of looping.
  */
 function loadWebglAddon(entry: SessionEntry) {
   try {
@@ -62,11 +75,14 @@ function loadWebglAddon(entry: SessionEntry) {
     webgl.onContextLoss(() => {
       webgl.dispose();
       if (entry.webgl === webgl) entry.webgl = undefined;
+      entry.webglLosses = (entry.webglLosses ?? 0) + 1;
     });
     entry.term.loadAddon(webgl);
     entry.webgl = webgl;
   } catch {
-    // WebGL unavailable (e.g. no GPU context) — xterm keeps using the DOM renderer.
+    // WebGL unavailable (e.g. no GPU context) — xterm keeps using the DOM
+    // renderer; count it so re-shows don't retry forever.
+    entry.webglLosses = (entry.webglLosses ?? 0) + 1;
   }
 }
 
@@ -614,10 +630,30 @@ export function useTerminalSessions({
         } catch {
           /* not laid out yet */
         }
+        // The WebGL context may have been reclaimed while the terminal view
+        // was display:none — reload the GPU renderer now that the canvas is
+        // visible and sized (capped so a flapping GPU falls back to DOM).
+        if (
+          useSettings.getState().values.terminalGpuRenderer &&
+          !e.webgl &&
+          (e.webglLosses ?? 0) > 0 &&
+          (e.webglLosses ?? 0) < WEBGL_LOSS_CAP
+        ) {
+          loadWebglAddon(e);
+        }
         if (!e.spawned) {
           spawnPane(pane, e);
         } else {
           resizeIfChanged(pane.id, e);
+          // Repaint unconditionally: after a renderer swap (context lost while
+          // hidden) the grid is often unchanged, so neither fit() nor the
+          // resize IPC triggers a redraw — leaving a live PTY behind blank
+          // pixels. refresh() is cheap when nothing is dirty.
+          try {
+            e.term.refresh(0, e.term.rows - 1);
+          } catch {
+            /* renderer mid-swap */
+          }
           // The PTY is already live (e.g. a control-channel request reusing
           // this terminal by name, or a background terminal now brought into
           // view): type any freshly-queued command straight away.
