@@ -34,12 +34,17 @@ export function BranchSwitcher({
   repoId,
   currentBranch,
   className,
+  ariaLabel,
 }: {
   repoId: number;
   currentBranch?: string | null;
   /** Extra classes for the trigger button — hosts that need a different width
    * (e.g. the sidebar's full-width branch line) override the default cap. */
   className?: string;
+  /** Accessible name for the trigger. The button's content is just the branch
+   * name, so a host that renders many switchers (the sidebar rows) must say
+   * which repo each one acts on. */
+  ariaLabel?: string;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -195,6 +200,7 @@ export function BranchSwitcher({
         <PopoverTrigger asChild>
           <button
             title="Switch branch or tag"
+            aria-label={ariaLabel}
             aria-busy={switching}
             className={cn(
               // max-w on the button (not the label span) so hosts can widen the

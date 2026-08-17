@@ -120,12 +120,10 @@ beforeEach(() => {
   mocks.gitSyncStatus
     .mockReset()
     .mockResolvedValue({ upstream: "origin/main", ahead: 0, behind: 0, unpublished_branch: null });
-  mocks.listBranches
-    .mockReset()
-    .mockResolvedValue([
-      { name: "feat/very-long-branch-name", is_head: true, is_remote: false },
-      { name: "main", is_head: false, is_remote: false },
-    ]);
+  mocks.listBranches.mockReset().mockResolvedValue([
+    { name: "feat/very-long-branch-name", is_head: true, is_remote: false },
+    { name: "main", is_head: false, is_remote: false },
+  ]);
   mocks.listGitTags.mockReset().mockResolvedValue([]);
   mocks.checkoutBranch.mockReset().mockResolvedValue(undefined);
   mocks.repoStatus.mockReset().mockResolvedValue({
@@ -281,11 +279,14 @@ describe("Sidebar repo row branch line (#312)", () => {
     renderSidebar();
     await screen.findByText("feat/very-long-branch-name");
 
+    // Nothing is fetched until the switcher opens (#315: many rows must add
+    // no query load at rest).
+    expect(mocks.listBranches).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTitle("Switch branch or tag"));
 
     // The lazy branch query fires for THIS row's repo, and the row's
     // activate() never ran.
-    await vi.waitFor(() => expect(mocks.listBranches).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mocks.listBranches).toHaveBeenCalledWith(A.id));
     expect(useUiStore.getState().activeRepoId).toBeNull();
   });
 

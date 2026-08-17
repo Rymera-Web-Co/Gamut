@@ -523,13 +523,22 @@ function RepoRow({
             first too. */}
         {!repo.missing && repo.is_git_repo && status?.branch && (
           // 22px = line one's icon (size-3.5, 14px) + gap-2 (8px), so the
-          // branch starts flush under the repo name.
+          // switcher's branch glyph sits under line one's repo glyph; the
+          // branch label starts one icon-width further in.
           <div className="flex min-h-6 items-center gap-1.5 pb-0.5 pl-[22px]">
-            {/* Clicks must not bubble into the row's activate(). */}
-            <span onClick={(e) => e.stopPropagation()} className="flex min-w-0 flex-1">
+            {/* Neither clicks nor right-clicks may bubble into the row: the
+                popover is portaled, so React events raised inside it still
+                propagate here — without the contextmenu stop, right-clicking
+                the popover's inputs opens the repo context menu. */}
+            <span
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+              className="flex min-w-0 flex-1"
+            >
               <BranchSwitcher
                 repoId={repo.id}
                 currentBranch={status.branch}
+                ariaLabel={`Switch branch on ${repo.name} (currently ${status.branch})`}
                 className="min-w-0 max-w-full"
               />
             </span>
