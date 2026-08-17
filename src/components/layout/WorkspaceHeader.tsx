@@ -29,10 +29,10 @@ const TABS: { view: View; label: string; icon: typeof GitBranch }[] = [
 ];
 
 /**
- * The repo workspace header ("Model C"): breadcrumb (group / repo) and branch
- * chip on the left, the view tabs inline in the middle, and the repo actions
- * (pull, push, repo settings, terminal) on the right — one bar instead of the
- * old tabs-only strip.
+ * The repo workspace header ("Model C"): breadcrumb (group / repo), branch
+ * chip and its pull/push controls on the left, the view tabs inline in the
+ * middle, and the repo actions (repo settings, theme, terminal) on the right —
+ * one bar instead of the old tabs-only strip.
  */
 export function WorkspaceHeader() {
   const view = useUiStore((s) => s.view);
@@ -122,6 +122,9 @@ export function WorkspaceHeader() {
                     className="size-1.5 rounded-full bg-[var(--color-warning)]"
                   />
                 )}
+                {/* Pull/push next to the branch they act on (#314), with the
+                    publish-branch confirmation flow (#300). */}
+                <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
               </span>
             )}
           </>
@@ -158,8 +161,6 @@ export function WorkspaceHeader() {
       <div className="flex shrink-0 items-center gap-1">
         {canSync && (
           <>
-            {/* Pull/push with the publish-branch confirmation flow (#300). */}
-            <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
             <button
               aria-label="Repository settings"
               title="Repository settings"
