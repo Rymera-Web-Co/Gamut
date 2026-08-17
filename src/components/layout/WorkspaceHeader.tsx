@@ -114,6 +114,9 @@ export function WorkspaceHeader() {
             {canSync && (
               <span className="flex shrink-0 items-center gap-1">
                 <BranchSwitcher repoId={repo.id} currentBranch={status?.branch} />
+                {/* Pull/push directly after the branch they act on (#314), with
+                    the publish-branch confirmation flow (#300). */}
+                <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
                 {status?.has_uncommitted_changes && (
                   <span
                     role="img"
@@ -122,9 +125,6 @@ export function WorkspaceHeader() {
                     className="size-1.5 rounded-full bg-[var(--color-warning)]"
                   />
                 )}
-                {/* Pull/push next to the branch they act on (#314), with the
-                    publish-branch confirmation flow (#300). */}
-                <SyncControls repoId={repo.id} ahead={status?.ahead} behind={status?.behind} />
               </span>
             )}
           </>
@@ -160,16 +160,14 @@ export function WorkspaceHeader() {
       {/* Repo actions. */}
       <div className="flex shrink-0 items-center gap-1">
         {canSync && (
-          <>
-            <button
-              aria-label="Repository settings"
-              title="Repository settings"
-              onClick={() => activeRepoId != null && openRepoConfig(activeRepoId)}
-              className="flex size-7 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
-            >
-              <Settings className="size-3.5" />
-            </button>
-          </>
+          <button
+            aria-label="Repository settings"
+            title="Repository settings"
+            onClick={() => activeRepoId != null && openRepoConfig(activeRepoId)}
+            className="flex size-7 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          >
+            <Settings className="size-3.5" />
+          </button>
         )}
         <button
           aria-label="Toggle theme"
