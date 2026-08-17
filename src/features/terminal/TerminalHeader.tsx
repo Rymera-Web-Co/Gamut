@@ -12,7 +12,7 @@ import { pathBasename } from "@/lib/format";
 import { groupToReveal } from "@/lib/groupRepos";
 import { ipc, type Repo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { termTabLabel, useUiStore } from "@/store/ui";
+import { termTabLabel, useUiStore, type SplitDirection } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
 
 /**
@@ -67,6 +67,19 @@ export function TerminalHeader() {
   // since the terminal opened — switch to a group that actually contains it
   // (the shared groupToReveal rule) so the reconciler can't silently swap in
   // a different repo.
+  // Shared by the two split buttons so they can only ever drift together.
+  const splitButtonClass =
+    "flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40";
+  const splitBlocked = (direction: SplitDirection) =>
+    !tab ||
+    !cwd ||
+    activeGroupId == null ||
+    (tab.panes.length > 1 && (tab.direction ?? "row") !== direction);
+  function splitInto(direction: SplitDirection) {
+    if (activeGroupId == null || !tab || !cwd) return;
+    splitTerminal(activeGroupId, cwd, direction);
+  }
+
   function openWorkspace(target?: Repo) {
     if (target) {
       const activeGroup = (groups.data ?? []).find((g) => g.id === activeGroupId);
@@ -158,34 +171,18 @@ export function TerminalHeader() {
       <button
         aria-label="Split terminal right"
         title="Split right (⌘D)"
-        disabled={
-          !tab ||
-          !cwd ||
-          activeGroupId == null ||
-          (tab.panes.length > 1 && (tab.direction ?? "row") !== "row")
-        }
-        onClick={() => {
-          if (activeGroupId == null || !tab || !cwd) return;
-          splitTerminal(activeGroupId, cwd, "row");
-        }}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+        disabled={splitBlocked("row")}
+        onClick={() => splitInto("row")}
+        className={splitButtonClass}
       >
         <SplitSquareHorizontal className="size-3.5" />
       </button>
       <button
         aria-label="Split terminal down"
         title="Split down (⌘⇧D)"
-        disabled={
-          !tab ||
-          !cwd ||
-          activeGroupId == null ||
-          (tab.panes.length > 1 && (tab.direction ?? "row") !== "column")
-        }
-        onClick={() => {
-          if (activeGroupId == null || !tab || !cwd) return;
-          splitTerminal(activeGroupId, cwd, "column");
-        }}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+        disabled={splitBlocked("column")}
+        onClick={() => splitInto("column")}
+        className={splitButtonClass}
       >
         <SplitSquareVertical className="size-3.5" />
       </button>

@@ -14,7 +14,7 @@ import { useTerminalShortcuts } from "./useTerminalShortcuts";
 
 /**
  * The integrated terminal pane: a per-group set of tabs, each with one or more
- * side-by-side split panes. The live xterm instances, their layout/spawn and
+ * split panes — side by side or stacked (#316). The live xterm instances, their layout/spawn and
  * theme/resize coordination live in {@link useTerminalSessions}; the keyboard
  * shortcuts are {@link useTerminalShortcuts}. The sidebar's terminal rail is
  * the tab list, and the header above carries the session controls — this
@@ -109,8 +109,13 @@ export function TerminalPane() {
     }
   }
 
-  function handleSplit(splitDirection: SplitDirection = "row") {
+  function handleSplit(splitDirection: SplitDirection) {
     if (activeGroupId == null || !activeTab) return;
+    // One direction per tab (#316): ignore a request for the other direction
+    // while the tab is split — the same case the header's buttons disable —
+    // rather than silently adding a pane in the direction the user didn't ask
+    // for.
+    if (activeTab.panes.length > 1 && (activeTab.direction ?? "row") !== splitDirection) return;
     const active =
       activeTab.panes.find((p) => p.id === activeTab.activePaneId) ?? activeTab.panes[0];
     splitTerminal(activeGroupId, active.cwd, splitDirection);

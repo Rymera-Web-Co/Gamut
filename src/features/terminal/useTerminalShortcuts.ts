@@ -5,7 +5,7 @@ import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
 /** State + actions the terminal keyboard shortcuts operate on. */
 export interface TerminalShortcutContext {
   handleNewTab: () => void;
-  handleSplit: (direction?: SplitDirection) => void;
+  handleSplit: (direction: SplitDirection) => void;
   handleCloseTab: (tabId: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
   activeGroupId: number | null;

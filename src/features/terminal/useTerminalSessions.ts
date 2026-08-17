@@ -22,6 +22,7 @@ import {
   type TermTab,
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
+import { paneSlot } from "./paneLayout";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 import { registerPathLinkProvider, stripLineSuffix } from "./pathLinks";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
@@ -308,7 +309,8 @@ interface SessionsOptions {
   terminalOpen: boolean;
   activePanes: TermPane[];
   activeTab: TermTab | undefined;
-  /** Stable key for the active group|tab|panes set; re-runs the layout effect. */
+  /** Stable key for the active group|tab|direction|panes set; re-runs the
+   * layout effect. */
   paneKey: string;
   theme: Theme;
   /** The pane the user is actually viewing (focused pane of the active tab). */
@@ -605,9 +607,9 @@ export function useTerminalSessions({
 
   // Lay out the active tab's panes — side by side (`row`) or stacked
   // (`column`, #316) per the tab's split direction; hide everything else.
-  // Spawn each visible pane lazily once the pane is actually open. Both axes
-  // are reassigned every pass (a pane node outlives its tab's direction, e.g.
-  // when a split collapses to one pane and re-splits the other way).
+  // Spawn each visible pane lazily once the pane is actually open. The slot
+  // math (including why both axes are reassigned every pass) lives in
+  // {@link paneSlot}.
   useEffect(() => {
     if (!hostRef.current) return;
     for (const entry of sessionsRef.current.values()) {
@@ -616,25 +618,17 @@ export function useTerminalSessions({
     if (!terminalOpen || activePanes.length === 0) return;
 
     const n = activePanes.length;
-    const stacked = (activeTab?.direction ?? "row") === "column";
+    const direction = activeTab?.direction ?? "row";
     activePanes.forEach((pane, i) => {
       const e = ensureEntry(pane);
       e.el.style.display = "block";
-      if (stacked) {
-        e.el.style.left = "0";
-        e.el.style.width = "100%";
-        e.el.style.top = `${(i * 100) / n}%`;
-        e.el.style.height = `${100 / n}%`;
-        e.el.style.borderTop = i > 0 ? "1px solid var(--color-border)" : "";
-        e.el.style.borderLeft = "";
-      } else {
-        e.el.style.left = `${(i * 100) / n}%`;
-        e.el.style.width = `${100 / n}%`;
-        e.el.style.top = "0";
-        e.el.style.height = "100%";
-        e.el.style.borderLeft = i > 0 ? "1px solid var(--color-border)" : "";
-        e.el.style.borderTop = "";
-      }
+      const slot = paneSlot(direction, i, n);
+      e.el.style.left = slot.left;
+      e.el.style.width = slot.width;
+      e.el.style.top = slot.top;
+      e.el.style.height = slot.height;
+      e.el.style.borderLeft = slot.borderLeft;
+      e.el.style.borderTop = slot.borderTop;
     });
 
     const raf = requestAnimationFrame(() => {
