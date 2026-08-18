@@ -8,17 +8,20 @@ import { useSettings } from "@/lib/settings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore, type SplitDirection } from "@/store/ui";
 import { ActivityDot } from "./activity";
+import { paneSlots } from "./paneLayout";
 import { xtermTheme } from "./terminalTheme";
 import { useTerminalSessions } from "./useTerminalSessions";
 import { useTerminalShortcuts } from "./useTerminalShortcuts";
 
 /**
- * The integrated terminal pane: a per-group set of tabs, each with one or more
- * split panes — side by side or stacked (#316). The live xterm instances, their layout/spawn and
- * theme/resize coordination live in {@link useTerminalSessions}; the keyboard
- * shortcuts are {@link useTerminalShortcuts}. The sidebar's terminal rail is
- * the tab list, and the header above carries the session controls — this
- * component renders the viewport host the sessions mount into (#143).
+ * The integrated terminal pane: a per-group set of tabs, each holding a grid
+ * of split panes — rows of side-by-side panes, any mix (#316) — with
+ * drag-to-resize dividers between panes and between rows. The live xterm
+ * instances, their layout/spawn and theme/resize coordination live in
+ * {@link useTerminalSessions}; the keyboard shortcuts are
+ * {@link useTerminalShortcuts}. The sidebar's terminal rail is the tab list,
+ * and the header above carries the session controls — this component renders
+ * the viewport host the sessions mount into (#143).
  */
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
@@ -46,14 +49,18 @@ export function TerminalPane() {
 
   const hostRef = useRef<HTMLDivElement>(null);
 
+  const resizeTerminalSplit = useUiStore((s) => s.resizeTerminalSplit);
+
   const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
   const activeTab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const activePanes = activeTab?.panes ?? [];
-  // Stable dep so the layout effect re-runs on tab/split changes. Includes the
-  // split direction so a direction flip relays the panes out (#316).
-  const direction = activeTab?.direction ?? "row";
-  const paneKey = `${activeGroupId}|${activeTab?.id ?? ""}|${direction}|${activePanes
-    .map((p) => p.id)
+  // Stable dep so the layout effect re-runs on tab/grid changes — rows, and
+  // the width/height weights a divider drag rebalances (#316). Weights are
+  // rounded so float noise can't churn the key.
+  const paneKey = `${activeGroupId}|${activeTab?.id ?? ""}|${(activeTab?.rowSizes ?? [])
+    .map((w) => w.toFixed(3))
+    .join(":")}|${activePanes
+    .map((p) => `${p.id}@${p.row ?? 0}x${(p.size ?? 1).toFixed(3)}`)
     .join(",")}`;
 
   // The one pane the user is actually looking at: the focused pane of the
@@ -111,11 +118,6 @@ export function TerminalPane() {
 
   function handleSplit(splitDirection: SplitDirection) {
     if (activeGroupId == null || !activeTab) return;
-    // One direction per tab (#316): ignore a request for the other direction
-    // while the tab is split — the same case the header's buttons disable —
-    // rather than silently adding a pane in the direction the user didn't ask
-    // for.
-    if (activeTab.panes.length > 1 && (activeTab.direction ?? "row") !== splitDirection) return;
     const active =
       activeTab.panes.find((p) => p.id === activeTab.activePaneId) ?? activeTab.panes[0];
     splitTerminal(activeGroupId, active.cwd, splitDirection);
@@ -148,6 +150,108 @@ export function TerminalPane() {
   const canNewTab = defaultTarget() != null;
   const n = activePanes.length;
   const activeDead = activeTab != null && deadKeys.has(activeTab.activePaneId);
+  const slots = paneSlots(activePanes, activeTab?.rowSizes);
+
+  // ── Divider drag-to-resize (#316) ────────────────────────────────────────
+  // A vertical divider rebalances the width weights of the two panes it sits
+  // between; a horizontal divider rebalances the height weights of the two
+  // rows. Weights live in the store, so the layout effect re-fits the xterms
+  // as the drag moves. Pointer capture keeps the drag alive off the handle.
+  const dragRef = useRef<
+    | {
+        kind: "pane";
+        leftId: string;
+        rightId: string;
+        startLeft: number;
+        startRight: number;
+        rowTotal: number;
+        hostWidthPx: number;
+        startX: number;
+      }
+    | {
+        kind: "row";
+        pos: number;
+        startRowSizes: number[];
+        hostHeightPx: number;
+        startY: number;
+      }
+    | null
+  >(null);
+
+  // No divider may shrink a pane below this share of its axis' total weight.
+  const MIN_SHARE = 0.08;
+
+  function beginPaneDrag(e: React.PointerEvent<HTMLElement>, i: number) {
+    const host = hostRef.current;
+    if (!host || i < 1) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const row = activePanes[i].row ?? 0;
+    const rowTotal = activePanes
+      .filter((p) => (p.row ?? 0) === row)
+      .reduce((a, p) => a + (p.size ?? 1), 0);
+    dragRef.current = {
+      kind: "pane",
+      // Row-major order: the previous array entry is this pane's left neighbour.
+      leftId: activePanes[i - 1].id,
+      rightId: activePanes[i].id,
+      startLeft: activePanes[i - 1].size ?? 1,
+      startRight: activePanes[i].size ?? 1,
+      rowTotal,
+      hostWidthPx: host.getBoundingClientRect().width,
+      startX: e.clientX,
+    };
+  }
+
+  function beginRowDrag(e: React.PointerEvent<HTMLElement>, pos: number) {
+    const host = hostRef.current;
+    if (!host || !activeTab || pos < 1) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rowCount = new Set(activePanes.map((p) => p.row ?? 0)).size;
+    const startRowSizes = Array.from({ length: rowCount }, (_, i) => activeTab.rowSizes?.[i] ?? 1);
+    dragRef.current = {
+      kind: "row",
+      pos,
+      startRowSizes,
+      hostHeightPx: host.getBoundingClientRect().height,
+      startY: e.clientY,
+    };
+  }
+
+  function onDividerMove(e: React.PointerEvent<HTMLElement>) {
+    const d = dragRef.current;
+    if (!d || activeGroupId == null || !activeTab) return;
+    if (d.kind === "pane") {
+      const pairTotal = d.startLeft + d.startRight;
+      const min = d.rowTotal * MIN_SHARE;
+      if (pairTotal <= 2 * min) return;
+      const delta = ((e.clientX - d.startX) / d.hostWidthPx) * d.rowTotal;
+      const left = Math.min(Math.max(d.startLeft + delta, min), pairTotal - min);
+      resizeTerminalSplit(activeGroupId, activeTab.id, {
+        paneSizes: { [d.leftId]: left, [d.rightId]: pairTotal - left },
+      });
+    } else {
+      const total = d.startRowSizes.reduce((a, b) => a + b, 0);
+      const pairTotal = d.startRowSizes[d.pos - 1] + d.startRowSizes[d.pos];
+      const min = total * MIN_SHARE;
+      if (pairTotal <= 2 * min) return;
+      const delta = ((e.clientY - d.startY) / d.hostHeightPx) * total;
+      const above = Math.min(Math.max(d.startRowSizes[d.pos - 1] + delta, min), pairTotal - min);
+      const rowSizes = [...d.startRowSizes];
+      rowSizes[d.pos - 1] = above;
+      rowSizes[d.pos] = pairTotal - above;
+      resizeTerminalSplit(activeGroupId, activeTab.id, { rowSizes });
+    }
+  }
+
+  function endDividerDrag() {
+    dragRef.current = null;
+  }
+
+  // Horizontal (between-rows) divider positions: the top edge of each row
+  // after the first — read off the first slot of that row.
+  const rowBoundaries = slots.filter((s) => s.firstInRow && !s.firstRow);
 
   return (
     <div
@@ -172,7 +276,7 @@ export function TerminalPane() {
           </button>
         )}
         {/* Per-split close buttons (only when the active tab is split), pinned
-            to each pane's top-right corner in either direction (#316). */}
+            to each pane's top-right corner on the grid (#316). */}
         {n > 1 &&
           activePanes.map((pane, i) => (
             <button
@@ -180,11 +284,10 @@ export function TerminalPane() {
               title="Close split"
               aria-label="Close split"
               onClick={() => handleClosePane(pane.id)}
-              style={
-                direction === "column"
-                  ? { right: "0.25rem", top: `calc(${(i * 100) / n}% + 0.25rem)` }
-                  : { left: `calc(${((i + 1) * 100) / n}% - 1.5rem)`, top: "0.25rem" }
-              }
+              style={{
+                left: `calc(${slots[i].left + slots[i].width}% - 1.5rem)`,
+                top: `calc(${slots[i].top}% + 0.25rem)`,
+              }}
               className="absolute z-10 flex size-5 items-center justify-center rounded bg-[var(--color-sidebar)]/80 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
             >
               <X className="size-3.5" />
@@ -192,7 +295,7 @@ export function TerminalPane() {
           ))}
         {/* Per-split activity markers: which split changed while you were away.
             The focused pane is cleared, so this only marks the others. Pinned
-            to each pane's top-left corner in either direction (#316). */}
+            to each pane's top-left corner on the grid (#316). */}
         {n > 1 &&
           activePanes.map((pane, i) => {
             const kind = termActivity[pane.id];
@@ -203,17 +306,54 @@ export function TerminalPane() {
               <span
                 key={`act-${pane.id}`}
                 title="Unseen activity in this pane"
-                style={
-                  direction === "column"
-                    ? { left: "0.5rem", top: `calc(${(i * 100) / n}% + 0.5rem)` }
-                    : { left: `calc(${(i * 100) / n}% + 0.5rem)`, top: "0.5rem" }
-                }
+                style={{
+                  left: `calc(${slots[i].left}% + 0.5rem)`,
+                  top: `calc(${slots[i].top}% + 0.5rem)`,
+                }}
                 className="absolute z-10"
               >
                 <ActivityDot kind={kind} />
               </span>
             );
           })}
+        {/* Drag handles on the split boundaries (#316): a vertical handle on
+            each pane's left edge (within its row), a horizontal handle on each
+            row's top edge. Each rebalances just the two neighbours it sits
+            between; the layout effect re-fits the xterms as the drag moves. */}
+        {slots.map((slot, i) =>
+          slot.firstInRow ? null : (
+            <div
+              key={`vdiv-${activePanes[i].id}`}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize split"
+              onPointerDown={(e) => beginPaneDrag(e, i)}
+              onPointerMove={onDividerMove}
+              onPointerUp={endDividerDrag}
+              onPointerCancel={endDividerDrag}
+              style={{
+                left: `calc(${slot.left}% - 3px)`,
+                top: `${slot.top}%`,
+                height: `${slot.height}%`,
+              }}
+              className="absolute z-10 w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/30 active:bg-[var(--color-primary)]/50"
+            />
+          ),
+        )}
+        {rowBoundaries.map((slot) => (
+          <div
+            key={`hdiv-${slot.rowPos}`}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize split"
+            onPointerDown={(e) => beginRowDrag(e, slot.rowPos)}
+            onPointerMove={onDividerMove}
+            onPointerUp={endDividerDrag}
+            onPointerCancel={endDividerDrag}
+            style={{ top: `calc(${slot.top}% - 3px)` }}
+            className="absolute inset-x-0 z-10 h-1.5 cursor-row-resize transition-colors hover:bg-[var(--color-primary)]/30 active:bg-[var(--color-primary)]/50"
+          />
+        ))}
         {tabs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-xs text-[var(--color-muted-foreground)]">
             <span>No terminals open in this group.</span>

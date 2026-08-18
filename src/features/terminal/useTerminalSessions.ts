@@ -22,7 +22,7 @@ import {
   type TermTab,
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
-import { paneSlot } from "./paneLayout";
+import { PANE_DIVIDER, paneSlots } from "./paneLayout";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 import { registerPathLinkProvider, stripLineSuffix } from "./pathLinks";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
@@ -605,11 +605,11 @@ export function useTerminalSessions({
       });
   }
 
-  // Lay out the active tab's panes — side by side (`row`) or stacked
-  // (`column`, #316) per the tab's split direction; hide everything else.
-  // Spawn each visible pane lazily once the pane is actually open. The slot
-  // math (including why both axes are reassigned every pass) lives in
-  // {@link paneSlot}.
+  // Lay out the active tab's panes on its split grid (#316); hide everything
+  // else. Spawn each visible pane lazily once the pane is actually open. The
+  // slot math lives in {@link paneSlots}; both axes and both divider borders
+  // are reassigned every pass because a pane node outlives its tab's grid
+  // shape (splits collapse and re-split differently).
   useEffect(() => {
     if (!hostRef.current) return;
     for (const entry of sessionsRef.current.values()) {
@@ -617,18 +617,17 @@ export function useTerminalSessions({
     }
     if (!terminalOpen || activePanes.length === 0) return;
 
-    const n = activePanes.length;
-    const direction = activeTab?.direction ?? "row";
+    const slots = paneSlots(activePanes, activeTab?.rowSizes);
     activePanes.forEach((pane, i) => {
       const e = ensureEntry(pane);
+      const slot = slots[i];
       e.el.style.display = "block";
-      const slot = paneSlot(direction, i, n);
-      e.el.style.left = slot.left;
-      e.el.style.width = slot.width;
-      e.el.style.top = slot.top;
-      e.el.style.height = slot.height;
-      e.el.style.borderLeft = slot.borderLeft;
-      e.el.style.borderTop = slot.borderTop;
+      e.el.style.left = `${slot.left}%`;
+      e.el.style.width = `${slot.width}%`;
+      e.el.style.top = `${slot.top}%`;
+      e.el.style.height = `${slot.height}%`;
+      e.el.style.borderLeft = slot.firstInRow ? "" : PANE_DIVIDER;
+      e.el.style.borderTop = slot.firstRow ? "" : PANE_DIVIDER;
     });
 
     const raf = requestAnimationFrame(() => {

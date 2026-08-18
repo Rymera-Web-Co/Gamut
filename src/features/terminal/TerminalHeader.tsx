@@ -70,11 +70,7 @@ export function TerminalHeader() {
   // Shared by the two split buttons so they can only ever drift together.
   const splitButtonClass =
     "flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40";
-  const splitBlocked = (direction: SplitDirection) =>
-    !tab ||
-    !cwd ||
-    activeGroupId == null ||
-    (tab.panes.length > 1 && (tab.direction ?? "row") !== direction);
+  const splitDisabled = !tab || !cwd || activeGroupId == null;
   function splitInto(direction: SplitDirection) {
     if (activeGroupId == null || !tab || !cwd) return;
     splitTerminal(activeGroupId, cwd, direction);
@@ -166,12 +162,13 @@ export function TerminalHeader() {
         )}
       </div>
       <div className="flex-1" />
-      {/* One split direction per tab (#316): once a tab is split, the
-          other-direction button is disabled until it's back to one pane. */}
+      {/* The tab is a grid (#316): split right adds a pane beside the active
+          one, split down adds a new row below it — any mix, so both are always
+          available while a session exists. */}
       <button
         aria-label="Split terminal right"
         title="Split right (⌘D)"
-        disabled={splitBlocked("row")}
+        disabled={splitDisabled}
         onClick={() => splitInto("row")}
         className={splitButtonClass}
       >
@@ -180,7 +177,7 @@ export function TerminalHeader() {
       <button
         aria-label="Split terminal down"
         title="Split down (⌘⇧D)"
-        disabled={splitBlocked("column")}
+        disabled={splitDisabled}
         onClick={() => splitInto("column")}
         className={splitButtonClass}
       >
