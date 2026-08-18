@@ -28,6 +28,7 @@ import { registerPathLinkProvider, stripLineSuffix } from "./pathLinks";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
 import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
+import { isTabCycleChord } from "./useTerminalShortcuts";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
@@ -487,6 +488,11 @@ export function useTerminalSessions({
     // default handling; the bytes are written straight to the PTY instead. The
     // chords are physical-`code` matched so layout/⌥-mangling don't interfere.
     term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+Tab / Ctrl+⇧+Tab cycle terminal tabs (#156). xterm must ignore
+      // the chord: returning true would map Tab to `\t` (typed into the shell)
+      // and stop propagation, so the tab-cycle listener in
+      // useTerminalShortcuts would never run (#323). False lets it bubble.
+      if (isTabCycleChord(e)) return false;
       if (e.type !== "keydown") return true;
       // Swallow the chord and write its byte sequence straight to the PTY.
       const sendSeq = (seq: string) => {
