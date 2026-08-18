@@ -735,6 +735,13 @@ export function Sidebar() {
     return [...visible.filter((r) => r.is_git_repo), ...visible.filter((r) => !r.is_git_repo)];
   }
 
+  // Missing rows in the right-clicked group — powers the context menu's
+  // one-click "Remove N missing" (#317). Derived from the same visible list
+  // as fetchableIds, so a synced root hidden by the setting is never
+  // silently removed.
+  const menuGroupMissing =
+    menu?.kind === "group" ? groupRepos(menu.group).filter((r) => r.missing) : [];
+
   function toggleGroup(g: Group) {
     if (expandedId === g.id) {
       setExpandedId(null);
@@ -1251,6 +1258,25 @@ export function Sidebar() {
               <Pencil />
               Edit group
             </ContextMenuItem>
+            {/* One-click cleanup of rows whose folder is gone from disk
+                (#317). Count-labelled, hidden at zero, and confirmed through
+                the same dialog + remove command as bulk-remove — DB-only, the
+                folders are already gone. */}
+            {menuGroupMissing.length > 0 && (
+              <>
+                <div className="my-1 border-t border-[var(--color-border)]" />
+                <ContextMenuItem
+                  className="text-[var(--color-destructive)] [&_svg]:text-[var(--color-destructive)]"
+                  onClick={() => {
+                    setRemoveTarget(menuGroupMissing);
+                    setMenu(null);
+                  }}
+                >
+                  <Trash2 />
+                  {`Remove ${menuGroupMissing.length} missing`}
+                </ContextMenuItem>
+              </>
+            )}
           </>
         ) : null}
       </ContextMenu>
