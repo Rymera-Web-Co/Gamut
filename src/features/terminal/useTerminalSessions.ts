@@ -22,6 +22,7 @@ import {
   type TermTab,
 } from "@/store/ui";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
+import { PANE_DIVIDER, paneSlots } from "./paneLayout";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
 import { registerPathLinkProvider, stripLineSuffix } from "./pathLinks";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
@@ -308,7 +309,8 @@ interface SessionsOptions {
   terminalOpen: boolean;
   activePanes: TermPane[];
   activeTab: TermTab | undefined;
-  /** Stable key for the active group|tab|panes set; re-runs the layout effect. */
+  /** Stable key for the active group|tab|grid (rows + weights)|panes set;
+   * re-runs the layout effect. */
   paneKey: string;
   theme: Theme;
   /** The pane the user is actually viewing (focused pane of the active tab). */
@@ -438,8 +440,8 @@ export function useTerminalSessions({
     if (existing) return existing;
     const el = document.createElement("div");
     el.style.position = "absolute";
-    el.style.top = "0";
-    el.style.bottom = "0";
+    // top/height (and left/width) are assigned per layout pass — a pane's slot
+    // depends on the tab's grid shape (#316).
     el.style.display = "none";
     // The host is pointer-events:none (so empty-state/overlay controls stay
     // clickable through it); panes re-enable events to receive terminal input.
@@ -603,8 +605,11 @@ export function useTerminalSessions({
       });
   }
 
-  // Lay out the active tab's panes side by side; hide everything else. Spawn
-  // each visible pane lazily once the pane is actually open.
+  // Lay out the active tab's panes on its split grid (#316); hide everything
+  // else. Spawn each visible pane lazily once the pane is actually open. The
+  // slot math lives in {@link paneSlots}; both axes and both divider borders
+  // are reassigned every pass because a pane node outlives its tab's grid
+  // shape (splits collapse and re-split differently).
   useEffect(() => {
     if (!hostRef.current) return;
     for (const entry of sessionsRef.current.values()) {
@@ -612,13 +617,17 @@ export function useTerminalSessions({
     }
     if (!terminalOpen || activePanes.length === 0) return;
 
-    const n = activePanes.length;
+    const slots = paneSlots(activePanes, activeTab?.rowSizes);
     activePanes.forEach((pane, i) => {
       const e = ensureEntry(pane);
+      const slot = slots[i];
       e.el.style.display = "block";
-      e.el.style.left = `${(i * 100) / n}%`;
-      e.el.style.width = `${100 / n}%`;
-      e.el.style.borderLeft = i > 0 ? "1px solid var(--color-border)" : "";
+      e.el.style.left = `${slot.left}%`;
+      e.el.style.width = `${slot.width}%`;
+      e.el.style.top = `${slot.top}%`;
+      e.el.style.height = `${slot.height}%`;
+      e.el.style.borderLeft = slot.firstInRow ? "" : PANE_DIVIDER;
+      e.el.style.borderTop = slot.firstRow ? "" : PANE_DIVIDER;
     });
 
     const raf = requestAnimationFrame(() => {
@@ -661,8 +670,11 @@ export function useTerminalSessions({
           if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
       });
-      // Focus the active pane.
-      if (activeTab) {
+      // Focus the active pane — unless the user is on a resize divider: its
+      // keyboard interaction changes the weights, which re-runs this effect
+      // (weights ride paneKey), and stealing focus after the first arrow
+      // press would end the interaction (#316).
+      if (activeTab && document.activeElement?.getAttribute("role") !== "separator") {
         sessionsRef.current.get(activeTab.activePaneId)?.term.focus();
       }
     });

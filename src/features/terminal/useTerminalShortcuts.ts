@@ -1,11 +1,11 @@
 import { useEffect, useRef, type RefObject } from "react";
 
-import type { GroupTerminals, TermTab } from "@/store/ui";
+import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
 
 /** State + actions the terminal keyboard shortcuts operate on. */
 export interface TerminalShortcutContext {
   handleNewTab: () => void;
-  handleSplit: () => void;
+  handleSplit: (direction: SplitDirection) => void;
   handleCloseTab: (tabId: string) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
   activeGroupId: number | null;
@@ -20,7 +20,7 @@ export interface TerminalShortcutContext {
  *
  *   ⌘T new tab (opens the pane if hidden)   ⌘W close active tab
  *   ⌘⇧] / ⌘⇧[ next / prev tab   Ctrl+Tab / Ctrl+⇧+Tab cycle tabs
- *   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split
+ *   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split right   ⌘⇧D split down
  *
  * Everything but ⌘T is scoped to the terminal pane (`hostRef`) having focus, so
  * it never steals keys from the editor (e.g. Monaco's own ⌘D). The live context
@@ -56,7 +56,13 @@ export function useTerminalShortcuts(
       }
       if (!e.altKey && !e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
-        s.handleSplit();
+        s.handleSplit("row");
+        return;
+      }
+      // ⌘⇧D = split down (stacked panes, #316).
+      if (!e.altKey && e.shiftKey && e.code === "KeyD") {
+        e.preventDefault();
+        s.handleSplit("column");
         return;
       }
       if (e.shiftKey && !e.altKey && (e.code === "BracketRight" || e.code === "BracketLeft")) {

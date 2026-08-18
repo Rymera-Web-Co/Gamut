@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, PanelLeft, PanelLeftClose, SplitSquareHorizontal } from "lucide-react";
+import {
+  Folder,
+  PanelLeft,
+  PanelLeftClose,
+  SplitSquareHorizontal,
+  SplitSquareVertical,
+} from "lucide-react";
 
 import { useGroups, useRepos } from "@/features/repos/api";
 import { pathBasename } from "@/lib/format";
 import { groupToReveal } from "@/lib/groupRepos";
 import { ipc, type Repo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { termTabLabel, useUiStore } from "@/store/ui";
+import { termTabLabel, useUiStore, type SplitDirection } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
+
+// Shared by the two split buttons so they can only ever drift together.
+const splitButtonClass =
+  "flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40";
 
 /**
  * Header bar above the full-view terminal: a clickable group / folder /
@@ -54,6 +64,12 @@ export function TerminalHeader() {
   function commitRename() {
     if (activeGroupId != null && tab) renameTerminalTab(activeGroupId, tab.id, draft);
     setEditing(false);
+  }
+
+  const splitDisabled = !tab || !cwd || activeGroupId == null;
+  function splitInto(direction: SplitDirection) {
+    if (activeGroupId == null || !tab || !cwd) return;
+    splitTerminal(activeGroupId, cwd, direction);
   }
 
   // Jump back to the repo workspace, selecting the repo the session is rooted
@@ -147,17 +163,26 @@ export function TerminalHeader() {
         )}
       </div>
       <div className="flex-1" />
+      {/* The tab is a grid (#316): split right adds a pane beside the active
+          one, split down adds a new row below it — any mix, so both are always
+          available while a session exists. */}
       <button
-        aria-label="Split terminal"
-        title="Split terminal (⌘D)"
-        disabled={!tab || !cwd || activeGroupId == null}
-        onClick={() => {
-          if (activeGroupId == null || !tab || !cwd) return;
-          splitTerminal(activeGroupId, cwd);
-        }}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+        aria-label="Split terminal right"
+        title="Split right (⌘D)"
+        disabled={splitDisabled}
+        onClick={() => splitInto("row")}
+        className={splitButtonClass}
       >
         <SplitSquareHorizontal className="size-3.5" />
+      </button>
+      <button
+        aria-label="Split terminal down"
+        title="Split down (⌘⇧D)"
+        disabled={splitDisabled}
+        onClick={() => splitInto("column")}
+        className={splitButtonClass}
+      >
+        <SplitSquareVertical className="size-3.5" />
       </button>
       <button
         onClick={() => openWorkspace(cwdRepo)}

@@ -29,14 +29,28 @@ export interface CompareSelection {
 /**
  * Integrated-terminal model. Terminals are scoped to a **group**: each group
  * keeps its own set of tabs, so switching repos never disturbs them and
- * switching groups swaps the whole set. A tab holds one or more side-by-side
- * panes (a split); each pane is an independent PTY session keyed by `pane.id`.
+ * switching groups swaps the whole set. A tab holds a **grid** of split panes
+ * (#316): one or more rows, each row holding one or more side-by-side panes —
+ * so `50/50` above `100`, or `33/33/33` above `50/50`, are all reachable.
+ * Each pane is an independent PTY session keyed by `pane.id`.
  */
 export interface TermPane {
   /** Opaque, process-unique PTY session id (the backend treats it as a key). */
   id: string;
   /** Working directory the shell is rooted at. */
   cwd: string;
+  /**
+   * Grid row this pane sits in (0-based, kept contiguous; absent = 0, which is
+   * also how blobs persisted before the grid model restore). The `panes` array
+   * is kept in row-major order.
+   */
+  row?: number;
+  /**
+   * Width weight within the pane's row (absent = 1). Widths are proportional —
+   * a pane's share of the row is `size / (sum of the row's sizes)` — so a
+   * divider drag only rebalances the two neighbours it sits between.
+   */
+  size?: number;
 }
 /**
  * Why a hidden pane is flagged as having unseen activity, ordered by salience
@@ -50,10 +64,22 @@ export const ACTIVITY_PRIORITY: Record<TermActivityKind, number> = {
   bell: 1,
   exit: 2,
 };
+/** Where a split puts the new pane: `row` = beside the active pane (in its
+ * row), `column` = in a new row of its own, directly below the active pane's
+ * row. */
+export type SplitDirection = "row" | "column";
+
 export interface TermTab {
   id: string;
   /** Auto-derived default label (group/repo name), set once at creation. */
   title: string;
+  /**
+   * Height weights per grid row, by row index (absent = every row equal).
+   * Proportional like `TermPane.size`: a row's share of the tab's height is
+   * `rowSizes[i] / (sum of rowSizes)`. Kept aligned with the contiguous row
+   * numbering by the split/close actions.
+   */
+  rowSizes?: number[];
   /**
    * User-chosen label that overrides `title` when set. Cleared (back to the
    * default) by renaming to an empty string. In-memory like the rest of the
@@ -107,13 +133,21 @@ function storedFilesPanel(): FilesPanel {
   return localStorage.getItem(FILES_PANEL_KEY) === "search" ? "search" : "tree";
 }
 
-/** Shape-check one persisted pane: an id + a cwd string. */
+/** A usable split weight: finite and positive. */
+function isValidWeight(w: unknown): boolean {
+  return typeof w === "number" && Number.isFinite(w) && w > 0;
+}
+
+/** Shape-check one persisted pane: an id + a cwd string, plus the optional
+ * grid fields (`row`: non-negative integer, `size`: positive weight). */
 function isValidPane(p: unknown): p is TermPane {
+  if (typeof p !== "object" || p === null) return false;
+  const pane = p as TermPane;
   return (
-    typeof p === "object" &&
-    p !== null &&
-    typeof (p as TermPane).id === "string" &&
-    typeof (p as TermPane).cwd === "string"
+    typeof pane.id === "string" &&
+    typeof pane.cwd === "string" &&
+    (pane.row === undefined || (Number.isInteger(pane.row) && pane.row >= 0)) &&
+    (pane.size === undefined || isValidWeight(pane.size))
   );
 }
 
@@ -126,11 +160,31 @@ function isValidTab(t: unknown): t is TermTab {
     typeof tab.id === "string" &&
     typeof tab.title === "string" &&
     (tab.customTitle === undefined || typeof tab.customTitle === "string") &&
+    (tab.rowSizes === undefined ||
+      (Array.isArray(tab.rowSizes) && tab.rowSizes.every(isValidWeight))) &&
     Array.isArray(tab.panes) &&
     tab.panes.length > 0 &&
     tab.panes.every(isValidPane) &&
     tab.panes.some((p) => p.id === tab.activePaneId)
   );
+}
+
+/**
+ * Re-establish the grid invariants on a restored tab: panes in row-major order
+ * and row numbers contiguous from 0. A blob written by the running app already
+ * satisfies both; this guards hand-edited or partially-stale storage so the
+ * split/close actions can rely on the invariants.
+ */
+function normalizeTabGrid(tab: TermTab): TermTab {
+  const rowValues = [...new Set(tab.panes.map((p) => p.row ?? 0))].sort((a, b) => a - b);
+  const remap = new Map(rowValues.map((rv, i) => [rv, i]));
+  const panes = [...tab.panes]
+    .sort((a, b) => (a.row ?? 0) - (b.row ?? 0)) // stable: keeps in-row order
+    .map((p) => {
+      const row = remap.get(p.row ?? 0)!;
+      return row === (p.row ?? 0) ? p : { ...p, row };
+    });
+  return { ...tab, panes };
 }
 
 /**
@@ -165,7 +219,7 @@ export function parseStoredTerminals(raw: string): {
     if (!Number.isFinite(groupId)) continue;
     const g = value as GroupTerminals;
     if (typeof g !== "object" || g === null || !Array.isArray(g.tabs)) continue;
-    const tabs = g.tabs.filter(isValidTab);
+    const tabs = g.tabs.filter(isValidTab).map(normalizeTabGrid);
     if (tabs.length === 0) continue;
     tabs.forEach((t) => {
       noteId(t.id);
@@ -325,8 +379,22 @@ interface UiState {
   requestBackgroundTerminal: (paneId: string) => void;
   /** Drop a pane id from the background-spawn queue once it's been spawned. */
   clearBackgroundTerminal: (paneId: string) => void;
-  /** Split the group's active tab, adding a side-by-side pane rooted at `cwd`. */
-  splitTerminal: (groupId: number, cwd: string) => void;
+  /**
+   * Split the group's active tab, adding a pane rooted at `cwd` (#316):
+   * `row` (the default) puts it beside the active pane, in its row; `column`
+   * puts it in a new row of its own, directly below the active pane's row.
+   * Any mix is allowed — the tab is a grid of rows.
+   */
+  splitTerminal: (groupId: number, cwd: string, direction?: SplitDirection) => void;
+  /**
+   * Rebalance split weights after a divider drag (#316): per-pane width
+   * weights (keyed by pane id) and/or the tab's per-row height weights.
+   */
+  resizeTerminalSplit: (
+    groupId: number,
+    tabId: string,
+    patch: { paneSizes?: Record<string, number>; rowSizes?: number[] },
+  ) => void;
   selectTerminalTab: (groupId: number, tabId: string) => void;
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
   renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
@@ -491,23 +559,75 @@ export const useUiStore = create<UiState>((set, get) => ({
     ),
   clearBackgroundTerminal: (paneId) =>
     set((s) => ({ terminalBgQueue: s.terminalBgQueue.filter((id) => id !== paneId) })),
-  splitTerminal: (groupId, cwd) => {
+  splitTerminal: (groupId, cwd, direction = "row") => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;
     set((s) => {
       const g = s.terminals[groupId];
       if (!g || !g.activeTabId) return {};
-      const tabs = g.tabs.map((t) =>
-        t.id === g.activeTabId
-          ? { ...t, panes: [...t.panes, { id: paneId, cwd }], activePaneId: paneId }
-          : t,
-      );
+      const tabs = g.tabs.map((t) => {
+        if (t.id !== g.activeTabId) return t;
+        const active = t.panes.find((p) => p.id === t.activePaneId) ?? t.panes[t.panes.length - 1];
+        const activeRow = active.row ?? 0;
+        if (direction === "column") {
+          // A new row of its own directly below the active pane's row; every
+          // row after it shifts down one (rows stay contiguous).
+          const shifted = t.panes.map((p) =>
+            (p.row ?? 0) > activeRow ? { ...p, row: (p.row ?? 0) + 1 } : p,
+          );
+          // Insert after the active row's last pane (row-major order). Plain
+          // loop: the TS lib target predates Array#findLastIndex.
+          let at = 0;
+          shifted.forEach((p, i) => {
+            if ((p.row ?? 0) <= activeRow) at = i + 1;
+          });
+          const panes = [
+            ...shifted.slice(0, at),
+            { id: paneId, cwd, row: activeRow + 1 },
+            ...shifted.slice(at),
+          ];
+          // Give the new row an average height weight so it takes an equal-ish
+          // share whatever the existing rows were dragged to.
+          let rowSizes = t.rowSizes;
+          if (rowSizes && rowSizes.length > 0) {
+            const avg = rowSizes.reduce((a, b) => a + b, 0) / rowSizes.length;
+            rowSizes = [...rowSizes.slice(0, activeRow + 1), avg, ...rowSizes.slice(activeRow + 1)];
+          }
+          return { ...t, panes, rowSizes, activePaneId: paneId };
+        }
+        // `row`: insert beside the active pane, in its row, with an average
+        // width weight so it takes an equal-ish share of the row.
+        const idx = t.panes.indexOf(active);
+        const rowPanes = t.panes.filter((p) => (p.row ?? 0) === activeRow);
+        const avg = rowPanes.reduce((a, p) => a + (p.size ?? 1), 0) / rowPanes.length;
+        const panes = [
+          ...t.panes.slice(0, idx + 1),
+          { id: paneId, cwd, row: activeRow, size: avg },
+          ...t.panes.slice(idx + 1),
+        ];
+        return { ...t, panes, activePaneId: paneId };
+      });
       return {
         nextTermId: n + 1,
         terminals: { ...s.terminals, [groupId]: { ...g, tabs } },
       };
     });
   },
+  resizeTerminalSplit: (groupId, tabId, patch) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      const tabs = g.tabs.map((t) => {
+        if (t.id !== tabId) return t;
+        const panes = patch.paneSizes
+          ? t.panes.map((p) =>
+              patch.paneSizes![p.id] !== undefined ? { ...p, size: patch.paneSizes![p.id] } : p,
+            )
+          : t.panes;
+        return { ...t, panes, rowSizes: patch.rowSizes ?? t.rowSizes };
+      });
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+    }),
   selectTerminalTab: (groupId, tabId) =>
     set((s) => {
       const g = s.terminals[groupId];
@@ -561,7 +681,8 @@ export const useUiStore = create<UiState>((set, get) => ({
       const { [paneId]: _gone, ...termActivity } = s.termActivity;
       void _gone;
       const patch = paneId in s.termActivity ? { termActivity } : {};
-      const panes = tab.panes.filter((p) => p.id !== paneId);
+      const removed = tab.panes.find((p) => p.id === paneId);
+      let panes = tab.panes.filter((p) => p.id !== paneId);
       if (panes.length === 0) {
         const idx = g.tabs.findIndex((t) => t.id === tabId);
         const tabs = g.tabs.filter((t) => t.id !== tabId);
@@ -573,9 +694,21 @@ export const useUiStore = create<UiState>((set, get) => ({
             : g.activeTabId;
         return { ...patch, terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
       }
+      // If that was the row's last pane, the row collapses: rows below shift
+      // up and its height weight is dropped, so numbering stays contiguous.
+      const removedRow = removed?.row ?? 0;
+      let rowSizes = tab.rowSizes;
+      if (!panes.some((p) => (p.row ?? 0) === removedRow)) {
+        panes = panes.map((p) => ((p.row ?? 0) > removedRow ? { ...p, row: (p.row ?? 0) - 1 } : p));
+        rowSizes = rowSizes?.filter((_, i) => i !== removedRow);
+        // A single remaining row is equal-height by definition.
+        if (rowSizes && rowSizes.length < 2) rowSizes = undefined;
+      }
       const activePaneId =
         tab.activePaneId === paneId ? panes[panes.length - 1].id : tab.activePaneId;
-      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, panes, activePaneId } : t));
+      const tabs = g.tabs.map((t) =>
+        t.id === tabId ? { ...t, panes, rowSizes, activePaneId } : t,
+      );
       return { ...patch, terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   markTermActivity: (paneId, kind) =>

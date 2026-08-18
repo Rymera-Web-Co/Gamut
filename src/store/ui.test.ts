@@ -162,6 +162,166 @@ describe("parseStoredTerminals", () => {
   });
 });
 
+describe("splitTerminal grid (#316)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useUiStore.setState({
+      terminals: {
+        1: {
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "t",
+              panes: [{ id: "term-1", cwd: "/repo" }],
+              activePaneId: "term-1",
+            },
+          ],
+        },
+      },
+      nextTermId: 2,
+    });
+  });
+
+  /** The grid as `[row][paneIds]`, from the flat row-major pane list. */
+  function grid() {
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    const rows: string[][] = [];
+    for (const p of tab.panes) {
+      const r = p.row ?? 0;
+      (rows[r] ??= []).push(p.id);
+    }
+    return rows;
+  }
+
+  it("a row split adds a pane beside the active one (default)", () => {
+    useUiStore.getState().splitTerminal(1, "/repo");
+    expect(grid()).toEqual([["term-1", "term-2"]]);
+  });
+
+  it("a column split adds a new row below the active pane's row", () => {
+    useUiStore.getState().splitTerminal(1, "/repo", "column");
+    expect(grid()).toEqual([["term-1"], ["term-2"]]);
+  });
+
+  it("mixes freely: 50/50 over 100", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "column"); // rows: [1], [2] — active = 2
+    s.setActivePane(1, "tab-1", "term-1");
+    s.splitTerminal(1, "/repo", "row"); // beside 1 in row 0
+    expect(grid()).toEqual([["term-1", "term-3"], ["term-2"]]);
+  });
+
+  it("mixes freely: 33/33/33 over 50/50", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "column"); // row 1: term-2 (active)
+    s.splitTerminal(1, "/repo", "row"); // beside it: row 1 = 2,3
+    s.setActivePane(1, "tab-1", "term-1");
+    s.splitTerminal(1, "/repo", "row"); // row 0 = 1,4
+    s.splitTerminal(1, "/repo", "row"); // row 0 = 1,4,5 (active was 4)
+    expect(grid()).toEqual([
+      ["term-1", "term-4", "term-5"],
+      ["term-2", "term-3"],
+    ]);
+  });
+
+  it("a column split in the middle shifts the rows below it down", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "column"); // rows: [1], [2]
+    s.setActivePane(1, "tab-1", "term-1");
+    s.splitTerminal(1, "/repo", "column"); // new row below row 0
+    expect(grid()).toEqual([["term-1"], ["term-3"], ["term-2"]]);
+  });
+
+  it("closing a row's last pane collapses the row and drops its height weight", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "column"); // rows: [1], [2]
+    s.splitTerminal(1, "/repo", "column"); // active was 2 → rows: [1], [2], [3]
+    useUiStore.getState().resizeTerminalSplit(1, "tab-1", { rowSizes: [2, 1, 1] });
+    useUiStore.getState().closeTerminalPane(1, "tab-1", "term-2");
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    expect(grid()).toEqual([["term-1"], ["term-3"]]);
+    expect(tab.rowSizes).toEqual([2, 1]);
+  });
+
+  it("resizeTerminalSplit rebalances pane width weights", () => {
+    const s = useUiStore.getState();
+    s.splitTerminal(1, "/repo", "row");
+    useUiStore
+      .getState()
+      .resizeTerminalSplit(1, "tab-1", { paneSizes: { "term-1": 1.5, "term-2": 0.5 } });
+    const tab = useUiStore.getState().terminals[1].tabs[0];
+    expect(tab.panes.map((p) => p.size)).toEqual([1.5, 0.5]);
+  });
+});
+
+describe("parseStoredTerminals split grid (#316)", () => {
+  function tabWith(overrides: Record<string, unknown>, panes?: unknown[]) {
+    return JSON.stringify({
+      terminals: {
+        1: {
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "t",
+              panes: panes ?? [
+                { id: "term-1", cwd: "/a", row: 0, size: 2 },
+                { id: "term-2", cwd: "/a", row: 0, size: 1 },
+                { id: "term-3", cwd: "/a", row: 1 },
+              ],
+              activePaneId: "term-1",
+              ...overrides,
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  it("round-trips rows, pane width weights, and row height weights", () => {
+    const { terminals } = parseStoredTerminals(tabWith({ rowSizes: [3, 1] }));
+    const tab = terminals[1].tabs[0];
+    expect(tab.panes.map((p) => [p.row ?? 0, p.size ?? 1])).toEqual([
+      [0, 2],
+      [0, 1],
+      [1, 1],
+    ]);
+    expect(tab.rowSizes).toEqual([3, 1]);
+  });
+
+  it("accepts a tab with no grid fields (older blobs) as one row", () => {
+    const { terminals } = parseStoredTerminals(blob());
+    expect(terminals[1].tabs[0].panes.every((p) => (p.row ?? 0) === 0)).toBe(true);
+  });
+
+  it("normalizes gappy or out-of-order rows to contiguous row-major order", () => {
+    const { terminals } = parseStoredTerminals(
+      tabWith({}, [
+        { id: "term-3", cwd: "/a", row: 4 },
+        { id: "term-1", cwd: "/a", row: 0 },
+        { id: "term-2", cwd: "/a", row: 0 },
+      ]),
+    );
+    const tab = terminals[1].tabs[0];
+    expect(tab.panes.map((p) => [p.id, p.row ?? 0])).toEqual([
+      ["term-1", 0],
+      ["term-2", 0],
+      ["term-3", 1],
+    ]);
+  });
+
+  it("drops a tab whose row is malformed", () => {
+    const { terminals } = parseStoredTerminals(tabWith({}, [{ id: "term-1", cwd: "/a", row: -1 }]));
+    expect(terminals[1]).toBeUndefined();
+  });
+
+  it("drops a tab whose rowSizes carry a non-positive weight", () => {
+    const { terminals } = parseStoredTerminals(tabWith({ rowSizes: [1, 0] }));
+    expect(terminals[1]).toBeUndefined();
+  });
+});
+
 describe("showView (intentional workspace navigation)", () => {
   it("sets the view and leaves the full-screen terminal", () => {
     useUiStore.setState({ view: "files", terminalOpen: true });

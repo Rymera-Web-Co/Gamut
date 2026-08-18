@@ -30,7 +30,7 @@ import { useUiStore } from "@/store/ui";
  *   ⌃Tab / ⌃⇧Tab cycle repos in the active group
  *
  * Per-file find/replace (⌘/Ctrl+F, ⌘/Ctrl+H) is handled in the Files view, and
- * terminal tab shortcuts (⌘T/⌘W/⌘D/⌘⇧[ ]/⌘⌥1–9) live in TerminalPane.
+ * terminal tab shortcuts (⌘T/⌘W/⌘D/⌘⇧D/⌘⇧[ ]/⌘⌥1–9) live in TerminalPane.
  *
  * Commands flagged `whenTyping: false` (git sync, repo cycling) are suppressed
  * while the user is typing in an input, the editor, or a terminal, so they don't
