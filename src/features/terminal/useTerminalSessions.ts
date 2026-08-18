@@ -670,8 +670,11 @@ export function useTerminalSessions({
           if (queued) ipc.terminalWrite(pane.id, encoder.encode(queued)).catch(() => {});
         }
       });
-      // Focus the active pane.
-      if (activeTab) {
+      // Focus the active pane — unless the user is on a resize divider: its
+      // keyboard interaction changes the weights, which re-runs this effect
+      // (weights ride paneKey), and stealing focus after the first arrow
+      // press would end the interaction (#316).
+      if (activeTab && document.activeElement?.getAttribute("role") !== "separator") {
         sessionsRef.current.get(activeTab.activePaneId)?.term.focus();
       }
     });
