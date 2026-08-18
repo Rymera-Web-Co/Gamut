@@ -344,7 +344,7 @@ pub struct TerminalInfo {
     pub tab_id: String,
     /// The tab's display label (custom name if set, else the default).
     pub name: String,
-    /// Number of side-by-side panes in the tab.
+    /// Number of split panes in the tab (across all grid rows).
     pub panes: usize,
     /// Working directory of the tab's first pane (lets a client map it to a repo).
     #[serde(default, skip_serializing_if = "Option::is_none")]

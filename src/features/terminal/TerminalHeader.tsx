@@ -15,6 +15,10 @@ import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type SplitDirection } from "@/store/ui";
 import { tabActivityKind, activityColor } from "./activity";
 
+// Shared by the two split buttons so they can only ever drift together.
+const splitButtonClass =
+  "flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40";
+
 /**
  * Header bar above the full-view terminal: a clickable group / folder /
  * session breadcrumb on the left (group and folder jump back to the repo
@@ -62,20 +66,17 @@ export function TerminalHeader() {
     setEditing(false);
   }
 
-  // Jump back to the repo workspace, selecting the repo the session is rooted
-  // in when we can resolve one. The repo may have left the session's group
-  // since the terminal opened — switch to a group that actually contains it
-  // (the shared groupToReveal rule) so the reconciler can't silently swap in
-  // a different repo.
-  // Shared by the two split buttons so they can only ever drift together.
-  const splitButtonClass =
-    "flex size-7 shrink-0 items-center justify-center rounded-md border bg-[var(--color-muted)] text-[var(--color-secondary-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] disabled:opacity-40";
   const splitDisabled = !tab || !cwd || activeGroupId == null;
   function splitInto(direction: SplitDirection) {
     if (activeGroupId == null || !tab || !cwd) return;
     splitTerminal(activeGroupId, cwd, direction);
   }
 
+  // Jump back to the repo workspace, selecting the repo the session is rooted
+  // in when we can resolve one. The repo may have left the session's group
+  // since the terminal opened — switch to a group that actually contains it
+  // (the shared groupToReveal rule) so the reconciler can't silently swap in
+  // a different repo.
   function openWorkspace(target?: Repo) {
     if (target) {
       const activeGroup = (groups.data ?? []).find((g) => g.id === activeGroupId);

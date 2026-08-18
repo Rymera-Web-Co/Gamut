@@ -309,8 +309,8 @@ interface SessionsOptions {
   terminalOpen: boolean;
   activePanes: TermPane[];
   activeTab: TermTab | undefined;
-  /** Stable key for the active group|tab|direction|panes set; re-runs the
-   * layout effect. */
+  /** Stable key for the active group|tab|grid (rows + weights)|panes set;
+   * re-runs the layout effect. */
   paneKey: string;
   theme: Theme;
   /** The pane the user is actually viewing (focused pane of the active tab). */
@@ -441,7 +441,7 @@ export function useTerminalSessions({
     const el = document.createElement("div");
     el.style.position = "absolute";
     // top/height (and left/width) are assigned per layout pass — a pane's slot
-    // depends on the tab's split direction (#316).
+    // depends on the tab's grid shape (#316).
     el.style.display = "none";
     // The host is pointer-events:none (so empty-state/overlay controls stay
     // clickable through it); panes re-enable events to receive terminal input.

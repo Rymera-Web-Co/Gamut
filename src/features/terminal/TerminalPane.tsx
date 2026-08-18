@@ -8,10 +8,13 @@ import { useSettings } from "@/lib/settings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore, type SplitDirection } from "@/store/ui";
 import { ActivityDot } from "./activity";
-import { paneSlots } from "./paneLayout";
+import { paneSlots, resizePair } from "./paneLayout";
 import { xtermTheme } from "./terminalTheme";
 import { useTerminalSessions } from "./useTerminalSessions";
 import { useTerminalShortcuts } from "./useTerminalShortcuts";
+
+// No divider may shrink a pane below this share of its axis' total weight.
+const MIN_SHARE = 0.08;
 
 /**
  * The integrated terminal pane: a per-group set of tabs, each holding a grid
@@ -155,8 +158,12 @@ export function TerminalPane() {
   // ── Divider drag-to-resize (#316) ────────────────────────────────────────
   // A vertical divider rebalances the width weights of the two panes it sits
   // between; a horizontal divider rebalances the height weights of the two
-  // rows. Weights live in the store, so the layout effect re-fits the xterms
-  // as the drag moves. Pointer capture keeps the drag alive off the handle.
+  // rows (the math is paneLayout's `resizePair`). Weights live in the store,
+  // so the layout effect re-fits the xterms as the drag moves — throttled to
+  // one commit per animation frame, because every commit also persists the
+  // layout and re-runs the whole layout pass (a raw pointermove stream would
+  // thrash localStorage, the resize IPC, and full-screen TUIs with SIGWINCH).
+  // Pointer capture keeps the drag alive off the 6px handle.
   const dragRef = useRef<
     | {
         kind: "pane";
@@ -177,15 +184,35 @@ export function TerminalPane() {
       }
     | null
   >(null);
+  const commitRaf = useRef(0);
+  const pendingCommit = useRef<{ paneSizes?: Record<string, number>; rowSizes?: number[] } | null>(
+    null,
+  );
 
-  // No divider may shrink a pane below this share of its axis' total weight.
-  const MIN_SHARE = 0.08;
+  function scheduleCommit(patch: { paneSizes?: Record<string, number>; rowSizes?: number[] }) {
+    pendingCommit.current = patch;
+    if (commitRaf.current) return;
+    commitRaf.current = requestAnimationFrame(() => {
+      commitRaf.current = 0;
+      const pending = pendingCommit.current;
+      pendingCommit.current = null;
+      if (pending && activeGroupId != null && activeTab) {
+        resizeTerminalSplit(activeGroupId, activeTab.id, pending);
+      }
+    });
+  }
 
   function beginPaneDrag(e: React.PointerEvent<HTMLElement>, i: number) {
     const host = hostRef.current;
-    if (!host || i < 1) return;
+    if (!host || i < 1) {
+      dragRef.current = null;
+      return;
+    }
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    // Full-window cursor while dragging: the pointer leaves the 6px handle
+    // long before the drag ends (same trick as the sidebar splitter).
+    document.body.style.cursor = "col-resize";
     const row = activePanes[i].row ?? 0;
     const rowTotal = activePanes
       .filter((p) => (p.row ?? 0) === row)
@@ -205,9 +232,13 @@ export function TerminalPane() {
 
   function beginRowDrag(e: React.PointerEvent<HTMLElement>, pos: number) {
     const host = hostRef.current;
-    if (!host || !activeTab || pos < 1) return;
+    if (!host || !activeTab || pos < 1) {
+      dragRef.current = null;
+      return;
+    }
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "row-resize";
     const rowCount = new Set(activePanes.map((p) => p.row ?? 0)).size;
     const startRowSizes = Array.from({ length: rowCount }, (_, i) => activeTab.rowSizes?.[i] ?? 1);
     dragRef.current = {
@@ -223,30 +254,87 @@ export function TerminalPane() {
     const d = dragRef.current;
     if (!d || activeGroupId == null || !activeTab) return;
     if (d.kind === "pane") {
-      const pairTotal = d.startLeft + d.startRight;
-      const min = d.rowTotal * MIN_SHARE;
-      if (pairTotal <= 2 * min) return;
-      const delta = ((e.clientX - d.startX) / d.hostWidthPx) * d.rowTotal;
-      const left = Math.min(Math.max(d.startLeft + delta, min), pairTotal - min);
-      resizeTerminalSplit(activeGroupId, activeTab.id, {
-        paneSizes: { [d.leftId]: left, [d.rightId]: pairTotal - left },
-      });
+      const [left, right] = resizePair(
+        d.startLeft,
+        d.startRight,
+        d.rowTotal,
+        e.clientX - d.startX,
+        d.hostWidthPx,
+        MIN_SHARE,
+      );
+      scheduleCommit({ paneSizes: { [d.leftId]: left, [d.rightId]: right } });
     } else {
       const total = d.startRowSizes.reduce((a, b) => a + b, 0);
-      const pairTotal = d.startRowSizes[d.pos - 1] + d.startRowSizes[d.pos];
-      const min = total * MIN_SHARE;
-      if (pairTotal <= 2 * min) return;
-      const delta = ((e.clientY - d.startY) / d.hostHeightPx) * total;
-      const above = Math.min(Math.max(d.startRowSizes[d.pos - 1] + delta, min), pairTotal - min);
+      const [above, below] = resizePair(
+        d.startRowSizes[d.pos - 1],
+        d.startRowSizes[d.pos],
+        total,
+        e.clientY - d.startY,
+        d.hostHeightPx,
+        MIN_SHARE,
+      );
       const rowSizes = [...d.startRowSizes];
       rowSizes[d.pos - 1] = above;
-      rowSizes[d.pos] = pairTotal - above;
-      resizeTerminalSplit(activeGroupId, activeTab.id, { rowSizes });
+      rowSizes[d.pos] = below;
+      scheduleCommit({ rowSizes });
     }
   }
 
   function endDividerDrag() {
+    // Flush the last pending frame so the release position always lands.
+    if (commitRaf.current) {
+      cancelAnimationFrame(commitRaf.current);
+      commitRaf.current = 0;
+    }
+    const pending = pendingCommit.current;
+    pendingCommit.current = null;
+    if (pending && activeGroupId != null && activeTab) {
+      resizeTerminalSplit(activeGroupId, activeTab.id, pending);
+    }
+    document.body.style.cursor = "";
     dragRef.current = null;
+  }
+
+  // Keyboard resize on a focused divider (#316): arrows nudge the pair by a
+  // fixed share of the axis, Home resets the pair to an equal split — the
+  // same ARIA-separator contract the sidebar splitter implements.
+  const NUDGE_PX = 100;
+  function nudgePane(i: number, dir: -1 | 1 | 0) {
+    if (activeGroupId == null || !activeTab || i < 1) return;
+    const row = activePanes[i].row ?? 0;
+    const rowTotal = activePanes
+      .filter((p) => (p.row ?? 0) === row)
+      .reduce((a, p) => a + (p.size ?? 1), 0);
+    const a = activePanes[i - 1].size ?? 1;
+    const b = activePanes[i].size ?? 1;
+    const [left, right] =
+      dir === 0
+        ? [(a + b) / 2, (a + b) / 2]
+        : resizePair(a, b, rowTotal, dir * NUDGE_PX, hostRef.current?.clientWidth || 1, MIN_SHARE);
+    resizeTerminalSplit(activeGroupId, activeTab.id, {
+      paneSizes: { [activePanes[i - 1].id]: left, [activePanes[i].id]: right },
+    });
+  }
+  function nudgeRow(pos: number, dir: -1 | 1 | 0) {
+    if (activeGroupId == null || !activeTab || pos < 1) return;
+    const rowCount = new Set(activePanes.map((p) => p.row ?? 0)).size;
+    const rowSizes = Array.from({ length: rowCount }, (_, i) => activeTab.rowSizes?.[i] ?? 1);
+    const total = rowSizes.reduce((a, b) => a + b, 0);
+    const pair = rowSizes[pos - 1] + rowSizes[pos];
+    const [above, below] =
+      dir === 0
+        ? [pair / 2, pair / 2]
+        : resizePair(
+            rowSizes[pos - 1],
+            rowSizes[pos],
+            total,
+            dir * NUDGE_PX,
+            hostRef.current?.clientHeight || 1,
+            MIN_SHARE,
+          );
+    rowSizes[pos - 1] = above;
+    rowSizes[pos] = below;
+    resizeTerminalSplit(activeGroupId, activeTab.id, { rowSizes });
   }
 
   // Horizontal (between-rows) divider positions: the top edge of each row
@@ -319,41 +407,70 @@ export function TerminalPane() {
         {/* Drag handles on the split boundaries (#316): a vertical handle on
             each pane's left edge (within its row), a horizontal handle on each
             row's top edge. Each rebalances just the two neighbours it sits
-            between; the layout effect re-fits the xterms as the drag moves. */}
-        {slots.map((slot, i) =>
-          slot.firstInRow ? null : (
+            between; the layout effect re-fits the xterms as the drag moves.
+            They live in a wrapper matching the pane host's inset so the
+            handles sit exactly on the seams they resize; the wrapper is
+            pointer-events-none (like the host) and each handle re-enables
+            events. Keyboard: arrows nudge, Home resets the pair to equal —
+            the same ARIA-separator contract as the sidebar splitter. */}
+        <div className="pointer-events-none absolute inset-1.5">
+          {slots.map((slot, i) =>
+            slot.firstInRow ? null : (
+              <div
+                key={`vdiv-${activePanes[i].id}`}
+                role="separator"
+                tabIndex={0}
+                aria-orientation="vertical"
+                aria-label={`Resize split columns (row ${slot.rowPos + 1})`}
+                aria-valuemin={Math.round(MIN_SHARE * 100)}
+                aria-valuemax={100 - Math.round(MIN_SHARE * 100)}
+                aria-valuenow={Math.round(slots[i - 1].width)}
+                onPointerDown={(e) => beginPaneDrag(e, i)}
+                onPointerMove={onDividerMove}
+                onPointerUp={endDividerDrag}
+                onPointerCancel={endDividerDrag}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft") nudgePane(i, -1);
+                  else if (e.key === "ArrowRight") nudgePane(i, 1);
+                  else if (e.key === "Home") nudgePane(i, 0);
+                  else return;
+                  e.preventDefault();
+                }}
+                style={{
+                  left: `calc(${slot.left}% - 3px)`,
+                  top: `${slot.top}%`,
+                  height: `${slot.height}%`,
+                }}
+                className="pointer-events-auto absolute z-10 w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/30 focus-visible:bg-[var(--color-primary)]/40 focus-visible:outline-none active:bg-[var(--color-primary)]/50"
+              />
+            ),
+          )}
+          {rowBoundaries.map((slot) => (
             <div
-              key={`vdiv-${activePanes[i].id}`}
+              key={`hdiv-${slot.rowPos}`}
               role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize split"
-              onPointerDown={(e) => beginPaneDrag(e, i)}
+              tabIndex={0}
+              aria-orientation="horizontal"
+              aria-label={`Resize split rows (${slot.rowPos}/${slot.rowPos + 1})`}
+              aria-valuemin={Math.round(MIN_SHARE * 100)}
+              aria-valuemax={100 - Math.round(MIN_SHARE * 100)}
+              aria-valuenow={Math.round(slot.top)}
+              onPointerDown={(e) => beginRowDrag(e, slot.rowPos)}
               onPointerMove={onDividerMove}
               onPointerUp={endDividerDrag}
               onPointerCancel={endDividerDrag}
-              style={{
-                left: `calc(${slot.left}% - 3px)`,
-                top: `${slot.top}%`,
-                height: `${slot.height}%`,
+              onKeyDown={(e) => {
+                if (e.key === "ArrowUp") nudgeRow(slot.rowPos, -1);
+                else if (e.key === "ArrowDown") nudgeRow(slot.rowPos, 1);
+                else if (e.key === "Home") nudgeRow(slot.rowPos, 0);
+                else return;
+                e.preventDefault();
               }}
-              className="absolute z-10 w-1.5 cursor-col-resize transition-colors hover:bg-[var(--color-primary)]/30 active:bg-[var(--color-primary)]/50"
+              style={{ top: `calc(${slot.top}% - 3px)` }}
+              className="pointer-events-auto absolute inset-x-0 z-10 h-1.5 cursor-row-resize transition-colors hover:bg-[var(--color-primary)]/30 focus-visible:bg-[var(--color-primary)]/40 focus-visible:outline-none active:bg-[var(--color-primary)]/50"
             />
-          ),
-        )}
-        {rowBoundaries.map((slot) => (
-          <div
-            key={`hdiv-${slot.rowPos}`}
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize split"
-            onPointerDown={(e) => beginRowDrag(e, slot.rowPos)}
-            onPointerMove={onDividerMove}
-            onPointerUp={endDividerDrag}
-            onPointerCancel={endDividerDrag}
-            style={{ top: `calc(${slot.top}% - 3px)` }}
-            className="absolute inset-x-0 z-10 h-1.5 cursor-row-resize transition-colors hover:bg-[var(--color-primary)]/30 active:bg-[var(--color-primary)]/50"
-          />
-        ))}
+          ))}
+        </div>
         {tabs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-xs text-[var(--color-muted-foreground)]">
             <span>No terminals open in this group.</span>

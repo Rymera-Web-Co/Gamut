@@ -27,6 +27,31 @@ function weight(w: number | undefined): number {
 }
 
 /**
+ * New weights for a divider's two neighbours after it moved `deltaPx` along an
+ * axis rendered at `axisPx` pixels whose weights sum to `axisTotal` (#316).
+ * The pair total is conserved — only the two neighbours move — and neither may
+ * drop below `minShare` of the axis total. When the pair can't afford that
+ * minimum (both neighbours already squeezed by other dividers), the floor
+ * relaxes to an equal split of the pair so the divider keeps responding
+ * instead of going dead.
+ */
+export function resizePair(
+  startA: number,
+  startB: number,
+  axisTotal: number,
+  deltaPx: number,
+  axisPx: number,
+  minShare: number,
+): [number, number] {
+  const pairTotal = startA + startB;
+  if (axisPx <= 0) return [startA, startB];
+  const min = Math.min(axisTotal * minShare, pairTotal / 2);
+  const delta = (deltaPx / axisPx) * axisTotal;
+  const a = Math.min(Math.max(startA + delta, min), pairTotal - min);
+  return [a, pairTotal - a];
+}
+
+/**
  * Percent-based grid slots for a tab's panes (#316). Panes group into rows by
  * `pane.row` (the array is row-major); each row's height is its `rowSizes`
  * weight share (default equal), and each pane's width is its `size` weight

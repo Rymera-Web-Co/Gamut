@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { paneSlots } from "./paneLayout";
+import { paneSlots, resizePair } from "./paneLayout";
 
 /** Rounded geometry tuple for terse assertions: [left, top, width, height]. */
 function geo(slots: ReturnType<typeof paneSlots>) {
@@ -64,6 +64,42 @@ describe("paneSlots (#316)", () => {
       [false, true, 0],
       [true, false, 1],
     ]);
+  });
+
+  it("resizePair converts a pixel drag into weights, conserving the pair total", () => {
+    // Two equal panes on a 1000px axis: +250px moves a quarter of the axis
+    // weight (2) from right to left.
+    expect(resizePair(1, 1, 2, 250, 1000, 0.08)).toEqual([1.5, 0.5]);
+    // Only the pair rebalances: a three-pane row's total (3) scales the delta.
+    const [a, b] = resizePair(1, 1, 3, 100, 1000, 0.08);
+    expect(a + b).toBe(2);
+    expect(a).toBeCloseTo(1.3);
+  });
+
+  it("resizePair clamps both edges at minShare of the axis total", () => {
+    // Dragging far right: the right pane floors at 8% of the axis (0.16 of 2).
+    const [a, b] = resizePair(1, 1, 2, 5000, 1000, 0.08);
+    expect(a).toBeCloseTo(1.84);
+    expect(b).toBeCloseTo(0.16);
+    // Far left mirrors it.
+    const [c, d] = resizePair(1, 1, 2, -5000, 1000, 0.08);
+    expect(c).toBeCloseTo(0.16);
+    expect(d).toBeCloseTo(1.84);
+  });
+
+  it("resizePair keeps responding when the pair can't afford the minimum", () => {
+    // Both neighbours already at the floor (pairTotal 0.32 = 2 × 8% of 2):
+    // the floor relaxes to an equal split, so the divider still tracks.
+    const [a, b] = resizePair(0.16, 0.16, 2, 5000, 1000, 0.08);
+    expect(a).toBeCloseTo(0.16);
+    expect(b).toBeCloseTo(0.16);
+    const [c, d] = resizePair(0.1, 0.22, 2, -5000, 1000, 0.08);
+    expect(c + d).toBeCloseTo(0.32);
+    expect(c).toBeCloseTo(0.16); // clamped at pairTotal/2, not axis minShare
+  });
+
+  it("resizePair is a no-op on a zero-length axis", () => {
+    expect(resizePair(1, 1, 2, 100, 0, 0.08)).toEqual([1, 1]);
   });
 
   it("tolerates absent rows (pre-grid blobs), sparse rowSizes, and bad weights", () => {
