@@ -101,11 +101,14 @@ export function ReviewPopover({
   const auth = useGithubAuth();
 
   // GitHub rejects APPROVE / REQUEST_CHANGES from the PR author with a 422, so
-  // don't offer them on the user's own PR (only COMMENT is allowed).
+  // don't offer them on the user's own PR (only COMMENT is allowed). The author
+  // may resolve after the popover is open, so clamp the chosen event rather
+  // than relying on the radios' disabled state alone.
   const isAuthor = author != null && auth.data?.login === author;
+  const effectiveEvent: ReviewEvent = isAuthor && event !== "COMMENT" ? "COMMENT" : event;
 
   // Approve needs no comment; otherwise require a body or pending inline drafts.
-  const needsBody = event !== "APPROVE";
+  const needsBody = effectiveEvent !== "APPROVE";
   const canSubmit =
     !submit.isPending && (!needsBody || body.trim().length > 0 || drafts.length > 0);
 
@@ -122,7 +125,7 @@ export function ReviewPopover({
     submit.mutate(
       {
         number,
-        event,
+        event: effectiveEvent,
         body,
         commitId: headSha,
         comments: drafts.length ? drafts : undefined,
@@ -178,8 +181,9 @@ export function ReviewPopover({
                   type="radio"
                   name="review-event"
                   className="mt-0.5"
-                  checked={event === opt.event}
+                  checked={effectiveEvent === opt.event}
                   disabled={disabled}
+                  aria-describedby={disabled ? "own-pr-note" : undefined}
                   onChange={() => setEvent(opt.event)}
                 />
                 <div className="flex flex-col">
@@ -192,7 +196,7 @@ export function ReviewPopover({
             );
           })}
           {isAuthor && (
-            <p className="text-xs text-[var(--color-muted-foreground)]">
+            <p id="own-pr-note" className="text-xs text-[var(--color-muted-foreground)]">
               You can't approve or request changes on your own pull request.
             </p>
           )}
@@ -667,7 +671,10 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                   repoId={repoId}
                   number={selected}
                   headSha={selectedPr?.head_sha}
-                  author={selectedPr?.author}
+                  // The open-PR list misses closed/merged PRs (and is empty while
+                  // loading), so fall back to the per-PR thread, which resolves
+                  // the author in any state.
+                  author={selectedPr?.author ?? thread.data?.author}
                 />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
