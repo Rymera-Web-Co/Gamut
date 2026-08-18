@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Group, Repo } from "@/lib/ipc";
+import { DEFAULTS, useSettings } from "@/lib/settings";
 import { useUiStore } from "@/store/ui";
 
 // Every ipc entry point reachable from the mounted tree (Sidebar + its
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   listBranches: vi.fn(),
   listGitTags: vi.fn(),
   checkoutBranch: vi.fn(),
+  removeRepos: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -37,7 +39,7 @@ vi.mock("@/lib/ipc", () => ({
     gitSyncStatus: mocks.gitSyncStatus,
     repoRemoteUrl: vi.fn().mockResolvedValue(null),
     gitWorktreeList: vi.fn().mockResolvedValue([]),
-    removeRepos: vi.fn().mockResolvedValue(undefined),
+    removeRepos: mocks.removeRepos,
     touchRepo: mocks.touchRepo,
     gitFetchMany: vi.fn().mockResolvedValue([]),
     registerRepo: vi.fn(),
@@ -134,6 +136,8 @@ beforeEach(() => {
     has_uncommitted_changes: false,
     has_worktrees: false,
   });
+  mocks.removeRepos.mockReset().mockResolvedValue(undefined);
+  useSettings.setState({ values: { ...DEFAULTS } });
   useUiStore.setState({
     activeGroupId: 1,
     activeRepoId: null,
@@ -347,6 +351,142 @@ describe("Sidebar repo row branch line (#312)", () => {
 
     expect(await screen.findByText("Remove 1 repository folder?")).toBeTruthy();
     expect(useUiStore.getState().activeRepoId).toBeNull();
+  });
+});
+
+describe("Group context menu — Remove N missing (#317)", () => {
+  const M1 = repo(4, "gone-one", { group_ids: [2], missing: true });
+  const M2 = repo(5, "gone-two", { group_ids: [2], missing: true });
+
+  /** Right-click a group's header row (the label bubbles to the row div). */
+  async function openGroupMenu(name: string, totalRepos: number) {
+    // The derivation reads the repos query — wait for it to land first, via
+    // the sidebar's global "{n} repos" counter (whole-sidebar total, not the
+    // group's own count).
+    await screen.findByText(`${totalRepos} repos`);
+    fireEvent.contextMenu(screen.getByText(name));
+  }
+
+  it("shows a count-labelled entry when the group has missing rows", async () => {
+    renderSidebar([B, M1, M2]);
+    await openGroupMenu("Tools", 3);
+    expect(screen.getByText("Remove 2 missing")).toBeTruthy();
+  });
+
+  it("labels a single missing row as 'Remove 1 missing'", async () => {
+    renderSidebar([B, M1]);
+    await openGroupMenu("Tools", 2);
+    expect(screen.getByText("Remove 1 missing")).toBeTruthy();
+  });
+
+  it("hides the entry when the group has no missing rows", async () => {
+    renderSidebar([A, B]);
+    await openGroupMenu("Tools", 2);
+    expect(screen.getByText("Edit group")).toBeTruthy();
+    expect(screen.queryByText(/Remove \d+ missing/)).toBeNull();
+  });
+
+  it("opens the confirm dialog with exactly the missing repos, and confirming removes those ids", async () => {
+    renderSidebar([B, M1, M2]);
+    await openGroupMenu("Tools", 3);
+
+    const label = screen.getByText("Remove 2 missing");
+    fireEvent.click(label);
+
+    // The context menu closed — its overlay would otherwise sit above the dialog.
+    expect(screen.queryByText("Edit group")).toBeNull();
+    // Dialog lists both missing rows, not the healthy one.
+    expect(await screen.findByText("Remove 2 repository folders?")).toBeTruthy();
+    expect(screen.getByText("gone-one")).toBeTruthy();
+    expect(screen.getByText("gone-two")).toBeTruthy();
+    expect(screen.queryByText("beta")).toBeNull();
+    // No root in the selection — no root warning.
+    expect(screen.queryByText(/synced root folder/)).toBeNull();
+
+    fireEvent.click(screen.getByText("Remove 2"));
+    await vi.waitFor(() => expect(mocks.removeRepos).toHaveBeenCalledTimes(1));
+    const ids = mocks.removeRepos.mock.calls[0][0] as number[];
+    expect(ids).toEqual([M1.id, M2.id]);
+    // The advertised count matches the removal set.
+    expect(ids).toHaveLength(2);
+  });
+
+  it("scopes to the right-clicked group when other groups also hold missing rows", async () => {
+    const G3 = group(3, "Other");
+    const M3 = repo(6, "gone-elsewhere", { group_ids: [3], missing: true });
+    renderSidebar([B, M1, M3], [G1, G2, G3]);
+    await openGroupMenu("Tools", 3);
+
+    fireEvent.click(screen.getByText("Remove 1 missing"));
+    fireEvent.click(await screen.findByText("Remove 1"));
+    await vi.waitFor(() => expect(mocks.removeRepos).toHaveBeenCalledWith([M1.id]));
+  });
+
+  it("ignores the current repo selection — targets the missing set regardless", async () => {
+    useUiStore.setState({ activeRepoId: B.id });
+    renderSidebar([B, M1, M2]);
+    await openGroupMenu("Tools", 3);
+
+    fireEvent.click(screen.getByText("Remove 2 missing"));
+    fireEvent.click(await screen.findByText("Remove 2"));
+    await vi.waitFor(() => expect(mocks.removeRepos).toHaveBeenCalledWith([M1.id, M2.id]));
+  });
+
+  it("warns when a missing target is the group's synced root", async () => {
+    const boundG2 = group(2, "Tools", { folder_path: "/repos", root_repo_id: M1.id });
+    renderSidebar([B, M1], [G1, boundG2]);
+    await openGroupMenu("Tools", 2);
+
+    fireEvent.click(screen.getByText("Remove 1 missing"));
+    expect(await screen.findByText(/synced root folder/)).toBeTruthy();
+  });
+
+  it("excludes a synced root hidden by the setting from the count and the set", async () => {
+    useSettings.setState({ values: { ...DEFAULTS, showSyncedRoot: false } });
+    const boundG2 = group(2, "Tools", { folder_path: "/repos", root_repo_id: M1.id });
+    renderSidebar([B, M1, M2], [G1, boundG2]);
+    await openGroupMenu("Tools", 3);
+
+    fireEvent.click(screen.getByText("Remove 1 missing"));
+    fireEvent.click(await screen.findByText("Remove 1"));
+    await vi.waitFor(() => expect(mocks.removeRepos).toHaveBeenCalledWith([M2.id]));
+  });
+
+  it("shows no entry when the group's only missing row is a hidden synced root", async () => {
+    useSettings.setState({ values: { ...DEFAULTS, showSyncedRoot: false } });
+    const boundG2 = group(2, "Tools", { folder_path: "/repos", root_repo_id: M1.id });
+    renderSidebar([B, M1], [G1, boundG2]);
+    await openGroupMenu("Tools", 2);
+
+    expect(screen.getByText("Edit group")).toBeTruthy();
+    expect(screen.queryByText(/Remove \d+ missing/)).toBeNull();
+  });
+
+  it("styles the entry destructive, matching the repo menu's Remove repo", async () => {
+    renderSidebar([B, M1, M2]);
+    await openGroupMenu("Tools", 3);
+    const item = screen.getByText("Remove 2 missing").closest("button")!;
+    expect(item.className).toContain("text-[var(--color-destructive)]");
+  });
+
+  it("cancelling the dialog removes nothing", async () => {
+    renderSidebar([B, M1, M2]);
+    await openGroupMenu("Tools", 3);
+
+    fireEvent.click(screen.getByText("Remove 2 missing"));
+    fireEvent.click(await screen.findByText("Cancel"));
+    expect(mocks.removeRepos).not.toHaveBeenCalled();
+    expect(screen.queryByText("Remove 2 repository folders?")).toBeNull();
+  });
+
+  it("adds nothing to the repo context menu, even on a missing repo", async () => {
+    const missingInDefault = repo(7, "gone-default", { group_ids: [], missing: true });
+    renderSidebar([missingInDefault]);
+    const row = await screen.findByTitle("Folder no longer exists on disk");
+
+    fireEvent.contextMenu(row);
+    expect(screen.getByText("Remove repo")).toBeTruthy();
+    expect(screen.queryByText(/Remove \d+ missing/)).toBeNull();
   });
 });
 
