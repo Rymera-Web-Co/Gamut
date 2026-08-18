@@ -2,6 +2,18 @@ import { useEffect, useRef, type RefObject } from "react";
 
 import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
 
+/**
+ * The Ctrl+Tab / Ctrl+⇧+Tab tab-cycle chord (#156), physical-`code` matched
+ * like every other terminal chord. Shared with the xterm custom key handler,
+ * which must return false for it: xterm would otherwise map Tab to `\t` (typed
+ * into the shell) and stop propagation, so the window listener below would
+ * never see the chord (#323). Keydown-only — xterm consults the handler for
+ * keyup/keypress too, and those must keep their default handling.
+ */
+export function isTabCycleChord(e: KeyboardEvent): boolean {
+  return e.type === "keydown" && e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Tab";
+}
+
 /** State + actions the terminal keyboard shortcuts operate on. */
 export interface TerminalShortcutContext {
   handleNewTab: () => void;
@@ -79,9 +91,13 @@ export function useTerminalShortcuts(
       // (#156). Control-only on every platform, matching the repo-cycle binding
       // it shadows here — the global repo-cycle is suppressed while .xterm has
       // focus, so the two never fight. Only rotates with ≥2 tabs.
-      if (e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Tab") {
+      if (isTabCycleChord(e)) {
+        // Always swallow the chord while the terminal is focused (same rule as
+        // ⌘W above): xterm no longer handles it, so an un-prevented event
+        // would fall through to the webview's own Tab handling — focus
+        // traversal on WebKitGTK. No-op with <2 tabs.
+        e.preventDefault();
         if (tabs.length > 1 && s.gt?.activeTabId) {
-          e.preventDefault();
           const i = tabs.findIndex((t) => t.id === s.gt!.activeTabId);
           const dir = e.shiftKey ? -1 : 1;
           const next = tabs[(i + dir + tabs.length) % tabs.length];
