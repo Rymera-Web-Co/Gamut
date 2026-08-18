@@ -144,6 +144,7 @@ export function ReviewView() {
                   repoId={repoId}
                   number={matchingPr.number}
                   headSha={matchingPr.head_sha}
+                  author={matchingPr.author}
                 />
               </>
             )}

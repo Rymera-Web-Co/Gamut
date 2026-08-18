@@ -84,10 +84,12 @@ export function ReviewPopover({
   repoId,
   number,
   headSha,
+  author,
 }: {
   repoId: number;
   number: number;
   headSha?: string;
+  author?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
@@ -96,6 +98,11 @@ export function ReviewPopover({
   const mentionables = useMentionables(repoId, open);
   const drafts = useDraftsFor(repoId, number);
   const clearDrafts = useReviewDrafts((s) => s.clear);
+  const auth = useGithubAuth();
+
+  // GitHub rejects APPROVE / REQUEST_CHANGES from the PR author with a 422, so
+  // don't offer them on the user's own PR (only COMMENT is allowed).
+  const isAuthor = author != null && auth.data?.login === author;
 
   // Approve needs no comment; otherwise require a body or pending inline drafts.
   const needsBody = event !== "APPROVE";
@@ -157,23 +164,38 @@ export function ReviewPopover({
         />
 
         <div className="space-y-2">
-          {REVIEW_OPTIONS.map((opt) => (
-            <label key={opt.event} className="flex cursor-pointer items-start gap-2.5">
-              <input
-                type="radio"
-                name="review-event"
-                className="mt-0.5"
-                checked={event === opt.event}
-                onChange={() => setEvent(opt.event)}
-              />
-              <div className="flex flex-col">
-                <span className="text-sm font-medium leading-tight">{opt.label}</span>
-                <span className="text-xs text-[var(--color-muted-foreground)]">
-                  {opt.description}
-                </span>
-              </div>
-            </label>
-          ))}
+          {REVIEW_OPTIONS.map((opt) => {
+            const disabled = isAuthor && opt.event !== "COMMENT";
+            return (
+              <label
+                key={opt.event}
+                className={cn(
+                  "flex items-start gap-2.5",
+                  disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="review-event"
+                  className="mt-0.5"
+                  checked={event === opt.event}
+                  disabled={disabled}
+                  onChange={() => setEvent(opt.event)}
+                />
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium leading-tight">{opt.label}</span>
+                  <span className="text-xs text-[var(--color-muted-foreground)]">
+                    {opt.description}
+                  </span>
+                </div>
+              </label>
+            );
+          })}
+          {isAuthor && (
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              You can't approve or request changes on your own pull request.
+            </p>
+          )}
         </div>
 
         {submit.isError && (
@@ -641,7 +663,12 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                     Checkout
                   </Button>
                 )}
-                <ReviewPopover repoId={repoId} number={selected} headSha={selectedPr?.head_sha} />
+                <ReviewPopover
+                  repoId={repoId}
+                  number={selected}
+                  headSha={selectedPr?.head_sha}
+                  author={selectedPr?.author}
+                />
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {thread.isLoading || thread.data == null ? (
