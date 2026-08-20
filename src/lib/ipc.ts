@@ -71,6 +71,11 @@ export interface LinkedWorktree {
   is_main: boolean;
   /** The checkout directory no longer exists on disk (prunable). */
   missing: boolean;
+  /** `git worktree lock` was used on this entry. */
+  locked: boolean;
+  /** git's own porcelain-reported "candidate for `git worktree prune`" verdict
+   * — distinct from `missing`, which this app derives by checking the path. */
+  prunable: boolean;
 }
 
 export interface DiscoveredRepo {
@@ -136,6 +141,15 @@ export interface BranchRow {
   remote: string | null;
   merge: string | null;
   is_head: boolean;
+  /** Commits on this branch not on its configured upstream; `null` when there
+   * is no upstream configured or it doesn't resolve. */
+  ahead: number | null;
+  /** Commits on the upstream not on this branch, under the same `null` rule
+   * as `ahead`. */
+  behind: number | null;
+  /** Whether the branch tip is reachable from HEAD (merged into the branch
+   * currently checked out). */
+  merged: boolean;
 }
 
 /** The effective git config for a repo (#306): every occurrence, source-
@@ -735,6 +749,16 @@ export const ipc = {
   listStaleBranches: (repoId: number) => invoke<StaleBranch[]>("list_stale_branches", { repoId }),
   deleteBranches: (repoId: number, names: string[]) =>
     invoke<DeleteResult[]>("delete_branches", { repoId, names }),
+  renameBranch: (repoId: number, name: string, newName: string) =>
+    invoke<void>("rename_branch", { repoId, name, newName }),
+  /** Create a local branch, optionally switching to it (Repo settings'
+   * "New branch…" form) — unlike `createBranch`, which always switches. */
+  gitBranchCreate: (repoId: number, name: string, fromRef: string | undefined, switchTo: boolean) =>
+    invoke<void>("git_branch_create", { repoId, name, fromRef: fromRef ?? null, switch: switchTo }),
+  /** Delete one local branch. Refuses the checked-out branch always; without
+   * `force` also refuses one not fully merged into HEAD. */
+  deleteLocalBranch: (repoId: number, name: string, force: boolean) =>
+    invoke<void>("delete_local_branch", { repoId, name, force }),
 
   // git config (#306) — read the effective config, edit a curated safe subset
   // at local scope only.
@@ -766,6 +790,15 @@ export const ipc = {
   // working tree (staging / commit / stash)
   worktreeStatus: (repoId: number) => invoke<WorktreeStatus>("git_worktree_status", { repoId }),
   gitWorktreeList: (repoId: number) => invoke<LinkedWorktree[]>("git_worktree_list", { repoId }),
+  /** Add a linked worktree. `createBranch` picks between checking out an
+   * existing branch and creating a new one at the new worktree. */
+  gitWorktreeAdd: (repoId: number, path: string, branch: string, createBranch: boolean) =>
+    invoke<void>("git_worktree_add", { repoId, path, branch, createBranch }),
+  /** Remove a linked worktree. Refuses the repo's main working tree; `force`
+   * skips git's "worktree is dirty" refusal. */
+  gitWorktreeRemove: (repoId: number, path: string, force: boolean) =>
+    invoke<void>("git_worktree_remove", { repoId, path, force }),
+  gitWorktreePrune: (repoId: number) => invoke<void>("git_worktree_prune", { repoId }),
   worktreeFileDiff: (repoId: number, path: string, staged: boolean, oldPath?: string) =>
     invoke<FileDiff>("worktree_file_diff", { repoId, path, staged, oldPath }),
   gitStage: (repoId: number, paths: string[]) => invoke<void>("git_stage", { repoId, paths }),
