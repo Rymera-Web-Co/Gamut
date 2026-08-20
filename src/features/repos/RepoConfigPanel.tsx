@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, GitBranchPlus, RotateCcw, Sparkles } from "lucide-react";
 
@@ -45,12 +45,6 @@ function identityHint(v: IdentityValue): string {
 function upstreamShorthand(remote: string | null, merge: string | null): string | null {
   if (!remote || !merge) return null;
   return `${remote}/${merge.replace(/^refs\/heads\//, "")}`;
-}
-
-/** Strip a trailing slash so a registered repo's path and a worktree's path
- * compare equal regardless of how each was spelled. */
-function normalizePath(p: string): string {
-  return p.replace(/\/+$/, "");
 }
 
 /** The leaf directory name for a new worktree: `<repo name>-<branch>`, with
@@ -250,11 +244,6 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
     qc.invalidateQueries({ queryKey: ["linked-worktrees", repoId] });
     qc.invalidateQueries({ queryKey: ["repos"] });
   }, [qc, repoId]);
-
-  const registeredWorktreePaths = useMemo(
-    () => new Set((repos.data ?? []).map((r) => normalizePath(r.path))),
-    [repos.data],
-  );
 
   if (notFound) {
     // No heading here: the dialog's own header already names what's gone.
@@ -681,7 +670,7 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
                           >
                             Rename
                           </Button>
-                          {!b.is_head && (
+                          {!b.is_head && !b.protected && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -762,7 +751,6 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
               </thead>
               <tbody>
                 {worktrees.map((w) => {
-                  const alreadyRegistered = registeredWorktreePaths.has(normalizePath(w.path));
                   return (
                     <tr key={w.path} className="border-t">
                       <td className="max-w-56 truncate py-1 pr-4 font-mono" title={w.path}>
@@ -805,7 +793,7 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
                           >
                             Remove
                           </Button>
-                          {!alreadyRegistered && (
+                          {!w.registered && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -971,7 +959,7 @@ export function RepoConfigPanel({ repoId }: { repoId: number }) {
         onOpenChange={(next) => {
           if (!next) setRemoveWorktreeTarget(null);
         }}
-        onConfirm={(force) => void confirmRemoveWorktree(force)}
+        onConfirm={(force) => confirmRemoveWorktree(force)}
       />
     </div>
   );

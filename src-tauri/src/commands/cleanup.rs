@@ -13,7 +13,7 @@ use crate::state::AppState;
 const DEFAULT_PROTECTED: &[&str] = &["main", "master"];
 
 /// The configured protected branches, or the built-in default.
-fn protected_branches(state: &AppState) -> Vec<String> {
+pub(crate) fn protected_branches(state: &AppState) -> Vec<String> {
     settings::csv_or(
         state,
         "pref.protectedBranches",
@@ -23,7 +23,7 @@ fn protected_branches(state: &AppState) -> Vec<String> {
 
 /// A branch we must never report or delete: a protected branch, or the branch
 /// currently checked out.
-fn is_protected(name: &str, current: Option<&str>, protected: &[String]) -> bool {
+pub(crate) fn is_protected(name: &str, current: Option<&str>, protected: &[String]) -> bool {
     Some(name) == current || protected.iter().any(|p| p == name)
 }
 

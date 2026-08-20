@@ -76,6 +76,10 @@ export interface LinkedWorktree {
   /** git's own porcelain-reported "candidate for `git worktree prune`" verdict
    * — distinct from `missing`, which this app derives by checking the path. */
   prunable: boolean;
+  /** Whether this checkout is already a registered sidebar repo — computed
+   * backend-side by canonicalizing paths, so a `/tmp` vs. `/private/tmp`-style
+   * symlink difference (macOS) doesn't false-negative a raw string compare. */
+  registered: boolean;
 }
 
 export interface DiscoveredRepo {
@@ -150,6 +154,11 @@ export interface BranchRow {
   /** Whether the branch tip is reachable from HEAD (merged into the branch
    * currently checked out). */
   merged: boolean;
+  /** A protected branch (`pref.protectedBranches`, default main/master) or the
+   * currently checked-out branch — the same predicate the backend's
+   * `delete_local_branch`/`delete_branches` refuse against, so the Delete
+   * button never offers a branch the backend would refuse anyway. */
+  protected: boolean;
 }
 
 /** The effective git config for a repo (#306): every occurrence, source-
@@ -755,8 +764,10 @@ export const ipc = {
    * "New branch…" form) — unlike `createBranch`, which always switches. */
   gitBranchCreate: (repoId: number, name: string, fromRef: string | undefined, switchTo: boolean) =>
     invoke<void>("git_branch_create", { repoId, name, fromRef: fromRef ?? null, switch: switchTo }),
-  /** Delete one local branch. Refuses the checked-out branch always; without
-   * `force` also refuses one not fully merged into HEAD. */
+  /** Delete one local branch. Always refuses a protected branch
+   * (`pref.protectedBranches`, default main/master) and the checked-out
+   * branch, `force` included; without `force` also refuses a branch not
+   * fully merged into HEAD *or* into its own upstream. */
   deleteLocalBranch: (repoId: number, name: string, force: boolean) =>
     invoke<void>("delete_local_branch", { repoId, name, force }),
 

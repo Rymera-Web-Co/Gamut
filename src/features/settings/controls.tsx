@@ -57,6 +57,7 @@ export function Segmented<T extends string>({
       {options.map((opt) => (
         <button
           key={opt.value}
+          type="button"
           title={opt.title}
           aria-pressed={value === opt.value}
           onClick={() => onChange(opt.value)}
@@ -166,6 +167,7 @@ export function Toggle({
 }) {
   return (
     <button
+      type="button"
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}

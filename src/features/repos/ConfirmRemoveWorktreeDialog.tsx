@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertTriangle, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,10 +31,31 @@ export function ConfirmRemoveWorktreeDialog({
   escalated: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (force: boolean) => void;
+  /** May return a promise (the actual remove call); this dialog awaits it to
+   * disable its own footer buttons for the duration, so a slow remove can't
+   * be double-clicked or cancelled mid-flight. */
+  onConfirm: (force: boolean) => void | Promise<void>;
 }) {
+  // Local rather than a prop: the panel's `onConfirm` isn't backed by a
+  // react-query mutation with its own `isPending` to read here.
+  const [busy, setBusy] = useState(false);
+
+  const handleConfirm = async () => {
+    setBusy(true);
+    try {
+      await onConfirm(escalated);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!busy) onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
@@ -57,10 +79,10 @@ export function ConfirmRemoveWorktreeDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={() => onConfirm(escalated)}>
+          <Button variant="destructive" disabled={busy} onClick={() => void handleConfirm()}>
             <Trash2 />
             {escalated ? "Force remove" : "Remove"}
           </Button>

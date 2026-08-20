@@ -60,6 +60,7 @@ function baseOverview(overrides?: Partial<ConfigOverview>): ConfigOverview {
         ahead: 0,
         behind: 0,
         merged: true,
+        protected: false,
       },
     ],
     remote_branches: ["origin/main"],
@@ -98,6 +99,10 @@ function baseWorktree(overrides?: Partial<LinkedWorktree>): LinkedWorktree {
     missing: false,
     locked: false,
     prunable: false,
+    // #326 LOW-1: the backend now decides this by canonicalizing paths — the
+    // mocked backend controls it directly per test, rather than the panel
+    // deriving it from the repos list.
+    registered: false,
     ...overrides,
   };
 }
@@ -582,6 +587,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: 0,
             behind: 0,
             merged: true,
+            protected: false,
           },
           {
             name: "second",
@@ -591,6 +597,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: false,
+            protected: false,
           },
         ],
         remote_branches: ["origin/main", "upstream/main"],
@@ -695,6 +702,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: 0,
             behind: 0,
             merged: true,
+            protected: false,
           },
           {
             name: "feature-a",
@@ -704,6 +712,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: false,
+            protected: false,
           },
           {
             name: "feature-b",
@@ -713,6 +722,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),
@@ -746,6 +756,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: 0,
             behind: 0,
             merged: true,
+            protected: false,
           },
           {
             name: "topic",
@@ -755,6 +766,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: 2,
             behind: 1,
             merged: false,
+            protected: false,
           },
           {
             name: "local-only",
@@ -764,6 +776,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: false,
+            protected: false,
           },
         ],
         remote_branches: ["origin/main", "origin/topic"],
@@ -793,6 +806,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "other",
@@ -802,14 +816,28 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),
     );
     renderPanel(1);
 
+    const branchCreateCalls = () =>
+      invoke.mock.calls.filter((c) => c[0] === "git_branch_create").length;
+
     const nameInput = await screen.findByRole("textbox", { name: "New branch name" });
     fireEvent.change(nameInput, { target: { value: "brand-new" } });
+
+    // HIGH-1: clicking the "Switch to it" toggle inside the form must not
+    // itself submit it (the toggle `<button>` needs `type="button"`, or a
+    // native form would treat it as a submit control).
+    fireEvent.click(screen.getByRole("switch"));
+    expect(branchCreateCalls()).toBe(0);
+    // Toggling back off so the first submit below exercises `switch: false`
+    // as originally written.
+    fireEvent.click(screen.getByRole("switch"));
+
     fireEvent.click(screen.getByRole("button", { name: "Create branch" }));
 
     await waitFor(() =>
@@ -823,6 +851,7 @@ describe("RepoConfigPanel (#306)", () => {
         }),
       ),
     );
+    expect(branchCreateCalls()).toBe(1);
 
     fireEvent.change(nameInput, { target: { value: "brand-new-2" } });
     fireEvent.click(screen.getByRole("switch"));
@@ -850,6 +879,7 @@ describe("RepoConfigPanel (#306)", () => {
               ahead: null,
               behind: null,
               merged: true,
+              protected: false,
             },
             {
               name: "other",
@@ -859,6 +889,7 @@ describe("RepoConfigPanel (#306)", () => {
               ahead: null,
               behind: null,
               merged: true,
+              protected: false,
             },
           ],
         });
@@ -892,6 +923,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "old-name",
@@ -901,6 +933,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),
@@ -942,6 +975,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "merged-feature",
@@ -951,6 +985,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),
@@ -987,6 +1022,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "unmerged-feature",
@@ -996,6 +1032,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: false,
+            protected: false,
           },
         ],
       }),
@@ -1032,6 +1069,61 @@ describe("RepoConfigPanel (#306)", () => {
     expect(within(row).queryByRole("button", { name: "Switch" })).not.toBeInTheDocument();
   });
 
+  it("MEDIUM-2: a protected, non-head branch's row offers no Delete action", async () => {
+    mockBackend(
+      [baseRepo()],
+      baseOverview({
+        branches: [
+          {
+            name: "main",
+            remote: null,
+            merge: null,
+            is_head: true,
+            ahead: null,
+            behind: null,
+            merged: true,
+            protected: true,
+          },
+          {
+            name: "release",
+            remote: null,
+            merge: null,
+            is_head: false,
+            ahead: null,
+            behind: null,
+            merged: true,
+            // Protected via a configured override, not the current-branch
+            // rule — Delete must still be withheld even though this branch
+            // isn't checked out.
+            protected: true,
+          },
+          {
+            name: "feature",
+            remote: null,
+            merge: null,
+            is_head: false,
+            ahead: null,
+            behind: null,
+            merged: true,
+            protected: false,
+          },
+        ],
+      }),
+    );
+    renderPanel(1);
+
+    await screen.findByText("Branches");
+    const table = screen.getByRole("table", { name: "Branches" });
+    const releaseRow = within(table).getByText("release").closest("tr")!;
+    expect(
+      within(releaseRow).queryByRole("button", { name: "Delete branch release" }),
+    ).not.toBeInTheDocument();
+    const featureRow = within(table).getByText("feature").closest("tr")!;
+    expect(
+      within(featureRow).getByRole("button", { name: "Delete branch feature" }),
+    ).toBeInTheDocument();
+  });
+
   it("A11: the Worktrees section lists path, branch, and status badges", async () => {
     mockBackend([baseRepo()], baseOverview(), [
       baseWorktree({ path: "/repo-a", branch: "feature-a" }),
@@ -1061,6 +1153,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "feature",
@@ -1070,6 +1163,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),
@@ -1085,6 +1179,9 @@ describe("RepoConfigPanel (#306)", () => {
     fireEvent.click(await screen.findByRole("option", { name: "feature" }));
     expect(pathInput).toHaveValue("/Users/dev/repo-feature");
 
+    const worktreeAddCalls = () =>
+      invoke.mock.calls.filter((c) => c[0] === "git_worktree_add").length;
+
     fireEvent.click(screen.getByRole("button", { name: "Add worktree" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
@@ -1097,8 +1194,14 @@ describe("RepoConfigPanel (#306)", () => {
         }),
       ),
     );
+    expect(worktreeAddCalls()).toBe(1);
 
+    // HIGH-1: clicking the "New"/"Existing" mode `Segmented` control inside
+    // the form must not itself submit it (needs `type="button"`, or a native
+    // form would treat it as a submit control).
     fireEvent.click(screen.getByRole("button", { name: "New" }));
+    expect(worktreeAddCalls()).toBe(1);
+
     const newBranchInput = screen.getByRole("textbox", { name: "New worktree branch name" });
     fireEvent.change(newBranchInput, { target: { value: "brand-new" } });
     fireEvent.click(screen.getByRole("button", { name: "Add worktree" }));
@@ -1255,11 +1358,14 @@ describe("RepoConfigPanel (#306)", () => {
   });
 
   it("A17: a worktree can be registered as a sidebar repo; an already-registered path offers no affordance", async () => {
-    mockBackend(
-      [baseRepo({ path: "/repo" }), baseRepo({ id: 2, path: "/repo-already", name: "already" })],
-      baseOverview(),
-      [baseWorktree({ path: "/repo-new" }), baseWorktree({ path: "/repo-already" })],
-    );
+    // #326 LOW-1: `registered` is now a backend-computed field (canonicalized
+    // path match), not something the panel derives from the repos list — so
+    // the mock controls it directly per worktree rather than via a matching
+    // repo path.
+    mockBackend([baseRepo({ path: "/repo" })], baseOverview(), [
+      baseWorktree({ path: "/repo-new", registered: false }),
+      baseWorktree({ path: "/repo-already", registered: true }),
+    ]);
     renderPanel(1);
 
     await screen.findByText("/repo-new");
@@ -1306,6 +1412,7 @@ describe("RepoConfigPanel (#306)", () => {
               ahead: null,
               behind: null,
               merged: true,
+              protected: false,
             },
             {
               name: "old-name",
@@ -1315,6 +1422,7 @@ describe("RepoConfigPanel (#306)", () => {
               ahead: null,
               behind: null,
               merged: true,
+              protected: false,
             },
           ],
         });
@@ -1355,6 +1463,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
           {
             name: "feature",
@@ -1364,6 +1473,7 @@ describe("RepoConfigPanel (#306)", () => {
             ahead: null,
             behind: null,
             merged: true,
+            protected: false,
           },
         ],
       }),

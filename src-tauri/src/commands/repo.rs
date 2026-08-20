@@ -925,7 +925,7 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
             .find_branch(local, BranchType::Local)
             .and_then(|mut b| b.set_upstream(Some(upstream)))
         {
-            delete_local_branch(&repo, local);
+            drop_created_branch(&repo, local);
             return Err(e.into());
         }
     }
@@ -936,7 +936,7 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
         // The safe checkout refused (local edits would be lost). Drop the branch
         // we just made, so a refused checkout adds no refs of its own.
         if let HeadTarget::Track { local, .. } = &target {
-            delete_local_branch(&repo, local);
+            drop_created_branch(&repo, local);
         }
         return Err(e.into());
     }
@@ -951,8 +951,10 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
 
 /// Best-effort removal of a local branch this run created, used to unwind a
 /// checkout that could not be completed. A failure here is not worth reporting
-/// over the error that triggered the unwind.
-fn delete_local_branch(repo: &git2::Repository, local: &str) {
+/// over the error that triggered the unwind. Named distinctly from the public
+/// `delete_local_branch` command in `cleanup.rs` — same-named private helper
+/// here and public command there was an easy-to-misread collision (NIT-2).
+fn drop_created_branch(repo: &git2::Repository, local: &str) {
     if let Ok(mut branch) = repo.find_branch(local, BranchType::Local) {
         let _ = branch.delete();
     }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::{DiffOptions, Index, Repository};
 use serde::Serialize;
@@ -360,6 +360,15 @@ pub struct LinkedWorktree {
     /// Distinct from `missing`, which this app derives itself by checking the
     /// path on disk — `prunable` is git's own porcelain-reported verdict.
     pub prunable: bool,
+    /// Whether this checkout is already a registered sidebar repo. Computed
+    /// backend-side by canonicalizing this path and matching it against the
+    /// registered repos' (already-canonical) paths — the frontend used to
+    /// compare raw path strings, which false-negatived on a `/tmp` vs.
+    /// `/private/tmp`-style symlink difference on macOS (#326 LOW-1). A
+    /// missing checkout (`missing == true`) can't be canonicalized and always
+    /// reads as `false`, which is the right answer either way (nothing to
+    /// register).
+    pub registered: bool,
 }
 
 /// All working trees of a repo — the main checkout plus any linked worktrees —
@@ -376,13 +385,41 @@ pub async fn git_worktree_list(
     let out =
         crate::commands::run_git_cli_gated(&state, &dir, &["worktree", "list", "--porcelain"])
             .await?;
-    Ok(parse_worktree_list(repo_id, &out))
+    let registered = registered_repo_paths(&state)?;
+    Ok(parse_worktree_list(repo_id, &out, &registered))
+}
+
+/// Canonicalized absolute paths of every registered repo (#326 LOW-1) — used
+/// to decide `LinkedWorktree::registered` by comparing resolved on-disk
+/// locations rather than raw path strings, so a repo registered via a
+/// different (but equivalent) spelling of the same path still matches. Repos
+/// are already stored canonicalized (`repo::register_path`), but this doesn't
+/// assume that stays true.
+fn registered_repo_paths(state: &State<'_, AppState>) -> AppResult<Vec<PathBuf>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    let paths = crate::commands::repo::all_repo_paths(&conn)?;
+    Ok(paths
+        .into_iter()
+        .map(|p| {
+            let pb = PathBuf::from(&p);
+            std::fs::canonicalize(&pb).unwrap_or(pb)
+        })
+        .collect())
 }
 
 /// Parse `git worktree list --porcelain` output: blank-line-separated blocks of
 /// `worktree <path>` / `HEAD <sha>` / `branch <ref>` (or `detached` / `bare`)
-/// lines, main working tree first.
-fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
+/// lines, main working tree first. `registered_paths` are the already-
+/// canonicalized registered-repo paths to match each worktree's own
+/// canonicalized path against, for `LinkedWorktree::registered`.
+fn parse_worktree_list(
+    repo_id: i64,
+    porcelain: &str,
+    registered_paths: &[PathBuf],
+) -> Vec<LinkedWorktree> {
     let mut out: Vec<LinkedWorktree> = Vec::new();
     for block in porcelain.split("\n\n") {
         let mut path: Option<&str> = None;
@@ -404,6 +441,12 @@ fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
             }
         }
         let Some(path) = path else { continue };
+        // A missing checkout can't be canonicalized (falls back to the raw
+        // path, per `unwrap_or_else`), which then won't match any registered
+        // (real, canonicalizable) path anyway — `registered: false` for a
+        // missing worktree either way, which is the right answer.
+        let canonical =
+            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
         out.push(LinkedWorktree {
             repo_id,
             path: path.to_string(),
@@ -413,6 +456,7 @@ fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
             missing: !Path::new(path).is_dir(),
             locked,
             prunable,
+            registered: registered_paths.contains(&canonical),
         });
     }
     out
@@ -548,7 +592,7 @@ mod tests {
              worktree /nonexistent/wt-detached\nHEAD 3333333333333333333333333333333333333333\ndetached",
             main = existing.display()
         );
-        let wts = parse_worktree_list(7, &porcelain);
+        let wts = parse_worktree_list(7, &porcelain, &[]);
         assert_eq!(wts.len(), 3);
 
         assert!(wts[0].is_main);
@@ -569,7 +613,7 @@ mod tests {
 
     #[test]
     fn parses_bare_entry_without_head_or_branch() {
-        let wts = parse_worktree_list(1, "worktree /repos/bare.git\nbare");
+        let wts = parse_worktree_list(1, "worktree /repos/bare.git\nbare", &[]);
         assert_eq!(wts.len(), 1);
         assert!(wts[0].is_main);
         assert_eq!(wts[0].head, None);
@@ -578,7 +622,7 @@ mod tests {
 
     #[test]
     fn empty_output_parses_to_no_entries() {
-        assert!(parse_worktree_list(1, "").is_empty());
+        assert!(parse_worktree_list(1, "", &[]).is_empty());
     }
 
     // ---- A12: locked / prunable parsed from the porcelain output ----
@@ -588,7 +632,7 @@ mod tests {
         let porcelain = "worktree /repos/main\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n\
              worktree /nonexistent/wt-locked\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/locked-branch\nlocked a reason\n\n\
              worktree /nonexistent/wt-prunable\nHEAD 3333333333333333333333333333333333333333\nbranch refs/heads/prunable-branch\nprunable gitdir file points to non-existent location";
-        let wts = parse_worktree_list(1, porcelain);
+        let wts = parse_worktree_list(1, porcelain, &[]);
         assert_eq!(wts.len(), 3);
 
         assert!(!wts[0].locked, "main worktree is never locked");
@@ -599,6 +643,36 @@ mod tests {
 
         assert!(!wts[2].locked);
         assert!(wts[2].prunable, "'prunable <reason>' must set prunable");
+    }
+
+    // ---- LOW-1: registered flag matches by canonicalized path ----
+
+    #[test]
+    fn registered_matches_a_canonicalized_path_and_a_missing_worktree_reads_false() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_registered_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let registered_dir = root.join("registered");
+        std::fs::create_dir_all(&registered_dir).unwrap();
+        let canonical_registered = std::fs::canonicalize(&registered_dir).unwrap();
+
+        let porcelain = format!(
+            "worktree {registered}\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n\
+             worktree /nonexistent/wt-unregistered\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/other",
+            registered = registered_dir.display()
+        );
+        let wts = parse_worktree_list(1, &porcelain, &[canonical_registered]);
+        assert_eq!(wts.len(), 2);
+        assert!(
+            wts[0].registered,
+            "matches the registered repo's canonicalized path"
+        );
+        assert!(
+            !wts[1].registered,
+            "a missing checkout can't be canonicalized and never matches"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     // ---- git_worktree_add / remove: pure arg construction ----

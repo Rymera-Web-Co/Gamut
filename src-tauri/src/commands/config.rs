@@ -82,6 +82,12 @@ pub struct BranchRow {
     /// Whether the branch tip is reachable from HEAD — i.e. merged into the
     /// branch currently checked out. `false` when HEAD is unborn.
     pub merged: bool,
+    /// A protected branch (`pref.protectedBranches`, default main/master) or
+    /// the currently checked-out branch — the same predicate
+    /// `cleanup::is_protected` uses to decide `list_stale_branches`/
+    /// `delete_branches` eligibility, so the Branches table's Delete button
+    /// never offers a branch the backend would refuse anyway.
+    pub protected: bool,
 }
 
 #[derive(Serialize)]
@@ -230,14 +236,17 @@ pub async fn git_config_overview(
     repo_id: i64,
 ) -> AppResult<ConfigOverview> {
     let path = crate::commands::history::repo_path(&state, repo_id)?;
+    // Resolved up front (needs the DB connection) so the blocking closure below
+    // only needs an already-open repo handle, same as every other gated read.
+    let protected = crate::commands::cleanup::protected_branches(&state);
     crate::commands::run_git_gated(&state, move || {
         let repo = git::open(&path)?;
-        build_overview(&repo)
+        build_overview(&repo, &protected)
     })
     .await
 }
 
-fn build_overview(repo: &git2::Repository) -> AppResult<ConfigOverview> {
+fn build_overview(repo: &git2::Repository, protected: &[String]) -> AppResult<ConfigOverview> {
     let config = repo.config()?;
     let entries = read_entries(&config)?;
     let identity = Identity {
@@ -246,7 +255,7 @@ fn build_overview(repo: &git2::Repository) -> AppResult<ConfigOverview> {
     };
     let remotes = read_remotes(repo)?;
     let remote_branches = remote_tracking_names(repo)?;
-    let branches = read_branches(repo, &config)?;
+    let branches = read_branches(repo, &config, protected)?;
     Ok(ConfigOverview {
         entries,
         identity,
@@ -357,7 +366,11 @@ fn read_remotes(repo: &git2::Repository) -> AppResult<Vec<RemoteRow>> {
     Ok(out)
 }
 
-fn read_branches(repo: &git2::Repository, config: &git2::Config) -> AppResult<Vec<BranchRow>> {
+fn read_branches(
+    repo: &git2::Repository,
+    config: &git2::Config,
+    protected: &[String],
+) -> AppResult<Vec<BranchRow>> {
     // HEAD's commit, used to decide `merged` for every branch — resolved once
     // rather than per-row. `None` when HEAD is unborn (fresh repo, no commits).
     let head_oid = repo
@@ -365,6 +378,7 @@ fn read_branches(repo: &git2::Repository, config: &git2::Config) -> AppResult<Ve
         .ok()
         .and_then(|h| h.peel_to_commit().ok())
         .map(|c| c.id());
+    let current = git::current_branch(repo);
 
     let mut out = Vec::new();
     for b in repo.branches(Some(BranchType::Local))? {
@@ -375,8 +389,15 @@ fn read_branches(repo: &git2::Repository, config: &git2::Config) -> AppResult<Ve
         let remote = ok_or_unset(config.get_string(&format!("branch.{name}.remote")))?;
         let merge = ok_or_unset(config.get_string(&format!("branch.{name}.merge")))?;
         let (ahead, behind) = branch_ahead_behind(repo, &branch);
-        let merged = branch_is_merged(repo, &branch, head_oid);
+        // Short-circuit: 0 ahead of its upstream means every commit on this
+        // branch already lives on the upstream, which is exactly what
+        // `branch_is_merged`'s upstream check (below) would conclude anyway —
+        // skip the revwalk entirely rather than paying for it a second time.
+        // Only valid when `ahead` actually resolved (`Some`); `None` (no
+        // upstream, or it doesn't resolve) falls through to the real check.
+        let merged = ahead == Some(0) || branch_is_merged(repo, &branch, head_oid);
         out.push(BranchRow {
+            protected: crate::commands::cleanup::is_protected(name, current.as_deref(), protected),
             name: name.to_string(),
             remote,
             merge,
@@ -1745,7 +1766,7 @@ mod tests {
         repo.branch("second", &head_commit, false).unwrap();
 
         let repo2 = Repository::open(&root).unwrap();
-        let overview = build_overview(&repo2).unwrap();
+        let overview = build_overview(&repo2, &[]).unwrap();
         assert_eq!(overview.remotes.len(), 2);
         assert!(overview.remotes.iter().any(|r| r.name == "origin"));
         assert!(overview.remotes.iter().any(|r| r.name == "upstream"));
@@ -1792,7 +1813,7 @@ mod tests {
         );
 
         let wt_repo = Repository::open(&wt_path).unwrap();
-        let overview = build_overview(&wt_repo).unwrap();
+        let overview = build_overview(&wt_repo, &[]).unwrap();
         assert!(!overview.branches.is_empty());
 
         set_identity_at(
@@ -1862,7 +1883,7 @@ mod tests {
         }
 
         let config = repo.config().unwrap();
-        let branches = read_branches(&repo, &config).unwrap();
+        let branches = read_branches(&repo, &config, &[]).unwrap();
         let topic = branches.iter().find(|b| b.name == "topic").unwrap();
         assert_eq!(topic.ahead, Some(2), "topic has 2 commits `up` lacks");
         assert_eq!(topic.behind, Some(1), "topic lacks `up`'s 1 commit");
@@ -1905,11 +1926,63 @@ mod tests {
             .unwrap();
 
         let config = repo.config().unwrap();
-        let branches = read_branches(&repo, &config).unwrap();
+        let branches = read_branches(&repo, &config, &[]).unwrap();
         let merged = |name: &str| branches.iter().find(|b| b.name == name).unwrap().merged;
         assert!(merged("merged-into-head"));
         assert!(merged("same-as-head"));
         assert!(!merged("unmerged"));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- MEDIUM-2: protected flag ----
+
+    #[test]
+    fn read_branches_marks_main_protected_by_default_and_others_not() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tag = "branch_protected";
+        let _search_guard = isolate_search_paths(tag);
+        let (root, repo) = temp_repo(tag);
+        commit_file(&repo, "a.txt", "hello\n");
+        let head_oid = repo.head().unwrap().target().unwrap();
+        let head_commit = repo.find_commit(head_oid).unwrap();
+        // `temp_repo` uses `Repository::init` with no explicit initial branch
+        // name override, so the default branch here is whatever the test git
+        // install defaults to — create an explicit "main" so the assertion
+        // doesn't depend on that default, and switch HEAD to a third branch
+        // (via `set_head`, not a working-tree checkout — nothing here reads
+        // the working tree) so neither "main" nor "feature" is protected via
+        // the separate "currently checked out" rule, only via the configured
+        // protected-branches list under test.
+        if git::current_branch(&repo).as_deref() != Some("main") {
+            repo.branch("main", &head_commit, false).unwrap();
+        }
+        repo.branch("feature", &head_commit, false).unwrap();
+        repo.branch("other", &head_commit, false).unwrap();
+        repo.set_head("refs/heads/other").unwrap();
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("other"));
+
+        let config = repo.config().unwrap();
+        let default_protected = vec!["main".to_string(), "master".to_string()];
+        let branches = read_branches(&repo, &config, &default_protected).unwrap();
+        let protected = |name: &str| branches.iter().find(|b| b.name == name).unwrap().protected;
+        assert!(protected("main"), "main is protected by the default list");
+        assert!(!protected("feature"), "an ordinary branch is not protected");
+
+        // A configured override replaces the default list entirely — a repo
+        // that opts "feature" in as protected (and drops "main") sees exactly
+        // that reflected.
+        let override_list = vec!["feature".to_string()];
+        let branches = read_branches(&repo, &config, &override_list).unwrap();
+        let protected = |name: &str| branches.iter().find(|b| b.name == name).unwrap().protected;
+        assert!(
+            protected("feature"),
+            "override list makes feature protected"
+        );
+        assert!(
+            !protected("main"),
+            "override list drops main from protection"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }
