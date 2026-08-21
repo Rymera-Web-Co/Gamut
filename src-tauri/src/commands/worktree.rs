@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::{DiffOptions, Index, Repository};
 use serde::Serialize;
@@ -8,7 +8,7 @@ use crate::commands::history::{
     blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
 };
 use crate::commands::sync::run_git;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 /// The working tree split the way a staging UI needs it: what's staged for the
@@ -352,6 +352,23 @@ pub struct LinkedWorktree {
     pub is_main: bool,
     /// The checkout directory no longer exists on disk (prunable).
     pub missing: bool,
+    /// `git worktree lock` was used on this entry — git refuses to prune or
+    /// remove it without an explicit override.
+    pub locked: bool,
+    /// git considers this entry a candidate for `git worktree prune` (its
+    /// administrative files reference a checkout git can no longer confirm).
+    /// Distinct from `missing`, which this app derives itself by checking the
+    /// path on disk — `prunable` is git's own porcelain-reported verdict.
+    pub prunable: bool,
+    /// Whether this checkout is already a registered sidebar repo. Computed
+    /// backend-side by canonicalizing this path and matching it against the
+    /// registered repos' (already-canonical) paths — the frontend used to
+    /// compare raw path strings, which false-negatived on a `/tmp` vs.
+    /// `/private/tmp`-style symlink difference on macOS (#326 LOW-1). A
+    /// missing checkout (`missing == true`) can't be canonicalized and always
+    /// reads as `false`, which is the right answer either way (nothing to
+    /// register).
+    pub registered: bool,
 }
 
 /// All working trees of a repo — the main checkout plus any linked worktrees —
@@ -368,18 +385,48 @@ pub async fn git_worktree_list(
     let out =
         crate::commands::run_git_cli_gated(&state, &dir, &["worktree", "list", "--porcelain"])
             .await?;
-    Ok(parse_worktree_list(repo_id, &out))
+    let registered = registered_repo_paths(&state)?;
+    Ok(parse_worktree_list(repo_id, &out, &registered))
+}
+
+/// Canonicalized absolute paths of every registered repo (#326 LOW-1) — used
+/// to decide `LinkedWorktree::registered` by comparing resolved on-disk
+/// locations rather than raw path strings, so a repo registered via a
+/// different (but equivalent) spelling of the same path still matches. Repos
+/// are already stored canonicalized (`repo::register_path`), but this doesn't
+/// assume that stays true.
+fn registered_repo_paths(state: &State<'_, AppState>) -> AppResult<Vec<PathBuf>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Other(format!("db lock poisoned: {e}")))?;
+    let paths = crate::commands::repo::all_repo_paths(&conn)?;
+    Ok(paths
+        .into_iter()
+        .map(|p| {
+            let pb = PathBuf::from(&p);
+            std::fs::canonicalize(&pb).unwrap_or(pb)
+        })
+        .collect())
 }
 
 /// Parse `git worktree list --porcelain` output: blank-line-separated blocks of
 /// `worktree <path>` / `HEAD <sha>` / `branch <ref>` (or `detached` / `bare`)
-/// lines, main working tree first.
-fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
+/// lines, main working tree first. `registered_paths` are the already-
+/// canonicalized registered-repo paths to match each worktree's own
+/// canonicalized path against, for `LinkedWorktree::registered`.
+fn parse_worktree_list(
+    repo_id: i64,
+    porcelain: &str,
+    registered_paths: &[PathBuf],
+) -> Vec<LinkedWorktree> {
     let mut out: Vec<LinkedWorktree> = Vec::new();
     for block in porcelain.split("\n\n") {
         let mut path: Option<&str> = None;
         let mut head: Option<&str> = None;
         let mut branch: Option<&str> = None;
+        let mut locked = false;
+        let mut prunable = false;
         for line in block.lines() {
             if let Some(v) = line.strip_prefix("worktree ") {
                 path = Some(v);
@@ -387,9 +434,19 @@ fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
                 head = Some(v);
             } else if let Some(v) = line.strip_prefix("branch ") {
                 branch = Some(v.strip_prefix("refs/heads/").unwrap_or(v));
+            } else if line == "locked" || line.starts_with("locked ") {
+                locked = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                prunable = true;
             }
         }
         let Some(path) = path else { continue };
+        // A missing checkout can't be canonicalized (falls back to the raw
+        // path, per `unwrap_or_else`), which then won't match any registered
+        // (real, canonicalizable) path anyway — `registered: false` for a
+        // missing worktree either way, which is the right answer.
+        let canonical =
+            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
         out.push(LinkedWorktree {
             repo_id,
             path: path.to_string(),
@@ -397,14 +454,134 @@ fn parse_worktree_list(repo_id: i64, porcelain: &str) -> Vec<LinkedWorktree> {
             head: head.map(String::from),
             is_main: out.is_empty(),
             missing: !Path::new(path).is_dir(),
+            locked,
+            prunable,
+            registered: registered_paths.contains(&canonical),
         });
     }
     out
 }
 
+/// Add a linked worktree (`git worktree add`). `create_branch` picks between
+/// checking out an existing branch (`git worktree add <path> <branch>`) and
+/// creating a new one at the new worktree (`git worktree add -b <branch>
+/// <path>`, branched from the current HEAD — mirrors plain `git worktree add
+/// -b` with no explicit start point).
+#[tauri::command]
+pub async fn git_worktree_add(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    path: String,
+    branch: String,
+    create_branch: bool,
+) -> AppResult<()> {
+    let branch = branch.trim();
+    let path = path.trim();
+    if branch.is_empty() {
+        return Err(AppError::Other("Branch name cannot be empty".into()));
+    }
+    if path.is_empty() {
+        return Err(AppError::Other("Worktree path cannot be empty".into()));
+    }
+    let dir = repo_path(&state, repo_id)?.to_string_lossy().to_string();
+    let args = worktree_add_args(path, branch, create_branch);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    crate::commands::run_git_cli_gated(&state, &dir, &argref).await?;
+    Ok(())
+}
+
+/// Pure `git worktree add` argument construction — no state/process involved,
+/// so a test can pin the exact args for both branch modes without a repo. A
+/// `--` marks the end of options right before the `<path>` operand (`git
+/// worktree add [-b new] [--] <path> [<commit-ish>]`), so a path or branch
+/// name that happens to start with `-` is never misread as a flag.
+fn worktree_add_args(path: &str, branch: &str, create_branch: bool) -> Vec<String> {
+    if create_branch {
+        vec![
+            "worktree".into(),
+            "add".into(),
+            "-b".into(),
+            branch.into(),
+            "--".into(),
+            path.into(),
+        ]
+    } else {
+        vec![
+            "worktree".into(),
+            "add".into(),
+            "--".into(),
+            path.into(),
+            branch.into(),
+        ]
+    }
+}
+
+/// Whether `a` and `b` refer to the same on-disk location, resolved through
+/// symlinks/`..` where possible so a repo root passed with a trailing slash or
+/// a different (but equivalent) spelling still matches. Falls back to the
+/// unresolved path when canonicalization fails (e.g. the path doesn't exist),
+/// so a still-meaningful comparison survives rather than erroring out.
+fn is_same_path(a: &Path, b: &Path) -> bool {
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    canon(a) == canon(b)
+}
+
+/// Remove a linked worktree (`git worktree remove`). Refuses the repo's own
+/// main working tree outright — that path is never a *linked* worktree, and
+/// removing it would blow away the checkout this whole command operates
+/// through. `force` skips git's own "worktree is dirty" refusal.
+#[tauri::command]
+pub async fn git_worktree_remove(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    path: String,
+    force: bool,
+) -> AppResult<()> {
+    let dir = repo_path(&state, repo_id)?;
+    if is_same_path(&dir, Path::new(&path)) {
+        return Err(AppError::Other(
+            "cannot remove the repository's main working tree".into(),
+        ));
+    }
+    let dir = dir.to_string_lossy().to_string();
+    let args = worktree_remove_args(&path, force);
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    crate::commands::run_git_cli_gated(&state, &dir, &argref).await?;
+    Ok(())
+}
+
+/// Pure `git worktree remove` argument construction, mirroring
+/// [`worktree_add_args`] — the same `--` end-of-options marker goes right
+/// before the `<worktree>` path operand.
+fn worktree_remove_args(path: &str, force: bool) -> Vec<String> {
+    if force {
+        vec![
+            "worktree".into(),
+            "remove".into(),
+            "--force".into(),
+            "--".into(),
+            path.into(),
+        ]
+    } else {
+        vec!["worktree".into(), "remove".into(), "--".into(), path.into()]
+    }
+}
+
+/// Remove stale linked-worktree administrative entries (`git worktree prune`)
+/// — e.g. one whose checkout directory was deleted by hand instead of through
+/// `git worktree remove`.
+#[tauri::command]
+pub async fn git_worktree_prune(state: State<'_, AppState>, repo_id: i64) -> AppResult<()> {
+    let dir = repo_path(&state, repo_id)?.to_string_lossy().to_string();
+    crate::commands::run_git_cli_gated(&state, &dir, &["worktree", "prune"]).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::BranchType;
+    use std::path::PathBuf;
 
     #[test]
     fn parses_main_and_linked_worktrees() {
@@ -415,7 +592,7 @@ mod tests {
              worktree /nonexistent/wt-detached\nHEAD 3333333333333333333333333333333333333333\ndetached",
             main = existing.display()
         );
-        let wts = parse_worktree_list(7, &porcelain);
+        let wts = parse_worktree_list(7, &porcelain, &[]);
         assert_eq!(wts.len(), 3);
 
         assert!(wts[0].is_main);
@@ -436,7 +613,7 @@ mod tests {
 
     #[test]
     fn parses_bare_entry_without_head_or_branch() {
-        let wts = parse_worktree_list(1, "worktree /repos/bare.git\nbare");
+        let wts = parse_worktree_list(1, "worktree /repos/bare.git\nbare", &[]);
         assert_eq!(wts.len(), 1);
         assert!(wts[0].is_main);
         assert_eq!(wts[0].head, None);
@@ -445,6 +622,269 @@ mod tests {
 
     #[test]
     fn empty_output_parses_to_no_entries() {
-        assert!(parse_worktree_list(1, "").is_empty());
+        assert!(parse_worktree_list(1, "", &[]).is_empty());
+    }
+
+    // ---- A12: locked / prunable parsed from the porcelain output ----
+
+    #[test]
+    fn parses_locked_and_prunable_entries() {
+        let porcelain = "worktree /repos/main\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n\
+             worktree /nonexistent/wt-locked\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/locked-branch\nlocked a reason\n\n\
+             worktree /nonexistent/wt-prunable\nHEAD 3333333333333333333333333333333333333333\nbranch refs/heads/prunable-branch\nprunable gitdir file points to non-existent location";
+        let wts = parse_worktree_list(1, porcelain, &[]);
+        assert_eq!(wts.len(), 3);
+
+        assert!(!wts[0].locked, "main worktree is never locked");
+        assert!(!wts[0].prunable);
+
+        assert!(wts[1].locked, "'locked <reason>' must set locked");
+        assert!(!wts[1].prunable);
+
+        assert!(!wts[2].locked);
+        assert!(wts[2].prunable, "'prunable <reason>' must set prunable");
+    }
+
+    // ---- LOW-1: registered flag matches by canonicalized path ----
+
+    #[test]
+    fn registered_matches_a_canonicalized_path_and_a_missing_worktree_reads_false() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_registered_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let registered_dir = root.join("registered");
+        std::fs::create_dir_all(&registered_dir).unwrap();
+        let canonical_registered = std::fs::canonicalize(&registered_dir).unwrap();
+
+        let porcelain = format!(
+            "worktree {registered}\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n\
+             worktree /nonexistent/wt-unregistered\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/other",
+            registered = registered_dir.display()
+        );
+        let wts = parse_worktree_list(1, &porcelain, &[canonical_registered]);
+        assert_eq!(wts.len(), 2);
+        assert!(
+            wts[0].registered,
+            "matches the registered repo's canonicalized path"
+        );
+        assert!(
+            !wts[1].registered,
+            "a missing checkout can't be canonicalized and never matches"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- git_worktree_add / remove: pure arg construction ----
+
+    #[test]
+    fn worktree_add_args_picks_existing_vs_new_branch_shape() {
+        assert_eq!(
+            worktree_add_args("/repos/wt", "feature", false),
+            vec!["worktree", "add", "--", "/repos/wt", "feature"],
+            "existing branch: -- then path then branch, no -b"
+        );
+        assert_eq!(
+            worktree_add_args("/repos/wt", "feature", true),
+            vec!["worktree", "add", "-b", "feature", "--", "/repos/wt"],
+            "new branch: -b <branch> -- <path>"
+        );
+    }
+
+    #[test]
+    fn worktree_remove_args_adds_force_flag_only_when_forced() {
+        assert_eq!(
+            worktree_remove_args("/repos/wt", false),
+            vec!["worktree", "remove", "--", "/repos/wt"]
+        );
+        assert_eq!(
+            worktree_remove_args("/repos/wt", true),
+            vec!["worktree", "remove", "--force", "--", "/repos/wt"]
+        );
+    }
+
+    // ---- A18: the repo's own root is never treated as a linked worktree ----
+
+    #[test]
+    fn is_same_path_matches_the_repo_root_regardless_of_trailing_slash() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_samepath_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(is_same_path(&root, &root));
+        // A trailing separator is a different `Path` value but the same
+        // location. `Path::join("")` is a no-op, so the trailing slash has to
+        // be built by hand via a formatted string.
+        let with_slash = PathBuf::from(format!("{}/", root.display()));
+        assert!(is_same_path(&root, &with_slash));
+        assert!(!is_same_path(&root, &root.join("elsewhere")));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- git worktree add/remove/prune: real on-disk behaviour ----
+    //
+    // These run the actual `git` CLI (through the same `run_git` the gated
+    // commands call, using the exact args `worktree_add_args`/
+    // `worktree_remove_args` build) rather than mocking it — the whole point
+    // is proving the args land on the right on-disk state and HEAD, which a
+    // stubbed git can't demonstrate.
+
+    fn init_repo(root: &Path) -> Repository {
+        let repo = Repository::init(root).unwrap();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        {
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("a.txt")).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        repo
+    }
+
+    #[tokio::test]
+    async fn worktree_add_existing_branch_checks_it_out_on_disk() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_wt_add_existing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature", &commit, false).unwrap();
+
+        let wt_path = root.join("wt-feature");
+        let args = worktree_add_args(wt_path.to_str().unwrap(), "feature", false);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(root.to_str().unwrap(), &argref).await.unwrap();
+
+        assert!(wt_path.join("a.txt").is_file(), "checkout landed on disk");
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        assert_eq!(
+            crate::git::current_branch(&wt_repo).as_deref(),
+            Some("feature")
+        );
+
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&wt_path)
+            .current_dir(&root)
+            .output();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn worktree_add_new_branch_creates_it_from_head() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_add_new_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let head_oid = repo.head().unwrap().target().unwrap();
+
+        let wt_path = root.join("wt-newbranch");
+        let args = worktree_add_args(wt_path.to_str().unwrap(), "brand-new", true);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(root.to_str().unwrap(), &argref).await.unwrap();
+
+        assert!(repo.find_branch("brand-new", BranchType::Local).is_ok());
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        assert_eq!(
+            crate::git::current_branch(&wt_repo).as_deref(),
+            Some("brand-new")
+        );
+        assert_eq!(wt_repo.head().unwrap().target(), Some(head_oid));
+
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&wt_path)
+            .current_dir(&root)
+            .output();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_clean_succeeds_dirty_needs_force() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_remove_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature", &commit, false).unwrap();
+        let wt_path = root.join("wt-feature");
+        run_git(
+            root.to_str().unwrap(),
+            &worktree_add_args(wt_path.to_str().unwrap(), "feature", false)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .unwrap();
+
+        // Dirty the worktree, then a non-forced remove must be refused.
+        std::fs::write(wt_path.join("uncommitted.txt"), "dirty").unwrap();
+        let refused_args = worktree_remove_args(wt_path.to_str().unwrap(), false);
+        let refused_argref: Vec<&str> = refused_args.iter().map(String::as_str).collect();
+        assert!(run_git(root.to_str().unwrap(), &refused_argref)
+            .await
+            .is_err());
+        assert!(
+            wt_path.is_dir(),
+            "refused remove left the worktree in place"
+        );
+
+        // Forced remove succeeds despite the dirty state.
+        let force_args = worktree_remove_args(wt_path.to_str().unwrap(), true);
+        let force_argref: Vec<&str> = force_args.iter().map(String::as_str).collect();
+        run_git(root.to_str().unwrap(), &force_argref)
+            .await
+            .unwrap();
+        assert!(!wt_path.exists(), "forced remove deleted the worktree");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn worktree_prune_removes_a_stale_entry() {
+        let root = std::env::temp_dir().join(format!("gamut_wt_prune_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature", &commit, false).unwrap();
+        let wt_path = root.join("wt-feature");
+        run_git(
+            root.to_str().unwrap(),
+            &worktree_add_args(wt_path.to_str().unwrap(), "feature", false)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .unwrap();
+
+        // Delete the checkout directory by hand (not via `worktree remove`),
+        // leaving a stale administrative entry for `prune` to clean up.
+        std::fs::remove_dir_all(&wt_path).unwrap();
+        let before = run_git(root.to_str().unwrap(), &["worktree", "list", "--porcelain"])
+            .await
+            .unwrap();
+        assert!(before.contains("wt-feature"), "sanity: entry still listed");
+
+        run_git(root.to_str().unwrap(), &["worktree", "prune"])
+            .await
+            .unwrap();
+
+        let after = run_git(root.to_str().unwrap(), &["worktree", "list", "--porcelain"])
+            .await
+            .unwrap();
+        assert!(
+            !after.contains("wt-feature"),
+            "prune removed the stale entry"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

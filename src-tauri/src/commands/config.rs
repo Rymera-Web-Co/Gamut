@@ -73,6 +73,21 @@ pub struct BranchRow {
     pub remote: Option<String>,
     pub merge: Option<String>,
     pub is_head: bool,
+    /// Commits on this branch not on its configured upstream, or `None` when
+    /// there's no upstream configured or it doesn't resolve (e.g. dangling).
+    pub ahead: Option<u32>,
+    /// Commits on the upstream not on this branch, under the same `None` rule
+    /// as `ahead`.
+    pub behind: Option<u32>,
+    /// Whether the branch tip is reachable from HEAD — i.e. merged into the
+    /// branch currently checked out. `false` when HEAD is unborn.
+    pub merged: bool,
+    /// A protected branch (`pref.protectedBranches`, default main/master) or
+    /// the currently checked-out branch — the same predicate
+    /// `cleanup::is_protected` uses to decide `list_stale_branches`/
+    /// `delete_branches` eligibility, so the Branches table's Delete button
+    /// never offers a branch the backend would refuse anyway.
+    pub protected: bool,
 }
 
 #[derive(Serialize)]
@@ -209,23 +224,29 @@ fn validate_config_value(value: &str) -> AppResult<()> {
 // ---- Read -------------------------------------------------------------------
 
 /// Effective git config for a repo — every occurrence, source-annotated — plus
-/// identity, remotes, and branch-upstream wiring for the curated editors. A
-/// config read is cheap, so this goes through `run_git_blocking` rather than the
-/// gated `run_git_gated` reserved for status/diff scans.
+/// identity, remotes, and branch-upstream wiring for the curated editors.
+/// `read_branches` runs two revwalks per local branch (ahead/behind, then
+/// merged), so — unlike a plain config read — this is not cheap on a repo with
+/// many local branches. It goes through the gated `run_git_gated` (the same
+/// cap the git-status scans use, #89) rather than `run_git_blocking`, so a
+/// burst of refreshes across branch-heavy repos can't stampede.
 #[tauri::command]
 pub async fn git_config_overview(
     state: State<'_, AppState>,
     repo_id: i64,
 ) -> AppResult<ConfigOverview> {
     let path = crate::commands::history::repo_path(&state, repo_id)?;
-    crate::commands::run_git_blocking(path, |p| {
-        let repo = git::open(p)?;
-        build_overview(&repo)
+    // Resolved up front (needs the DB connection) so the blocking closure below
+    // only needs an already-open repo handle, same as every other gated read.
+    let protected = crate::commands::cleanup::protected_branches(&state);
+    crate::commands::run_git_gated(&state, move || {
+        let repo = git::open(&path)?;
+        build_overview(&repo, &protected)
     })
     .await
 }
 
-fn build_overview(repo: &git2::Repository) -> AppResult<ConfigOverview> {
+fn build_overview(repo: &git2::Repository, protected: &[String]) -> AppResult<ConfigOverview> {
     let config = repo.config()?;
     let entries = read_entries(&config)?;
     let identity = Identity {
@@ -234,7 +255,7 @@ fn build_overview(repo: &git2::Repository) -> AppResult<ConfigOverview> {
     };
     let remotes = read_remotes(repo)?;
     let remote_branches = remote_tracking_names(repo)?;
-    let branches = read_branches(repo, &config)?;
+    let branches = read_branches(repo, &config, protected)?;
     Ok(ConfigOverview {
         entries,
         identity,
@@ -345,7 +366,20 @@ fn read_remotes(repo: &git2::Repository) -> AppResult<Vec<RemoteRow>> {
     Ok(out)
 }
 
-fn read_branches(repo: &git2::Repository, config: &git2::Config) -> AppResult<Vec<BranchRow>> {
+fn read_branches(
+    repo: &git2::Repository,
+    config: &git2::Config,
+    protected: &[String],
+) -> AppResult<Vec<BranchRow>> {
+    // HEAD's commit, used to decide `merged` for every branch — resolved once
+    // rather than per-row. `None` when HEAD is unborn (fresh repo, no commits).
+    let head_oid = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id());
+    let current = git::current_branch(repo);
+
     let mut out = Vec::new();
     for b in repo.branches(Some(BranchType::Local))? {
         let (branch, _) = b?;
@@ -354,14 +388,80 @@ fn read_branches(repo: &git2::Repository, config: &git2::Config) -> AppResult<Ve
         };
         let remote = ok_or_unset(config.get_string(&format!("branch.{name}.remote")))?;
         let merge = ok_or_unset(config.get_string(&format!("branch.{name}.merge")))?;
+        let (ahead, behind) = branch_ahead_behind(repo, &branch);
+        // Short-circuit: 0 ahead of its upstream means every commit on this
+        // branch already lives on the upstream, which is exactly what
+        // `branch_is_merged`'s upstream check (below) would conclude anyway —
+        // skip the revwalk entirely rather than paying for it a second time.
+        // Only valid when `ahead` actually resolved (`Some`); `None` (no
+        // upstream, or it doesn't resolve) falls through to the real check.
+        let merged = ahead == Some(0) || branch_is_merged(repo, &branch, head_oid);
         out.push(BranchRow {
+            protected: crate::commands::cleanup::is_protected(name, current.as_deref(), protected),
             name: name.to_string(),
             remote,
             merge,
             is_head: branch.is_head(),
+            ahead,
+            behind,
+            merged,
         });
     }
     Ok(out)
+}
+
+/// A branch's ahead/behind vs. its configured upstream (resolved the same way
+/// `Branch::upstream` always has — including a `remote = "."` local-tracking
+/// upstream, not just a `refs/remotes/...` one). `None` for either count when
+/// there's no upstream configured, it doesn't resolve, or either tip is
+/// unborn — never a fabricated `0`, which would read as "up to date" for a
+/// branch that has no real upstream to compare against.
+fn branch_ahead_behind(
+    repo: &git2::Repository,
+    branch: &git2::Branch,
+) -> (Option<u32>, Option<u32>) {
+    let Some(local_oid) = branch.get().target() else {
+        return (None, None);
+    };
+    let Ok(upstream) = branch.upstream() else {
+        return (None, None);
+    };
+    let Some(upstream_oid) = upstream.get().target() else {
+        return (None, None);
+    };
+    match repo.graph_ahead_behind(local_oid, upstream_oid) {
+        Ok((ahead, behind)) => (Some(ahead as u32), Some(behind as u32)),
+        Err(_) => (None, None),
+    }
+}
+
+/// Whether `branch`'s tip is reachable from `head_oid` (merged into the branch
+/// currently checked out) OR from its own configured upstream's tip — mirrors
+/// `git branch -d`, which permits deleting a branch merged into either. The
+/// tip being identical to the target counts as merged in both cases (nothing
+/// to lose by "deleting" the current state of that same commit);
+/// `graph_descendant_of` alone doesn't cover that identical-commit case.
+pub(crate) fn branch_is_merged(
+    repo: &git2::Repository,
+    branch: &git2::Branch,
+    head_oid: Option<git2::Oid>,
+) -> bool {
+    let Some(tip) = branch.get().target() else {
+        return false;
+    };
+    if let Some(head_oid) = head_oid {
+        if tip == head_oid || repo.graph_descendant_of(head_oid, tip).unwrap_or(false) {
+            return true;
+        }
+    }
+    if let Ok(upstream) = branch.upstream() {
+        if let Some(upstream_oid) = upstream.get().target() {
+            if tip == upstream_oid || repo.graph_descendant_of(upstream_oid, tip).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// A remote-tracking branch's shorthand (`origin/main`) whose last path segment
@@ -570,6 +670,28 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let repo = Repository::init(&root).unwrap();
         (root, repo)
+    }
+
+    /// Build a new commit on top of `parent_oid`, writing `name` = `contents`,
+    /// without touching the index, HEAD, or working tree — used to create a
+    /// commit on a branch other than the one currently checked out (mirrors the
+    /// helper of the same name in `commands::repo`'s test module).
+    fn commit_on(
+        repo: &Repository,
+        parent_oid: git2::Oid,
+        name: &str,
+        contents: &str,
+    ) -> git2::Oid {
+        let parent = repo.find_commit(parent_oid).unwrap();
+        let parent_tree = parent.tree().unwrap();
+        let mut builder = repo.treebuilder(Some(&parent_tree)).unwrap();
+        let blob_oid = repo.blob(contents.as_bytes()).unwrap();
+        builder.insert(name, blob_oid, 0o100644).unwrap();
+        let tree_oid = builder.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        repo.commit(None, &sig, &sig, "msg", &tree, &[&parent])
+            .unwrap()
     }
 
     fn commit_file(repo: &Repository, name: &str, contents: &str) {
@@ -1644,7 +1766,7 @@ mod tests {
         repo.branch("second", &head_commit, false).unwrap();
 
         let repo2 = Repository::open(&root).unwrap();
-        let overview = build_overview(&repo2).unwrap();
+        let overview = build_overview(&repo2, &[]).unwrap();
         assert_eq!(overview.remotes.len(), 2);
         assert!(overview.remotes.iter().any(|r| r.name == "origin"));
         assert!(overview.remotes.iter().any(|r| r.name == "upstream"));
@@ -1691,7 +1813,7 @@ mod tests {
         );
 
         let wt_repo = Repository::open(&wt_path).unwrap();
-        let overview = build_overview(&wt_repo).unwrap();
+        let overview = build_overview(&wt_repo, &[]).unwrap();
         assert!(!overview.branches.is_empty());
 
         set_identity_at(
@@ -1717,5 +1839,209 @@ mod tests {
             .output();
         std::fs::remove_dir_all(&root).unwrap();
         let _ = std::fs::remove_dir_all(&wt_path);
+    }
+
+    // ---- A2: ahead/behind vs. a "remote = ." local-tracking upstream ----
+
+    #[test]
+    fn read_branches_reports_ahead_and_behind_against_a_local_upstream() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tag = "branch_ahead_behind";
+        let _search_guard = isolate_search_paths(tag);
+        let (root, repo) = temp_repo(tag);
+        commit_file(&repo, "a.txt", "base\n");
+        let base_oid = repo.head().unwrap().target().unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+
+        // "topic": base + 2 commits of its own (ahead).
+        repo.branch("topic", &base_commit, false).unwrap();
+        let topic_c1 = commit_on(&repo, base_oid, "b.txt", "one\n");
+        repo.reference("refs/heads/topic", topic_c1, true, "test")
+            .unwrap();
+        let topic_c2 = commit_on(&repo, topic_c1, "c.txt", "two\n");
+        repo.reference("refs/heads/topic", topic_c2, true, "test")
+            .unwrap();
+
+        // "up" stands in for the upstream: base + 1 different commit (behind).
+        repo.branch("up", &base_commit, false).unwrap();
+        let up_c1 = commit_on(&repo, base_oid, "d.txt", "up-only\n");
+        repo.reference("refs/heads/up", up_c1, true, "test")
+            .unwrap();
+
+        // `remote = "."` is git's own convention for tracking a local branch —
+        // `Branch::upstream()` resolves it the same way as a real remote.
+        {
+            let mut local = repo
+                .config()
+                .unwrap()
+                .open_level(ConfigLevel::Local)
+                .unwrap();
+            local.set_str("branch.topic.remote", ".").unwrap();
+            local
+                .set_str("branch.topic.merge", "refs/heads/up")
+                .unwrap();
+        }
+
+        let config = repo.config().unwrap();
+        let branches = read_branches(&repo, &config, &[]).unwrap();
+        let topic = branches.iter().find(|b| b.name == "topic").unwrap();
+        assert_eq!(topic.ahead, Some(2), "topic has 2 commits `up` lacks");
+        assert_eq!(topic.behind, Some(1), "topic lacks `up`'s 1 commit");
+
+        // "up" itself has no upstream configured — never a fabricated `0`.
+        let up = branches.iter().find(|b| b.name == "up").unwrap();
+        assert_eq!(up.ahead, None);
+        assert_eq!(up.behind, None);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- merged flag ----
+
+    #[test]
+    fn branch_is_merged_true_for_ancestor_and_identical_tip_false_otherwise() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tag = "branch_merged";
+        let _search_guard = isolate_search_paths(tag);
+        let (root, repo) = temp_repo(tag);
+        commit_file(&repo, "a.txt", "base\n");
+        let base_oid = repo.head().unwrap().target().unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+
+        // "merged-into-head": base only, HEAD has since moved on — its tip is an
+        // ancestor of HEAD, so it counts as merged.
+        repo.branch("merged-into-head", &base_commit, false)
+            .unwrap();
+        commit_file(&repo, "b.txt", "second\n");
+
+        // "same-as-head": at HEAD's own current tip — merged (identical, not
+        // just an ancestor).
+        let head_oid = repo.head().unwrap().target().unwrap();
+        repo.branch("same-as-head", &repo.find_commit(head_oid).unwrap(), false)
+            .unwrap();
+
+        // "unmerged": diverges from HEAD with a commit HEAD doesn't have.
+        let unmerged_oid = commit_on(&repo, base_oid, "c.txt", "diverged\n");
+        repo.branch("unmerged", &repo.find_commit(unmerged_oid).unwrap(), false)
+            .unwrap();
+
+        let config = repo.config().unwrap();
+        let branches = read_branches(&repo, &config, &[]).unwrap();
+        let merged = |name: &str| branches.iter().find(|b| b.name == name).unwrap().merged;
+        assert!(merged("merged-into-head"));
+        assert!(merged("same-as-head"));
+        assert!(!merged("unmerged"));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- MEDIUM-2: protected flag ----
+
+    #[test]
+    fn read_branches_marks_main_protected_by_default_and_others_not() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tag = "branch_protected";
+        let _search_guard = isolate_search_paths(tag);
+        let (root, repo) = temp_repo(tag);
+        commit_file(&repo, "a.txt", "hello\n");
+        let head_oid = repo.head().unwrap().target().unwrap();
+        let head_commit = repo.find_commit(head_oid).unwrap();
+        // `temp_repo` uses `Repository::init` with no explicit initial branch
+        // name override, so the default branch here is whatever the test git
+        // install defaults to — create an explicit "main" so the assertion
+        // doesn't depend on that default, and switch HEAD to a third branch
+        // (via `set_head`, not a working-tree checkout — nothing here reads
+        // the working tree) so neither "main" nor "feature" is protected via
+        // the separate "currently checked out" rule, only via the configured
+        // protected-branches list under test.
+        if git::current_branch(&repo).as_deref() != Some("main") {
+            repo.branch("main", &head_commit, false).unwrap();
+        }
+        repo.branch("feature", &head_commit, false).unwrap();
+        repo.branch("other", &head_commit, false).unwrap();
+        repo.set_head("refs/heads/other").unwrap();
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("other"));
+
+        let config = repo.config().unwrap();
+        let default_protected = vec!["main".to_string(), "master".to_string()];
+        let branches = read_branches(&repo, &config, &default_protected).unwrap();
+        let protected = |name: &str| branches.iter().find(|b| b.name == name).unwrap().protected;
+        assert!(protected("main"), "main is protected by the default list");
+        assert!(!protected("feature"), "an ordinary branch is not protected");
+
+        // A configured override replaces the default list entirely — a repo
+        // that opts "feature" in as protected (and drops "main") sees exactly
+        // that reflected.
+        let override_list = vec!["feature".to_string()];
+        let branches = read_branches(&repo, &config, &override_list).unwrap();
+        let protected = |name: &str| branches.iter().find(|b| b.name == name).unwrap().protected;
+        assert!(
+            protected("feature"),
+            "override list makes feature protected"
+        );
+        assert!(
+            !protected("main"),
+            "override list drops main from protection"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `git branch -d` also permits deleting a branch merged into its own
+    /// upstream, not only into HEAD. Here HEAD never advances past `base`, so
+    /// "feature" is NOT merged into HEAD, but its upstream (`origin/feature`)
+    /// is one commit ahead of feature's own tip — everything on "feature"
+    /// already lives in the upstream — so it must still read as merged.
+    #[test]
+    fn branch_is_merged_true_when_merged_only_into_its_upstream() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tag = "branch_merged_upstream";
+        let _search_guard = isolate_search_paths(tag);
+        let (root, repo) = temp_repo(tag);
+        commit_file(&repo, "a.txt", "base\n");
+        let base_oid = repo.head().unwrap().target().unwrap();
+
+        let branch_oid = commit_on(&repo, base_oid, "b.txt", "on branch\n");
+        repo.branch("feature", &repo.find_commit(branch_oid).unwrap(), false)
+            .unwrap();
+
+        // The upstream is one commit further along than "feature"'s own tip.
+        let upstream_ahead_oid = commit_on(&repo, branch_oid, "c.txt", "on upstream too\n");
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        repo.reference(
+            "refs/remotes/origin/feature",
+            upstream_ahead_oid,
+            true,
+            "test",
+        )
+        .unwrap();
+        {
+            let mut local = repo
+                .config()
+                .unwrap()
+                .open_level(ConfigLevel::Local)
+                .unwrap();
+            local.set_str("branch.feature.remote", "origin").unwrap();
+            local
+                .set_str("branch.feature.merge", "refs/heads/feature")
+                .unwrap();
+        }
+
+        // HEAD is still at `base` — "feature" is not merged into HEAD.
+        let head_oid = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id());
+        assert_eq!(head_oid, Some(base_oid));
+
+        let branch = repo.find_branch("feature", BranchType::Local).unwrap();
+        assert!(
+            branch_is_merged(&repo, &branch, head_oid),
+            "merged into its own upstream tip counts as merged, even though \
+             HEAD hasn't advanced past base"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

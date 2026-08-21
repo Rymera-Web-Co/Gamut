@@ -26,3 +26,8 @@ dist-ssr
 
 # AI context
 .ai-context/
+
+# Local self-review run artifacts — never meant to be committed
+self-review_diff.patch
+self-review-lint-*.log*
+self-review-comment.md

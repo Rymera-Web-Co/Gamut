@@ -925,7 +925,7 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
             .find_branch(local, BranchType::Local)
             .and_then(|mut b| b.set_upstream(Some(upstream)))
         {
-            delete_local_branch(&repo, local);
+            drop_created_branch(&repo, local);
             return Err(e.into());
         }
     }
@@ -936,7 +936,7 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
         // The safe checkout refused (local edits would be lost). Drop the branch
         // we just made, so a refused checkout adds no refs of its own.
         if let HeadTarget::Track { local, .. } = &target {
-            delete_local_branch(&repo, local);
+            drop_created_branch(&repo, local);
         }
         return Err(e.into());
     }
@@ -951,8 +951,10 @@ fn checkout_at(path: &std::path::Path, name: &str) -> AppResult<()> {
 
 /// Best-effort removal of a local branch this run created, used to unwind a
 /// checkout that could not be completed. A failure here is not worth reporting
-/// over the error that triggered the unwind.
-fn delete_local_branch(repo: &git2::Repository, local: &str) {
+/// over the error that triggered the unwind. Named distinctly from the public
+/// `delete_local_branch` command in `cleanup.rs` — same-named private helper
+/// here and public command there was an easy-to-misread collision (NIT-2).
+fn drop_created_branch(repo: &git2::Repository, local: &str) {
     if let Ok(mut branch) = repo.find_branch(local, BranchType::Local) {
         let _ = branch.delete();
     }
@@ -1015,6 +1017,91 @@ fn create_branch_at(path: &std::path::Path, name: &str, from_ref: Option<&str>) 
     checkout.safe();
     repo.checkout_tree(commit.as_object(), Some(&mut checkout))?;
     repo.set_head(&format!("refs/heads/{name}"))?;
+    Ok(())
+}
+
+/// Rename a local branch (`git branch -m`, no force — refuses if `new_name`
+/// already exists). If `name` is the checked-out branch, HEAD stays valid:
+/// `Branch::rename` moves the ref itself and updates HEAD's symbolic target
+/// when it pointed at the renamed ref, so no separate `set_head` is needed.
+#[tauri::command]
+pub async fn rename_branch(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    name: String,
+    new_name: String,
+) -> AppResult<()> {
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| rename_branch_at(p, &name, &new_name)).await
+}
+
+/// Blocking core of [`rename_branch`]; opens the repo from `path`.
+fn rename_branch_at(path: &std::path::Path, name: &str, new_name: &str) -> AppResult<()> {
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+        return Err(AppError::Other("Branch name cannot be empty".into()));
+    }
+    if !git2::Reference::is_valid_name(&format!("refs/heads/{new_name}")) {
+        return Err(AppError::Other(format!(
+            "\"{new_name}\" is not a valid branch name"
+        )));
+    }
+    let repo = git::open(path)?;
+    let mut branch = repo.find_branch(name, BranchType::Local)?;
+    branch.rename(new_name, false)?;
+    Ok(())
+}
+
+/// Create a new local branch, optionally switching to it — the Repo settings
+/// "New branch…" form's switch toggle is opt-in, unlike `create_branch` (which
+/// always switches, relied on by `BranchSwitcher`). Creating here never
+/// touches the working tree unless `switch` is true.
+#[tauri::command]
+pub async fn git_branch_create(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    name: String,
+    from_ref: Option<String>,
+    switch: bool,
+) -> AppResult<()> {
+    let path = crate::commands::history::repo_path(&state, repo_id)?;
+    crate::commands::run_git_blocking(path, move |p| {
+        git_branch_create_at(p, &name, from_ref.as_deref(), switch)
+    })
+    .await
+}
+
+/// Blocking core of [`git_branch_create`]; opens the repo from `path`.
+fn git_branch_create_at(
+    path: &std::path::Path,
+    name: &str,
+    from_ref: Option<&str>,
+    switch: bool,
+) -> AppResult<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::Other("Branch name cannot be empty".into()));
+    }
+    if !git2::Reference::is_valid_name(&format!("refs/heads/{name}")) {
+        return Err(AppError::Other(format!(
+            "\"{name}\" is not a valid branch name"
+        )));
+    }
+    {
+        let repo = git::open(path)?;
+        if repo.find_branch(name, BranchType::Local).is_ok() {
+            return Err(AppError::Other(format!(
+                "A branch named \"{name}\" already exists"
+            )));
+        }
+        let commit = repo
+            .revparse_single(from_ref.unwrap_or("HEAD"))?
+            .peel_to_commit()?;
+        repo.branch(name, &commit, false)?;
+    }
+    if switch {
+        checkout_at(path, name)?;
+    }
     Ok(())
 }
 
@@ -2190,5 +2277,139 @@ mod tests {
         assert_eq!(strip_remote_prefix(["origin"], "other/feature"), None);
         assert_eq!(strip_remote_prefix(["origin"], "origin/"), None);
         assert_eq!(strip_remote_prefix(["origin"], "origin"), None);
+    }
+
+    // ---------------------------------------------------------------------
+    // rename_branch_at (A5)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn rename_branch_renames_a_non_current_branch() {
+        let root = std::env::temp_dir().join(format!("gamut_rename_a5a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("old-name", &commit, false).unwrap();
+
+        rename_branch_at(&root, "old-name", "new-name").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.find_branch("old-name", BranchType::Local).is_err());
+        assert!(repo.find_branch("new-name", BranchType::Local).is_ok());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_branch_on_the_checked_out_branch_keeps_head_valid() {
+        let root = std::env::temp_dir().join(format!("gamut_rename_a5b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let current = git::current_branch(&repo).unwrap();
+
+        rename_branch_at(&root, &current, "renamed-current").unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(!repo.head_detached().unwrap());
+        assert_eq!(
+            git::current_branch(&repo).as_deref(),
+            Some("renamed-current"),
+            "HEAD still resolves, now under the new name"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_branch_rejects_empty_or_invalid_name_and_writes_nothing() {
+        let root = std::env::temp_dir().join(format!("gamut_rename_a5c_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("old-name", &commit, false).unwrap();
+
+        assert!(rename_branch_at(&root, "old-name", "").is_err());
+        assert!(rename_branch_at(&root, "old-name", "bad..name").is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert!(repo.find_branch("old-name", BranchType::Local).is_ok());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---------------------------------------------------------------------
+    // git_branch_create_at (A3)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn git_branch_create_from_non_head_base_points_at_the_base_tip_without_switching() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_branch_create_a3a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let oid_a = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let commit_a = repo.find_commit(oid_a).unwrap();
+        repo.branch("base", &commit_a, false).unwrap();
+        // "base" diverges from HEAD/main.
+        let oid_base = commit_on(&repo, oid_a, "base.txt", "base content\n");
+        repo.reference("refs/heads/base", oid_base, true, "test")
+            .unwrap();
+        let current_before = git::current_branch(&repo);
+
+        git_branch_create_at(&root, "topic", Some("base"), false).unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        let topic = repo.find_branch("topic", BranchType::Local).unwrap();
+        assert_eq!(
+            topic.get().target(),
+            Some(oid_base),
+            "new branch points at the base branch's tip, not HEAD"
+        );
+        assert_eq!(
+            git::current_branch(&repo),
+            current_before,
+            "switch=false must not move HEAD"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn git_branch_create_with_switch_true_checks_out_the_new_branch() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_branch_create_a3b_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        init_repo(&root);
+
+        git_branch_create_at(&root, "topic", None, true).unwrap();
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(git::current_branch(&repo).as_deref(), Some("topic"));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn git_branch_create_rejects_a_duplicate_name_and_touches_nothing() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_branch_create_a3c_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = init_repo(&root);
+        let commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("topic", &commit, false).unwrap();
+        let head_before = repo.head().unwrap().target();
+
+        assert!(git_branch_create_at(&root, "topic", None, true).is_err());
+
+        let repo = Repository::open(&root).unwrap();
+        assert_eq!(repo.head().unwrap().target(), head_before);
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

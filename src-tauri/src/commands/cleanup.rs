@@ -5,7 +5,7 @@ use tauri::State;
 use crate::commands::history::{open_repo, repo_path};
 use crate::commands::settings;
 use crate::commands::sync::run_git;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::git;
 use crate::state::AppState;
 
@@ -13,7 +13,7 @@ use crate::state::AppState;
 const DEFAULT_PROTECTED: &[&str] = &["main", "master"];
 
 /// The configured protected branches, or the built-in default.
-fn protected_branches(state: &AppState) -> Vec<String> {
+pub(crate) fn protected_branches(state: &AppState) -> Vec<String> {
     settings::csv_or(
         state,
         "pref.protectedBranches",
@@ -23,7 +23,7 @@ fn protected_branches(state: &AppState) -> Vec<String> {
 
 /// A branch we must never report or delete: a protected branch, or the branch
 /// currently checked out.
-fn is_protected(name: &str, current: Option<&str>, protected: &[String]) -> bool {
+pub(crate) fn is_protected(name: &str, current: Option<&str>, protected: &[String]) -> bool {
     Some(name) == current || protected.iter().any(|p| p == name)
 }
 
@@ -162,6 +162,64 @@ pub async fn delete_branches(
     Ok(results)
 }
 
+/// Delete one local branch — `git branch -d`/`-D` for a single row in the
+/// Repo settings "Branches" section, distinct from [`delete_branches`] (which
+/// is force-only and has its own consumers: `CleanupStaleDialog`,
+/// `useAbandonPr`). Always refuses a protected branch and the currently
+/// checked-out branch, the same way [`delete_branches`] does; without `force`
+/// also refuses a branch not fully merged into HEAD or its upstream, mirroring
+/// `git branch -d`'s safety check — libgit2's `Branch::delete` has no such
+/// distinction of its own (it always force-deletes). Local-only either way: no
+/// remote-tracking ref is ever touched.
+#[tauri::command]
+pub async fn delete_local_branch(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    name: String,
+    force: bool,
+) -> AppResult<()> {
+    let repo = open_repo(&state, repo_id)?;
+    let protected = protected_branches(&state);
+    delete_local_branch_at(&repo, &name, force, &protected)
+}
+
+/// Core of [`delete_local_branch`], taking an already-open repo (and the
+/// caller's already-resolved protected list) so tests can drive it without a
+/// `State<AppState>`. The protected/current-branch refusal (A8) is
+/// unconditional — checked before the merge state even matters, since `force`
+/// is meant to override "not merged", not "protected" or "currently checked
+/// out" (same rule [`delete_branches`] applies).
+fn delete_local_branch_at(
+    repo: &git2::Repository,
+    name: &str,
+    force: bool,
+    protected: &[String],
+) -> AppResult<()> {
+    let current = git::current_branch(repo);
+    if is_protected(name, current.as_deref(), protected) {
+        return Err(AppError::Other(format!(
+            "branch \"{name}\" is protected or the currently checked out branch"
+        )));
+    }
+    let mut branch = repo
+        .find_branch(name, BranchType::Local)
+        .map_err(|_| AppError::Other(format!("branch \"{name}\" not found")))?;
+    if !force {
+        let head_oid = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id());
+        if !crate::commands::config::branch_is_merged(repo, &branch, head_oid) {
+            return Err(AppError::Other(format!(
+                "branch \"{name}\" is not fully merged"
+            )));
+        }
+    }
+    branch.delete()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +296,221 @@ mod tests {
         assert!(!is_gone("feature-live"), "live upstream → not gone");
         assert!(!is_gone("local-only"), "no upstream → not gone");
         assert!(!is_gone("main"), "live upstream → not gone");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- delete_local_branch (A6/A7/A8/A9) ----
+
+    /// A repo with `main` at one commit, a remote `origin` tracking branch
+    /// `origin/main` at the same commit (so A9 has something to prove stays
+    /// intact), and a fresh non-bare setup — used by every delete test below.
+    fn repo_with_origin_main(root: &Path) -> git2::Repository {
+        let repo = git2::Repository::init(root).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        {
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        let head_oid = repo.head().unwrap().target().unwrap();
+        repo.reference("refs/remotes/origin/main", head_oid, true, "test")
+            .unwrap();
+        repo
+    }
+
+    #[test]
+    fn delete_local_branch_merged_without_force_deletes() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_delete_branch_a6_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        // At HEAD's own tip — trivially merged.
+        repo.branch("feature", &head_commit, false).unwrap();
+
+        delete_local_branch_at(&repo, "feature", false, &[]).unwrap();
+
+        assert!(repo.find_branch("feature", BranchType::Local).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn delete_local_branch_unmerged_without_force_is_refused_with_force_deletes() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_delete_branch_a7_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let head_oid = repo.head().unwrap().target().unwrap();
+        // A commit HEAD doesn't have — unmerged.
+        let wd = repo.workdir().unwrap();
+        std::fs::write(wd.join("feature.txt"), "diverged").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let parent = repo.find_commit(head_oid).unwrap();
+        let unmerged_oid = repo
+            .commit(None, &sig, &sig, "diverged", &tree, &[&parent])
+            .unwrap();
+        repo.branch("feature", &repo.find_commit(unmerged_oid).unwrap(), false)
+            .unwrap();
+
+        let err = delete_local_branch_at(&repo, "feature", false, &[]).unwrap_err();
+        assert!(
+            err.to_string().contains("not fully merged"),
+            "error should mention 'not fully merged', got: {err}"
+        );
+        assert!(
+            repo.find_branch("feature", BranchType::Local).is_ok(),
+            "refused delete left the branch in place"
+        );
+
+        delete_local_branch_at(&repo, "feature", true, &[]).unwrap();
+        assert!(
+            repo.find_branch("feature", BranchType::Local).is_err(),
+            "force deletes the unmerged branch"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A8: the checked-out branch is refused, even with `force` — the current-
+    /// branch guard runs before the merge check, since `force` overrides "not
+    /// merged", not "currently checked out".
+    #[test]
+    fn delete_local_branch_refuses_the_checked_out_branch() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_delete_branch_a8_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let current = git::current_branch(&repo).unwrap();
+
+        assert!(delete_local_branch_at(&repo, &current, false, &[]).is_err());
+        assert!(
+            delete_local_branch_at(&repo, &current, true, &[]).is_err(),
+            "force does not override the checked-out-branch refusal"
+        );
+        assert!(repo.find_branch(&current, BranchType::Local).is_ok());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// M1: a protected branch is refused regardless of `force`, the same way
+    /// [`delete_branches`] treats protection — `force` overrides "not merged",
+    /// never "protected".
+    #[test]
+    fn delete_local_branch_refuses_protected_branch_regardless_of_force() {
+        let root = std::env::temp_dir().join(format!(
+            "gamut_delete_branch_protected_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        // Trivially merged into HEAD (and thus deletable without force were it
+        // not protected) — protection must still refuse it either way.
+        repo.branch("release", &head_commit, false).unwrap();
+        let protected = vec!["release".to_string()];
+
+        assert!(delete_local_branch_at(&repo, "release", false, &protected).is_err());
+        assert!(
+            delete_local_branch_at(&repo, "release", true, &protected).is_err(),
+            "force does not override protection"
+        );
+        assert!(repo.find_branch("release", BranchType::Local).is_ok());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// M2: `git branch -d` also permits deleting a branch merged into its own
+    /// upstream, not only into HEAD. Here HEAD hasn't advanced past the base
+    /// commit, so "feature" is unmerged into HEAD, but its upstream is one
+    /// commit ahead of feature's own tip — so a non-forced delete succeeds.
+    #[test]
+    fn delete_local_branch_merged_only_into_upstream_without_force_deletes() {
+        let root = std::env::temp_dir().join(format!(
+            "gamut_delete_branch_upstream_merge_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let head_oid = repo.head().unwrap().target().unwrap();
+
+        // A commit HEAD doesn't have — "feature" diverges from HEAD.
+        let wd = repo.workdir().unwrap();
+        std::fs::write(wd.join("feature.txt"), "diverged").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let parent = repo.find_commit(head_oid).unwrap();
+        let feature_oid = repo
+            .commit(None, &sig, &sig, "feature", &tree, &[&parent])
+            .unwrap();
+        repo.branch("feature", &repo.find_commit(feature_oid).unwrap(), false)
+            .unwrap();
+
+        // The upstream is one commit further along than "feature"'s own tip —
+        // everything on "feature" already lives in the upstream.
+        std::fs::write(wd.join("more.txt"), "more").unwrap();
+        let mut index2 = repo.index().unwrap();
+        index2.add_path(Path::new("more.txt")).unwrap();
+        index2.write().unwrap();
+        let tree2 = repo.find_tree(index2.write_tree().unwrap()).unwrap();
+        let feature_commit = repo.find_commit(feature_oid).unwrap();
+        let upstream_ahead_oid = repo
+            .commit(None, &sig, &sig, "more", &tree2, &[&feature_commit])
+            .unwrap();
+        repo.reference(
+            "refs/remotes/origin/feature",
+            upstream_ahead_oid,
+            true,
+            "test",
+        )
+        .unwrap();
+        repo.find_branch("feature", BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("origin/feature"))
+            .unwrap();
+
+        delete_local_branch_at(&repo, "feature", false, &[]).unwrap();
+        assert!(repo.find_branch("feature", BranchType::Local).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A9: deleting a local branch never touches its remote-tracking ref.
+    #[test]
+    fn delete_local_branch_leaves_remote_tracking_ref_intact() {
+        let root =
+            std::env::temp_dir().join(format!("gamut_delete_branch_a9_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = repo_with_origin_main(&root);
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("main-copy", &head_commit, false).unwrap();
+        repo.find_branch("main-copy", BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("origin/main"))
+            .unwrap();
+
+        delete_local_branch_at(&repo, "main-copy", false, &[]).unwrap();
+
+        assert!(repo.find_branch("main-copy", BranchType::Local).is_err());
+        assert!(
+            repo.find_reference("refs/remotes/origin/main").is_ok(),
+            "the remote-tracking ref must survive deleting the local branch"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }
