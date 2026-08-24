@@ -1,0 +1,54 @@
+# Maintainer: Okky Oktavian <okky@rymera.com.au>
+#
+# From-source fallback. `PKGBUILD` (the gamut-bin variant) is the primary one and
+# is what CI publishes — build this one instead when the pinned binary no longer
+# matches the host runtime (a WebKitGTK soname bump), when you need an
+# architecture the release does not publish, or when you want a source build on
+# principle. It compiles the whole Tauri backend, so it needs Rust, Node and pnpm
+# and takes minutes rather than seconds.
+#
+# Rename it to `PKGBUILD` (or `makepkg -p PKGBUILD.src`) to build it.
+pkgname=gamut
+pkgver=0.8.0
+pkgrel=1
+# Release tag that carries the source tarball — `alpha-*` releases are tagged
+# independently of the app version, same as in the gamut-bin PKGBUILD.
+_tag="v$pkgver"
+# GitHub names the archive root <repo>-<tag with any leading v stripped>.
+_srcdir="Gamut-${_tag#v}"
+pkgdesc="A local git app for reviewing PRs and browsing history"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Rymera-Web-Co/Gamut"
+license=('Apache-2.0')
+depends=('webkit2gtk-4.1' 'gtk3' 'alsa-lib' 'hicolor-icon-theme')
+makedepends=('rust' 'nodejs' 'pnpm' 'git')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz"
+        'gamut.desktop')
+sha256sums=('69ef36b76ea0ccee068d747a4f8af0ab34bf96ae05f81bba074dd4edc6e92571'
+            '07ee9149b3b3d59e4cde8661a7b5609cc5b600b515a0dba5db8294b2c6b8e803')
+
+build() {
+  cd "$srcdir/$_srcdir"
+  # Build against Arch's system Rust, not a rustup default that may be missing
+  # in a clean chroot.
+  export RUSTUP_TOOLCHAIN=stable
+  # Both steps fetch from the network (npm registry, crates.io), so this build is
+  # not reproducible offline.
+  pnpm install --frozen-lockfile
+  # --no-bundle: makepkg does the packaging, so skip Tauri's own .deb/.rpm/AppImage.
+  pnpm tauri build --no-bundle
+}
+
+package() {
+  cd "$srcdir/$_srcdir"
+  install -Dm755 "src-tauri/target/release/gamut" "$pkgdir/usr/bin/gamut"
+  # src-tauri/linux/Gamut.desktop is a Tauri handlebars template, not a valid
+  # desktop entry — install the static one from this directory instead.
+  install -Dm644 "$srcdir/gamut.desktop" "$pkgdir/usr/share/applications/gamut.desktop"
+  install -Dm644 "src-tauri/icons/32x32.png"      "$pkgdir/usr/share/icons/hicolor/32x32/apps/gamut.png"
+  install -Dm644 "src-tauri/icons/64x64.png"      "$pkgdir/usr/share/icons/hicolor/64x64/apps/gamut.png"
+  install -Dm644 "src-tauri/icons/128x128.png"    "$pkgdir/usr/share/icons/hicolor/128x128/apps/gamut.png"
+  install -Dm644 "src-tauri/icons/128x128@2x.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/gamut.png"
+  install -Dm644 "src-tauri/icons/icon.png"       "$pkgdir/usr/share/icons/hicolor/512x512/apps/gamut.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/gamut/LICENSE"
+}

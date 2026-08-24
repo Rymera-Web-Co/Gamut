@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gamut
+Comment=Gamut — a local git app for reviewing PRs and browsing history
+Exec=gamut
+Icon=gamut
+Terminal=false
+Categories=Development;RevisionControl;

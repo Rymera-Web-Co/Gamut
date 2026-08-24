@@ -1,0 +1,54 @@
+# Maintainer: Okky Oktavian <okky@rymera.com.au>
+#
+# Primary Arch package: repackages the released .deb into a pacman package.
+# It links no bundled graphics stack, so WebKitGTK loads EGL/GL/Wayland from the
+# host — which is what keeps Gamut off the AppImage's DMA-BUF/EGL crash on
+# systems with recent Mesa. See README.md in this directory.
+pkgname=gamut-bin
+pkgver=0.8.0
+pkgrel=1
+# Release tag that carries the .deb. A `v*` release tag matches the app version;
+# `alpha-*` releases are tagged independently of it, so CI rewrites this line.
+_tag="v$pkgver"
+pkgdesc="A local git app for reviewing PRs and browsing history"
+arch=('x86_64')
+url="https://github.com/Rymera-Web-Co/Gamut"
+license=('Apache-2.0')
+# alsa-lib is not in the .deb's own Depends, but the binary links
+# libasound.so.2 — without it the app fails to start with a missing-library error.
+depends=('webkit2gtk-4.1' 'gtk3' 'alsa-lib' 'hicolor-icon-theme')
+provides=("gamut=$pkgver")
+conflicts=('gamut')
+# !strip: the upstream build already strips the binary. !debug: with nothing to
+# strip there are no debug symbols, so skip the empty /usr/src/debug tree.
+options=('!strip' '!debug')
+source=("gamut-$pkgver.deb::$url/releases/download/$_tag/Gamut_${pkgver}_amd64.deb")
+noextract=("gamut-$pkgver.deb")  # a .deb is an `ar` archive; unpack it ourselves
+sha256sums=('e221311435259ebc16faaa8b6c75c0535f0352ecb984fcb59af7b7841402651e')
+
+package() {
+  # Stream the .deb payload tarball straight into $pkgdir — the .deb already
+  # lays the files out under the paths Arch wants (usr/bin, usr/share/...).
+  # `data.tar*`: the compression is the bundler's choice, not fixed by the format.
+  bsdtar -xOf "$srcdir/gamut-$pkgver.deb" 'data.tar*' | bsdtar -xpf - -C "$pkgdir"
+
+  local desktop="$pkgdir/usr/share/applications/Gamut.desktop"
+  # The .deb ships an empty `Categories=` (tauri.conf.json sets no bundle
+  # category), which leaves the entry out of the application menu. Fail rather
+  # than no-op if the line ever stops being generated — a silent no-op here would
+  # ship a menu-less entry with a green build.
+  grep -q '^Categories=' "$desktop" || {
+    echo "==> ERROR: no Categories= line in $desktop — the upstream template changed." >&2
+    return 1
+  }
+  sed -i 's/^Categories=.*/Categories=Development;RevisionControl;/' "$desktop"
+
+  # The .deb installs a `256x256@2` icon directory. The hicolor spec has no such
+  # size (the HiDPI suffix is `@2x`), so that icon is never loaded; the file is
+  # 256x256, so move it where the theme can find it.
+  local icons="$pkgdir/usr/share/icons/hicolor"
+  if [[ -d "$icons/256x256@2" ]]; then
+    install -Dm644 "$icons/256x256@2/apps/gamut.png" "$icons/256x256/apps/gamut.png"
+    rm -r "$icons/256x256@2"
+  fi
+}
