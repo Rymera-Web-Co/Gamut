@@ -35,6 +35,7 @@ export function TerminalPane() {
   const addTerminalTab = useUiStore((s) => s.addTerminalTab);
   const splitTerminal = useUiStore((s) => s.splitTerminal);
   const selectTerminalTab = useUiStore((s) => s.selectTerminalTab);
+  const focusTerminal = useUiStore((s) => s.focusTerminal);
   const setActivePane = useUiStore((s) => s.setActivePane);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const closeTerminalPane = useUiStore((s) => s.closeTerminalPane);
@@ -144,9 +145,14 @@ export function TerminalPane() {
     handleSplit,
     handleCloseTab,
     selectTerminalTab,
+    focusTerminal,
     activeGroupId,
     gt,
     activeTab,
+    // The cycle chord walks every group's terminals in sidebar order (#328),
+    // so it needs the group order and the whole terminals map, not just `gt`.
+    groupOrder: groupList.map((g) => g.id),
+    terminals,
   });
 
   const tabs = gt?.tabs ?? [];

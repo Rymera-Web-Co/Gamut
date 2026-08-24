@@ -19,7 +19,7 @@ anywhere in the app; the rest apply within a specific view or input.
 | `⌘/Ctrl+⇧+P` | **Pull** the active repository |
 | `⌘/Ctrl+⇧+K` | **Push** the active repository |
 | `⌘/Ctrl+⌥+F` | **Fetch** all repositories in the active group |
-| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous repository in the active group (Control on all platforms; cycles terminal tabs instead when the terminal is focused) |
+| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous repository in the active group (Control on all platforms; cycles terminals instead when the terminal is focused) |
 
 These are registered globally — see [`useKeyboardShortcuts`](../src/lib/useKeyboardShortcuts.ts).
 
@@ -54,9 +54,9 @@ See [Review](features/review.md).
 | --- | --- |
 | `⌘/Ctrl+T` | Open a new terminal tab (reveals the terminal if hidden) |
 | `⌘/Ctrl+W` | Close the active terminal tab |
-| `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal tab |
-| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous terminal tab (Control on all platforms; only with ≥2 tabs) |
-| `⌘/Ctrl+⌥+1`…`9` | Jump to terminal tab N (`9` jumps to the last tab) |
+| `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal — across **all** groups, switching group at a group boundary |
+| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous terminal — across **all** groups, switching group at a group boundary (Control on all platforms; only with ≥2 terminals) |
+| `⌘/Ctrl+⌥+1`…`9` | Jump to terminal tab N in the active group (`9` jumps to its last tab) |
 | `⌘/Ctrl+D` | Split the active terminal tab (side-by-side) |
 
 See [Terminal](features/terminal.md).

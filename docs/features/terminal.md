@@ -35,9 +35,13 @@ or `tail -f` keeps going while the terminal is hidden.
 
 ## Tabs & splits
 
-- Each group keeps its own set of tabs. Click a tab to activate it, or cycle through them
-  with `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[`. While the terminal is focused, `Ctrl+Tab` /
-  `Ctrl+⇧+Tab` also cycle to the next / previous tab (with two or more tabs).
+- Each group keeps its own set of tabs. Click a tab to activate it, or cycle through
+  every group's terminals with `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[`. While the terminal is focused, `Ctrl+Tab` /
+  `Ctrl+⇧+Tab` also cycle to the next / previous terminal (with two or more terminals).
+  Both bindings walk **every** terminal in **every** group, in sidebar order: past the
+  last tab of a group they step into the first tab of the next group (and make that group
+  active), and the order wraps from the very last terminal back to the very first.
+  `⌘/Ctrl+⌥+1`…`9` stays an index into the active group's own tab strip.
 - **Reorder** — drag a tab and drop it before/after another tab in the strip; an
   insertion line shows where it'll land. Reordering stays within the group and
   doesn't change which tab is active or disturb running panes.
