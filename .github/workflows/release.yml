@@ -134,6 +134,81 @@ jobs:
           path: src-tauri/target/**/release/bundle/**/*
           if-no-files-found: error
 
+  # Arch Linux package. GitHub has no Arch runner, so this runs in an
+  # archlinux container. It repackages the .deb the `build` job just attached to
+  # the release (a tar extract — no Rust/Node toolchain needed), so it must wait
+  # for that job to finish.
+  arch-package:
+    name: Arch package (gamut-bin)
+    needs: build
+    # Only a tag push publishes a release to attach the package to. `!cancelled()`
+    # instead of a plain success gate: `build` uses fail-fast: false, so a failure
+    # in the macOS or Windows leg must not silently drop this asset from an
+    # otherwise complete release. If the Linux leg is the one that failed, the
+    # download below fails loudly instead.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      contents: write
+    steps:
+      - name: Install packaging tools
+        run: |
+          # --disable-sandbox: pacman 7 sandboxes downloads with seccomp, and the
+          # container's default seccomp profile blocks the seccomp() syscall
+          # itself ("error restricting syscalls via seccomp"). The container is
+          # ephemeral and only installs from the official repos.
+          pacman -Syu --noconfirm --needed --disable-sandbox \
+            base-devel git jq github-cli pacman-contrib
+
+      - uses: actions/checkout@v4
+
+      - name: Build the pacman package from the release .deb
+        env:
+          # No token here — the .deb is fetched from a public release URL.
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The .deb filename carries the app version, while the release URL
+          # carries the tag — the two differ for `alpha-*` releases, so pin both.
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          work=$(mktemp -d)
+          # awk, not sed: the tag reaches it as a variable, so no character in a
+          # tag name can act as a delimiter or be re-evaluated.
+          awk -v ver="$version" -v tag="$TAG" '
+            /^pkgver=/ { print "pkgver=" ver; next }
+            /^_tag=/   { printf "_tag=\"%s\"\n", tag; next }
+                       { print }
+          ' packaging/arch/PKGBUILD > "$work/PKGBUILD"
+
+          # makepkg refuses to run as root.
+          useradd --create-home builder
+          chown -R builder:builder "$work"
+
+          # updpkgsums re-pins sha256sums to the .deb of THIS release — the hash
+          # committed in the PKGBUILD only matches the release it was pinned for.
+          # --nodeps: package() only unpacks the .deb, so the runtime deps
+          # (webkit2gtk-4.1, gtk3) need not be installed in the container.
+          sudo -u builder -H bash -c "cd '$work' && updpkgsums && makepkg --nodeps --force"
+
+          echo "PKGBUILD_DIR=$work" >> "$GITHUB_ENV"
+          echo "Built package contents:"
+          bsdtar -tf "$work"/gamut-bin-*.pkg.tar.zst
+
+      - name: Attach the package to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Via env, never interpolated into the script: a tag name is
+          # attacker-controlled text and `${{ }}` substitution happens before
+          # bash parses the line.
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            "$PKGBUILD_DIR"/gamut-bin-*.pkg.tar.zst \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
 # The Homebrew cask is published from a maintainer's machine, not from CI — see
 # homebrew/README.md. After this workflow attaches the .dmg assets to the
 # release, run `scripts/publish-cask.sh <tag>` locally to render and push the

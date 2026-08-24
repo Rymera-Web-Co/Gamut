@@ -90,9 +90,14 @@ sudo apt install ./Gamut_<version>_amd64.deb
 
 # Fedora / RHEL
 sudo dnf install ./Gamut-<version>-1.x86_64.rpm
+
+# Arch / CachyOS / EndeavourOS / Manjaro
+sudo pacman -U ./gamut-bin-<version>-1-x86_64.pkg.tar.zst
 ```
 
-The `.deb`/`.rpm` packages pull in their dependencies (WebKitGTK 4.1, GTK 3) automatically. For the AppImage you may need WebKitGTK yourself — `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora. As on Windows, install `git` from your package manager for fetch / pull / push.
+The `.deb`/`.rpm`/pacman packages pull in their dependencies (WebKitGTK 4.1, GTK 3) automatically. For the AppImage you may need WebKitGTK yourself — `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora. As on Windows, install `git` from your package manager for fetch / pull / push.
+
+> **On Arch, prefer the pacman package over the AppImage.** The AppImage bundles a graphics/Wayland userspace about three years old, which can abort on first paint (white window, then `SIGABRT`) on a system with recent Mesa. The pacman package and the `.deb` bundle no graphics libraries, so WebKitGTK uses the host stack. See [`packaging/arch/README.md`](packaging/arch/README.md) — it also covers building the package yourself with `makepkg -si`.
 
 ### Nightly builds
 
