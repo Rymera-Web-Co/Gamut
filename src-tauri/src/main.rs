@@ -8,9 +8,10 @@ fn main() {
     gamut_lib::run()
 }
 
-/// Workarounds for WebKitGTK rendering failures on Linux, primarily affecting
-/// AppImage builds run on a different (usually newer) distro than they were
-/// built on.
+/// Workarounds for WebKitGTK rendering failures on Linux AppImage builds run on
+/// a different (usually newer) distro than they were built on. These are gated
+/// on the `APPIMAGE` env var in `apply()`; native installs use the host stack
+/// and skip all of it.
 ///
 /// Two failure modes are handled:
 ///   1. The DMABUF/compositing renderer aborting `WebKitWebProcess` on some
@@ -37,17 +38,41 @@ mod linux_webkit_workarounds {
     const REEXEC_GUARD: &str = "GAMUT_WAYLAND_PRELOAD_DONE";
 
     pub fn apply() {
-        // Always disable the renderers that abort on incompatible GPU stacks.
-        // WebKitGTK reads these lazily when the webview is created, so setting
-        // them here (before the Tauri builder runs) is sufficient.
+        // These workarounds are only for AppImage builds. An AppImage bundles a
+        // ~3-year-old graphics/Wayland stack that can clash with a newer host GPU
+        // and abort WebKitWebProcess. Native installs (`.deb`/`.rpm`/pacman) load
+        // those libraries from the host at runtime — the standard WebKitGTK
+        // configuration — so they do not hit that bundled-library crash. Native
+        // runs return below and skip everything that follows. A native user with a
+        // genuinely broken host driver can still set
+        // `WEBKIT_DISABLE_DMABUF_RENDERER=1` in their own environment; that value
+        // takes effect because this code never overrides it, not because of any
+        // handling here.
+        //
+        // Native installs must NOT disable compositing: that removes the webview
+        // frame clock, so `requestAnimationFrame` stops firing on the terminal's
+        // canvas GL calls and the GPU renderer draws one frame behind.
+        //
+        // The `APPIMAGE` env var is set by the AppImage runtime at launch. An
+        // extracted image run via `AppRun` bypasses that runtime and sets only
+        // `APPDIR`, so check both — either one means a bundled build that needs
+        // these workarounds. Absence of both means a native run.
+        if env::var_os("APPIMAGE").is_none() && env::var_os("APPDIR").is_none() {
+            return;
+        }
+
+        // AppImage runs keep BOTH flags deliberately. Disabling compositing costs
+        // the AppImage the smooth GPU terminal renderer, but that renderer
+        // defaults OFF on Linux, and both flags together are the known-safe
+        // AppImage configuration. WebKitGTK reads them lazily when the webview is
+        // created, so setting them here (before the Tauri builder runs) works.
         set_if_unset("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         set_if_unset("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
 
-        // The bundled `libwayland-client` shadows the host's even on X11
-        // sessions (Mesa's `libEGL` initializes the Wayland platform regardless
-        // of session type), so always preload the host lib when one is found.
-        // On native `.deb`/`.rpm` installs this resolves to the host's own
-        // library and is a no-op.
+        // The AppImage's bundled `libwayland-client` shadows the host's even on
+        // X11 sessions (Mesa's `libEGL` initializes the Wayland platform
+        // regardless of session type), so preload the host lib when one is found.
+        // Only AppImage runs reach this — native installs returned above.
 
         // Don't loop: if we've already re-exec'd, the preload is in effect.
         if env::var_os(REEXEC_GUARD).is_some() {
@@ -55,7 +80,7 @@ mod linux_webkit_workarounds {
         }
 
         let Some(host_lib) = find_system_libwayland_client() else {
-            // No host library found (or not an AppImage); nothing to preload.
+            // No host library found; nothing to preload.
             return;
         };
 
