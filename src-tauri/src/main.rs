@@ -8,22 +8,16 @@ fn main() {
     gamut_lib::run()
 }
 
-/// Workarounds for WebKitGTK rendering failures on Linux, primarily affecting
-/// AppImage builds run on a different (usually newer) distro than they were
-/// built on.
+/// Workarounds for WebKitGTK crashes caused by an AppImage's bundled graphics
+/// stack clashing with a newer host. AppImage-only (gated on `APPIMAGE`/`APPDIR`
+/// in `apply()`); native installs use the host stack and skip all of it.
 ///
-/// Two failure modes are handled:
-///   1. The DMABUF/compositing renderer aborting `WebKitWebProcess` on some
-///      Mesa/GPU stacks (white window, then SIGABRT).
-///   2. `Could not create default EGL display: EGL_BAD_PARAMETER`, caused by the
-///      AppImage's bundled `libwayland-client` shadowing the host's. Mesa's
-///      `libEGL` initializes the Wayland platform regardless of session type,
-///      so it loads the stale bundled symbols and aborts — this happens on X11
-///      sessions too, not just Wayland.
-///
-/// (1) is fixed by disabling those renderers via env vars. (2) is fixed by
-/// preloading the host's `libwayland-client` and re-executing ourselves so the
-/// dynamic linker picks it up before any Wayland/EGL code runs.
+/// Two crashes are handled:
+///   1. DMABUF/compositing renderer aborts `WebKitWebProcess` (white window,
+///      SIGABRT) — fixed by disabling those renderers via env vars.
+///   2. `EGL_BAD_PARAMETER` from the bundled `libwayland-client` shadowing the
+///      host's (Mesa's `libEGL` inits Wayland even on X11) — fixed by preloading
+///      the host lib and re-executing so the linker picks it up first.
 ///
 /// See: https://github.com/tauri-apps/tauri/issues/11988
 #[cfg(target_os = "linux")]
@@ -37,25 +31,29 @@ mod linux_webkit_workarounds {
     const REEXEC_GUARD: &str = "GAMUT_WAYLAND_PRELOAD_DONE";
 
     pub fn apply() {
-        // Always disable the renderers that abort on incompatible GPU stacks.
-        // WebKitGTK reads these lazily when the webview is created, so setting
-        // them here (before the Tauri builder runs) is sufficient.
+        // AppImage-only. `APPIMAGE` is set by the AppImage runtime; an extracted
+        // image run via `AppRun` sets only `APPDIR`, so check both. Absence of
+        // both means a native install: it uses the host stack and must NOT disable
+        // compositing, which removes the webview frame clock and makes the
+        // terminal GPU renderer draw one frame behind.
+        if env::var_os("APPIMAGE").is_none() && env::var_os("APPDIR").is_none() {
+            return;
+        }
+
+        // Both flags are the known-safe AppImage config (costs the GPU terminal
+        // renderer, which defaults OFF here). WebKitGTK reads them lazily when the
+        // webview is created, so setting them before the Tauri builder runs works.
         set_if_unset("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         set_if_unset("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
 
-        // The bundled `libwayland-client` shadows the host's even on X11
-        // sessions (Mesa's `libEGL` initializes the Wayland platform regardless
-        // of session type), so always preload the host lib when one is found.
-        // On native `.deb`/`.rpm` installs this resolves to the host's own
-        // library and is a no-op.
-
+        // Preload the host `libwayland-client` (see crash 2 above), then re-exec.
         // Don't loop: if we've already re-exec'd, the preload is in effect.
         if env::var_os(REEXEC_GUARD).is_some() {
             return;
         }
 
         let Some(host_lib) = find_system_libwayland_client() else {
-            // No host library found (or not an AppImage); nothing to preload.
+            // No host library found; nothing to preload.
             return;
         };
 
