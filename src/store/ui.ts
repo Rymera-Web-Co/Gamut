@@ -402,8 +402,9 @@ interface UiState {
   /**
    * Reveal a terminal pane and put keyboard focus in it: open the panel, switch
    * to its group/tab/pane, then bump `terminalFocusNonce` so the pane re-focuses
-   * its xterm even when none of that state changed. Used by the command palette
-   * and notification-click handler.
+   * its xterm even when none of that state changed. Used by the command palette,
+   * the notification-click handler, the sidebar terminal rail, and the terminal
+   * next/prev-terminal chords (#328).
    */
   focusTerminal: (groupId: number, tabId: string, paneId: string) => void;
   /** Remove a tab (caller kills its panes' PTYs first). */
