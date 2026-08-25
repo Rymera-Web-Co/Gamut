@@ -1013,6 +1013,17 @@ export const ipc = {
     body: string,
   ) => invoke<void>("github_update_body", { repoId, number, target, id, body }),
   githubMentionables: (repoId: number) => invoke<string[]>("github_mentionables", { repoId }),
+  /** Repo collaborators (login + avatar) for the reviewers/assignees pickers (#334). */
+  githubCollaborators: (repoId: number) => invoke<Person[]>("github_collaborators", { repoId }),
+  /** Remove one or more pending review requests from a PR (#334). */
+  githubRemoveReviewRequest: (repoId: number, number: number, reviewers: string[]) =>
+    invoke<void>("github_remove_review_request", { repoId, number, reviewers }),
+  /** Add one or more assignees to a PR (#334). */
+  githubAddAssignees: (repoId: number, number: number, assignees: string[]) =>
+    invoke<void>("github_add_assignees", { repoId, number, assignees }),
+  /** Remove one or more assignees from a PR (#334). */
+  githubRemoveAssignees: (repoId: number, number: number, assignees: string[]) =>
+    invoke<void>("github_remove_assignees", { repoId, number, assignees }),
   githubReviewThreads: (repoId: number, number: number) =>
     invoke<ReviewThread[]>("github_review_threads", { repoId, number }),
   githubReplyReviewComment: (repoId: number, number: number, commentId: number, body: string) =>
