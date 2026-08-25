@@ -123,7 +123,7 @@ export function Conversation({
 
   return (
     <div className="flex flex-col gap-3 p-3">
-      <PrDetailsCard repoId={repoId} number={number} />
+      <PrDetailsCard repoId={repoId} number={number} author={thread.author} />
 
       {/* Description */}
       <div className="rounded-md border">

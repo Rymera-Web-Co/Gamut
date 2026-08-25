@@ -2,7 +2,15 @@ import { useState, type ReactElement } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, CircleDot, Loader2, RotateCw } from "lucide-react";
 
-import { usePrDetails, useRequestReview } from "./api";
+import {
+  useGithubAuth,
+  usePrDetails,
+  useRequestReview,
+  useRemoveReviewRequest,
+  useAddAssignees,
+  useRemoveAssignees,
+} from "./api";
+import { PeoplePicker } from "./PeoplePicker";
 import { Avatar, labelTextColor, ReviewerStatusIcon } from "./reviewShared";
 import { toast } from "@/store/toast";
 import { cn } from "@/lib/utils";
@@ -14,20 +22,44 @@ function hasReviewed(state: string): boolean {
   return state !== "PENDING";
 }
 
-function DetailsSection({ title, children }: { title: string; children: ReactElement | string }) {
+function DetailsSection({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  /** Optional control rendered beside the title, e.g. the reviewers/assignees
+   * edit picker (#334). */
+  action?: ReactElement;
+  children: ReactElement | string;
+}) {
   return (
     <div className="px-3 py-2">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+      <div className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
         {title}
+        {action}
       </div>
       {children}
     </div>
   );
 }
 
-export function PrDetailsCard({ repoId, number }: { repoId: number; number: number }) {
+export function PrDetailsCard({
+  repoId,
+  number,
+  author,
+}: {
+  repoId: number;
+  number: number;
+  /** The PR author's login — GitHub 422s a review request for them (#334). */
+  author?: string;
+}) {
   const details = usePrDetails(repoId, number);
+  const auth = useGithubAuth();
   const requestReview = useRequestReview(repoId);
+  const removeReviewRequest = useRemoveReviewRequest(repoId);
+  const addAssignees = useAddAssignees(repoId);
+  const removeAssignees = useRemoveAssignees(repoId);
   const [open, setOpen] = useState(true);
   const d = details.data;
 
@@ -40,6 +72,64 @@ export function PrDetailsCard({ repoId, number }: { repoId: number; number: numb
       },
     );
   }
+
+  // A reviewer is "checked" in the picker when they have an outstanding
+  // request — PENDING (never reviewed) or re-requested after reviewing.
+  // Checking an unchecked collaborator requests a (re-)review; unchecking one
+  // removes their pending request (#334).
+  function toggleReviewer(login: string, checked: boolean) {
+    if (checked) {
+      requestReview.mutate(
+        { number, reviewers: [login] },
+        {
+          onSuccess: () => toast.success(`Requested a review from ${login}`),
+          onError: (e) => toast.error(String(e)),
+        },
+      );
+    } else {
+      removeReviewRequest.mutate(
+        { number, reviewers: [login] },
+        {
+          onSuccess: () => toast.success(`Removed the review request for ${login}`),
+          onError: (e) => toast.error(String(e)),
+        },
+      );
+    }
+  }
+
+  function toggleAssignee(login: string, checked: boolean) {
+    if (checked) {
+      addAssignees.mutate(
+        { number, assignees: [login] },
+        {
+          onSuccess: () => toast.success(`Assigned ${login}`),
+          onError: (e) => toast.error(String(e)),
+        },
+      );
+    } else {
+      removeAssignees.mutate(
+        { number, assignees: [login] },
+        {
+          onSuccess: () => toast.success(`Unassigned ${login}`),
+          onError: (e) => toast.error(String(e)),
+        },
+      );
+    }
+  }
+
+  // Rows the reviewers picker must never toggle (#334): GitHub 422s a review
+  // request for the viewer or the PR author (same guard as the review popover),
+  // and it cannot withdraw a review that was already submitted — only a still
+  // pending request. Show those as disabled rows with the reason instead of an
+  // unchecked box that would silently do the wrong thing.
+  function reviewerIneligible(login: string): string | null {
+    if (auth.data?.login === login) return "you can't self-review";
+    if (author === login) return "PR author";
+    const r = details.data?.reviewers.find((rv) => rv.login === login);
+    if (r && hasReviewed(r.state) && !r.re_requested) return "already reviewed";
+    return null;
+  }
+
   const empty = (text: string) => (
     <span className="text-xs text-[var(--color-muted-foreground)]">{text}</span>
   );
@@ -69,7 +159,27 @@ export function PrDetailsCard({ repoId, number }: { repoId: number; number: numb
 
       {open && d && (
         <div className="divide-y text-sm">
-          <DetailsSection title="Reviewers">
+          <DetailsSection
+            title="Reviewers"
+            action={
+              <PeoplePicker
+                repoId={repoId}
+                label="Edit reviewers"
+                isChecked={(login) => {
+                  const r = d.reviewers.find((rv) => rv.login === login);
+                  return !!r && (r.state === "PENDING" || r.re_requested);
+                }}
+                onToggle={toggleReviewer}
+                isRowDisabled={(login) =>
+                  (requestReview.isPending &&
+                    (requestReview.variables?.reviewers?.includes(login) ?? false)) ||
+                  (removeReviewRequest.isPending &&
+                    (removeReviewRequest.variables?.reviewers?.includes(login) ?? false))
+                }
+                rowDisabledReason={reviewerIneligible}
+              />
+            }
+          >
             {d.reviewers.length === 0 ? (
               empty("No reviewers")
             ) : (
@@ -117,7 +227,23 @@ export function PrDetailsCard({ repoId, number }: { repoId: number; number: numb
             )}
           </DetailsSection>
 
-          <DetailsSection title="Assignees">
+          <DetailsSection
+            title="Assignees"
+            action={
+              <PeoplePicker
+                repoId={repoId}
+                label="Edit assignees"
+                isChecked={(login) => d.assignees.some((a) => a.login === login)}
+                onToggle={toggleAssignee}
+                isRowDisabled={(login) =>
+                  (addAssignees.isPending &&
+                    (addAssignees.variables?.assignees?.includes(login) ?? false)) ||
+                  (removeAssignees.isPending &&
+                    (removeAssignees.variables?.assignees?.includes(login) ?? false))
+                }
+              />
+            }
+          >
             {d.assignees.length === 0 ? (
               empty("No one")
             ) : (

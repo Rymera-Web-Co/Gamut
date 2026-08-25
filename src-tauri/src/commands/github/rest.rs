@@ -10,7 +10,7 @@ use crate::state::AppState;
 
 use super::auth::require_token;
 use super::remote::{https_host, is_github_asset_host};
-use super::{api_base, api_error, header_str, http, owner_repo, pr_page_size, GhUser};
+use super::{api_base, api_error, header_str, http, owner_repo, pr_page_size, GhUser, Person};
 
 /// Parse the `next` page URL from a REST `Link` header value, if present.
 /// e.g. `<https://api.github.com/…&page=2>; rel="next", <…>; rel="last"`.
@@ -808,27 +808,142 @@ pub async fn github_update_body(
     Ok(())
 }
 
-/// Logins that can be @-mentioned in the repo — its assignable users (the
-/// collaborators GitHub allows on issues/PRs). Available with read access.
+/// The repo's assignable users — GitHub's `/repos/{owner}/{repo}/assignees`
+/// list, i.e. everyone who may be assigned an issue/PR or requested as a
+/// reviewer. Available with read access. Shared by `github_mentionables` and
+/// `github_collaborators`, which differ only in what they return (#334).
+async fn assignable_users(state: &State<'_, AppState>, repo_id: i64) -> AppResult<Vec<GhUser>> {
+    let (owner, repo) = owner_repo(state, repo_id)?;
+    let token = require_token(state)?;
+    let api = api_base(state);
+    let client = http()?;
+    // Follow pagination so repos with >100 assignees don't lose the rest from
+    // @-mention autocomplete (#135).
+    get_all_pages(
+        &client,
+        &token,
+        format!("{api}/repos/{owner}/{repo}/assignees?per_page=100"),
+        "listing assignable users",
+    )
+    .await
+}
+
+/// Small write helper for the people-editing endpoints (#334): send `payload`
+/// to `path` with `method` and turn any non-2xx response into an `AppError`
+/// described by `context`.
+async fn send_json(
+    state: &State<'_, AppState>,
+    method: reqwest::Method,
+    path: String,
+    payload: serde_json::Value,
+    context: &str,
+) -> AppResult<()> {
+    let token = require_token(state)?;
+    let api = api_base(state);
+    let client = http()?;
+    let resp = client
+        .request(method, format!("{api}/{path}"))
+        .bearer_auth(&token)
+        .header("Accept", "application/vnd.github+json")
+        .json(&payload)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(api_error(context, resp).await);
+    }
+    Ok(())
+}
+
+/// Logins that can be @-mentioned in the repo — its assignable users.
+/// Available with read access.
 #[tauri::command]
 pub async fn github_mentionables(
     state: State<'_, AppState>,
     repo_id: i64,
 ) -> AppResult<Vec<String>> {
-    let (owner, repo) = owner_repo(&state, repo_id)?;
-    let token = require_token(&state)?;
-    let api = api_base(&state);
-    let client = http()?;
-    // Follow pagination so repos with >100 assignees don't lose the rest from
-    // @-mention autocomplete (#135).
-    let users: Vec<GhUser> = get_all_pages(
-        &client,
-        &token,
-        format!("{api}/repos/{owner}/{repo}/assignees?per_page=100"),
-        "listing mentionable users",
-    )
-    .await?;
+    let users = assignable_users(&state, repo_id).await?;
     Ok(users.into_iter().map(|u| u.login).collect())
+}
+
+/// The people offered in the reviewers/assignees pickers, with their avatars
+/// (#334). The same assignable-users list as `github_mentionables`, but kept as
+/// a separate command (login + avatar, not `Vec<String>`) so widening
+/// `github_mentionables` doesn't ripple into its three unrelated
+/// `MarkdownEditor` call sites.
+#[tauri::command]
+pub async fn github_collaborators(
+    state: State<'_, AppState>,
+    repo_id: i64,
+) -> AppResult<Vec<Person>> {
+    let users = assignable_users(&state, repo_id).await?;
+    Ok(users
+        .into_iter()
+        .map(|u| Person {
+            login: u.login,
+            avatar: u.avatar_url,
+        })
+        .collect())
+}
+
+/// Remove one or more pending review requests from a pull request (#334). The
+/// inverse of `github_request_review` — GitHub only allows removing a request
+/// that is still pending, mirrored by the picker only offering this for a
+/// reviewer with an outstanding request.
+#[tauri::command]
+pub async fn github_remove_review_request(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    reviewers: Vec<String>,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    send_json(
+        &state,
+        reqwest::Method::DELETE,
+        format!("repos/{owner}/{repo}/pulls/{number}/requested_reviewers"),
+        serde_json::json!({ "reviewers": reviewers }),
+        "removing the review request",
+    )
+    .await
+}
+
+/// Add one or more assignees to a pull request (#334) — PRs are issues under
+/// the hood, so this is the issues `assignees` endpoint.
+#[tauri::command]
+pub async fn github_add_assignees(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    assignees: Vec<String>,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    send_json(
+        &state,
+        reqwest::Method::POST,
+        format!("repos/{owner}/{repo}/issues/{number}/assignees"),
+        serde_json::json!({ "assignees": assignees }),
+        "adding assignees",
+    )
+    .await
+}
+
+/// Remove one or more assignees from a pull request (#334).
+#[tauri::command]
+pub async fn github_remove_assignees(
+    state: State<'_, AppState>,
+    repo_id: i64,
+    number: u64,
+    assignees: Vec<String>,
+) -> AppResult<()> {
+    let (owner, repo) = owner_repo(&state, repo_id)?;
+    send_json(
+        &state,
+        reqwest::Method::DELETE,
+        format!("repos/{owner}/{repo}/issues/{number}/assignees"),
+        serde_json::json!({ "assignees": assignees }),
+        "removing assignees",
+    )
+    .await
 }
 
 /// Reply to an existing inline review comment thread (REST).

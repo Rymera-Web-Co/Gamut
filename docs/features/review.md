@@ -69,7 +69,11 @@ Open a pull request to see:
   the Review tab to *Branch vs base* so you can look at the same changes locally), and
   **Submit review**.
 - **Details** — reviewers and whether each has approved, assignees, labels, milestone, and
-  any issues this PR is linked to.
+  any issues this PR is linked to. Reviewers and assignees can be edited from here: use the
+  pencil icon beside each to pick from the repo's assignable users (GitHub's
+  `/repos/{owner}/{repo}/assignees` list — everyone who can be assigned or asked to review).
+  A reviewer who has already submitted a review cannot be removed from here: GitHub only
+  allows a still-pending review request to be withdrawn.
 - **Description & conversation** — the PR's description, rendered from markdown, and a
   chronological timeline of comments, reviews, and events such as new commits, label
   changes, marking the PR ready or draft, and merges. Checkboxes in task lists can be

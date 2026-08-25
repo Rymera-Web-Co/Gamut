@@ -389,6 +389,18 @@ export function useMentionables(repoId: number, enabled: boolean) {
   });
 }
 
+/** Repo collaborators (login + avatar), for the reviewers/assignees pickers
+ * (#334). Loads lazily — `enabled` gates it on the picker popover being open. */
+export function useCollaborators(repoId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["github-collaborators", repoId],
+    queryFn: () => ipc.githubCollaborators(repoId),
+    enabled: enabled && repoId != null,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
 /** Local + remote branches for the repo (to tell if a PR branch is checked out). */
 export function useBranches(repoId: number | null) {
   return useQuery({
@@ -437,21 +449,68 @@ export function useSubmitReview(repoId: number) {
 }
 
 /**
- * Request (or re-request) a review from one or more reviewers (#172). On success
- * the PR detail + timeline queries are invalidated so the re-requested indicator
- * and timeline reflect the new state.
+ * Shared shape of the reviewer/assignee mutations (#334): each one takes the PR
+ * number plus a list of logins, and each one invalidates the same trio of
+ * queries afterwards (PR details, the PR thread, and the repo's PR list).
+ * Factored out so the four hooks below cannot drift apart.
  */
-export function useRequestReview(repoId: number) {
+function usePeopleMutation<V extends { number: number }>(
+  repoId: number,
+  mutationFn: (vars: V) => Promise<void>,
+) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ number, reviewers }: { number: number; reviewers: string[] }) =>
-      ipc.githubRequestReview(repoId, number, reviewers),
-    onSuccess: (_data, { number }) => {
+    mutationFn,
+    onSuccess: (_data: void, { number }: V) => {
       qc.invalidateQueries({ queryKey: ["github-pr-details", repoId, number] });
       qc.invalidateQueries({ queryKey: ["github-pr-thread", repoId, number] });
       qc.invalidateQueries({ queryKey: ["github-prs", repoId] });
     },
   });
+}
+
+/**
+ * Request (or re-request) a review from one or more reviewers (#172). On success
+ * the PR detail + timeline queries are invalidated so the re-requested indicator
+ * and timeline reflect the new state.
+ */
+export function useRequestReview(repoId: number) {
+  return usePeopleMutation(
+    repoId,
+    ({ number, reviewers }: { number: number; reviewers: string[] }) =>
+      ipc.githubRequestReview(repoId, number, reviewers),
+  );
+}
+
+/**
+ * Remove a pending review request from one or more reviewers (#334) — the
+ * inverse of `useRequestReview`, used when unchecking a reviewer with an
+ * outstanding request in the reviewers picker.
+ */
+export function useRemoveReviewRequest(repoId: number) {
+  return usePeopleMutation(
+    repoId,
+    ({ number, reviewers }: { number: number; reviewers: string[] }) =>
+      ipc.githubRemoveReviewRequest(repoId, number, reviewers),
+  );
+}
+
+/** Add one or more assignees to a PR (#334), from the assignees picker. */
+export function useAddAssignees(repoId: number) {
+  return usePeopleMutation(
+    repoId,
+    ({ number, assignees }: { number: number; assignees: string[] }) =>
+      ipc.githubAddAssignees(repoId, number, assignees),
+  );
+}
+
+/** Remove one or more assignees from a PR (#334), from the assignees picker. */
+export function useRemoveAssignees(repoId: number) {
+  return usePeopleMutation(
+    repoId,
+    ({ number, assignees }: { number: number; assignees: string[] }) =>
+      ipc.githubRemoveAssignees(repoId, number, assignees),
+  );
 }
 
 /** Post a single inline review comment immediately (the "Comment" action). */
