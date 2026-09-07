@@ -5,9 +5,11 @@ import { FileCheck2, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FileActionsMenu, type FileMenuTarget } from "@/components/FileActionsMenu";
 import { FileTree } from "@/components/FileTree";
+import { ImageDiff } from "@/components/ImageDiff";
 import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { DraftComment, FileChange, ReviewSource } from "@/lib/ipc";
+import { isImagePath } from "@/lib/images";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs } from "@/lib/settings";
@@ -271,6 +273,12 @@ export function LocalReview({
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
               </div>
+            ) : diff.data.is_binary && isImagePath(selected.path) ? (
+              <ImageDiff
+                diff={diff.data}
+                oldLabel={data?.base_label ?? "Before"}
+                newLabel={data?.head_label ?? "After"}
+              />
             ) : diff.data.is_binary ? (
               <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
                 Binary file — diff not shown.

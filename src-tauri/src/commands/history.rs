@@ -62,9 +62,18 @@ pub struct CommitDetail {
 #[derive(Serialize)]
 pub struct FileDiff {
     pub path: String,
+    /// Lossy UTF-8 text of each side; `None` when that side does not exist
+    /// (added/deleted). Empty for binary sides — the diff editor never shows
+    /// those, so their bytes are not shipped over IPC.
     pub old_text: Option<String>,
     pub new_text: Option<String>,
     pub is_binary: bool,
+    /// `data:` URL of each side when the file is a supported image type within
+    /// the preview size cap, so the UI can render an image diff instead of the
+    /// generic "binary file" placeholder. `None` when the side is missing, the
+    /// file is not an image, or it is too large to preview.
+    pub old_image: Option<String>,
+    pub new_image: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -174,14 +183,55 @@ pub(crate) fn files_from_diff(diff: &git2::Diff) -> AppResult<Vec<FileChange>> {
     Ok(files)
 }
 
-/// Read a path's blob from a tree as UTF-8 text, plus whether it's binary.
-pub(crate) fn blob_text(repo: &Repository, tree: &Tree, path: &str) -> Option<(String, bool)> {
+/// Read a path's blob bytes from a tree; `None` when the path is absent (or
+/// not a blob).
+pub(crate) fn blob_bytes(repo: &Repository, tree: &Tree, path: &str) -> Option<Vec<u8>> {
     let entry = tree.get_path(Path::new(path)).ok()?;
     let obj = entry.to_object(repo).ok()?;
     let blob = obj.as_blob()?;
-    let is_binary = blob.is_binary();
-    let text = String::from_utf8_lossy(blob.content()).into_owned();
-    Some((text, is_binary))
+    Some(blob.content().to_vec())
+}
+
+/// Git's binary heuristic: a NUL byte in the first 8 KiB. Applied uniformly to
+/// blobs and on-disk files so the two sides of a diff cannot disagree.
+pub(crate) fn bytes_are_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8192)].contains(&0)
+}
+
+/// Assemble a [`FileDiff`] from the raw bytes of each side (`None` = the side
+/// does not exist). Text sides are decoded lossily for the diff editor; binary
+/// sides ship empty text, and supported image types additionally get a `data:`
+/// URL per side so the UI can show the old and new pictures.
+pub(crate) fn build_file_diff(
+    path: String,
+    old: Option<Vec<u8>>,
+    new: Option<Vec<u8>>,
+) -> FileDiff {
+    let is_binary = old.as_deref().is_some_and(bytes_are_binary)
+        || new.as_deref().is_some_and(bytes_are_binary);
+    let text = |bytes: &Vec<u8>| {
+        if is_binary {
+            String::new()
+        } else {
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+    };
+    let image = |bytes: &Vec<u8>| {
+        if is_binary {
+            crate::commands::files::image_data_url(&path, bytes)
+        } else {
+            // Text images (SVG) go through the code diff editor.
+            None
+        }
+    };
+    FileDiff {
+        old_text: old.as_ref().map(text),
+        new_text: new.as_ref().map(text),
+        old_image: old.as_ref().and_then(image),
+        new_image: new.as_ref().and_then(image),
+        is_binary,
+        path,
+    }
 }
 
 // ---- Commands ----
@@ -342,24 +392,16 @@ pub async fn file_diff(
         let commit = repo.find_commit(oid)?;
         let tree = commit.tree()?;
 
-        let new = blob_text(&repo, &tree, &path);
+        let new = blob_bytes(&repo, &tree, &path);
         let old = if commit.parent_count() > 0 {
             let parent_tree = commit.parent(0)?.tree()?;
             let op = old_path.as_deref().unwrap_or(&path);
-            blob_text(&repo, &parent_tree, op)
+            blob_bytes(&repo, &parent_tree, op)
         } else {
             None
         };
 
-        let is_binary = new.as_ref().map(|(_, b)| *b).unwrap_or(false)
-            || old.as_ref().map(|(_, b)| *b).unwrap_or(false);
-
-        Ok(FileDiff {
-            path,
-            old_text: old.map(|(t, _)| t),
-            new_text: new.map(|(t, _)| t),
-            is_binary,
-        })
+        Ok(build_file_diff(path, old, new))
     })
     .await
 }
@@ -475,4 +517,77 @@ pub async fn blame(
         Ok(hunks)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The 8-byte PNG signature — has NULs, so it trips the binary heuristic.
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR";
+
+    #[test]
+    fn text_diff_keeps_both_sides_and_no_images() {
+        let d = build_file_diff("a.txt".into(), Some(b"old".to_vec()), Some(b"new".to_vec()));
+        assert!(!d.is_binary);
+        assert_eq!(d.old_text.as_deref(), Some("old"));
+        assert_eq!(d.new_text.as_deref(), Some("new"));
+        assert!(d.old_image.is_none() && d.new_image.is_none());
+    }
+
+    #[test]
+    fn image_diff_carries_a_data_url_per_existing_side() {
+        // Modified: both sides present.
+        let d = build_file_diff(
+            "img/logo.png".into(),
+            Some(PNG.to_vec()),
+            Some(PNG.to_vec()),
+        );
+        assert!(d.is_binary);
+        assert_eq!(
+            d.old_text.as_deref(),
+            Some(""),
+            "binary text is not shipped"
+        );
+        assert!(d
+            .old_image
+            .as_deref()
+            .is_some_and(|u| u.starts_with("data:image/png;base64,")));
+        assert!(d.new_image.is_some());
+
+        // Added: only the new side exists.
+        let added = build_file_diff("shot.PNG".into(), None, Some(PNG.to_vec()));
+        assert!(added.old_text.is_none() && added.old_image.is_none());
+        assert!(
+            added.new_image.is_some(),
+            "extension match is case-insensitive"
+        );
+
+        // Deleted: only the old side exists.
+        let deleted = build_file_diff("shot.webp".into(), Some(PNG.to_vec()), None);
+        assert!(deleted
+            .old_image
+            .as_deref()
+            .is_some_and(|u| u.starts_with("data:image/webp;")));
+        assert!(deleted.new_text.is_none() && deleted.new_image.is_none());
+    }
+
+    #[test]
+    fn non_image_binary_and_text_svg_get_no_data_url() {
+        let bin = build_file_diff("blob.bin".into(), None, Some(PNG.to_vec()));
+        assert!(bin.is_binary && bin.new_image.is_none());
+
+        // SVG is text: it goes through the code diff editor, not the image pane.
+        let svg = build_file_diff("icon.svg".into(), None, Some(b"<svg/>".to_vec()));
+        assert!(!svg.is_binary && svg.new_image.is_none());
+        assert_eq!(svg.new_text.as_deref(), Some("<svg/>"));
+    }
+
+    #[test]
+    fn oversized_image_is_binary_without_a_preview() {
+        let mut big = PNG.to_vec();
+        big.resize(10 * 1024 * 1024 + 1, 0);
+        let d = build_file_diff("huge.png".into(), None, Some(big));
+        assert!(d.is_binary && d.new_image.is_none());
+    }
 }

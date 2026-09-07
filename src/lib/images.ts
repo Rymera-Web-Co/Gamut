@@ -1,4 +1,4 @@
-/** Image extensions the file editor can preview inline. Mirrors
+/** Image extensions the file editor and the diff views can preview inline. Mirrors
  * `ALLOWED_IMAGE_EXTS` in `src-tauri/src/commands/files.rs` — the backend is the
  * authoritative guard; this is the UI-side check that picks the image renderer. */
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif"];
