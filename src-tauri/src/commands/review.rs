@@ -164,7 +164,7 @@ pub async fn review_file_diff(
             }
         };
 
-        Ok(build_file_diff(path, old, new))
+        Ok(build_file_diff(path, old_path.as_deref(), old, new))
     })
     .await
 }

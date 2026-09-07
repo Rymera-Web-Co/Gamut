@@ -1,19 +1,7 @@
 import { useState } from "react";
 
+import { formatBytes } from "@/lib/format";
 import type { FileDiff } from "@/lib/ipc";
-
-/** Human-readable byte size for the caption. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB"];
-  let size = n / 1024;
-  let i = 0;
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[i]}`;
-}
 
 /** Decoded byte length of a base64 `data:` URL (no need to ship a count over IPC). */
 function dataUrlBytes(url: string): number {
@@ -33,16 +21,18 @@ function ImageSide({ label, src, alt }: { label: string; src: string | null; alt
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
         {src ? (
           <img
+            key={src}
             src={src}
             alt={alt}
             onLoad={(e) =>
               setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
             }
+            onError={() => setDims(null)}
             className="max-h-full max-w-full object-contain"
           />
         ) : (
           <span className="text-sm text-[var(--color-muted-foreground)]">
-            Image too large to preview.
+            No preview available (too large or unsupported type).
           </span>
         )}
       </div>
@@ -58,8 +48,10 @@ function ImageSide({ label, src, alt }: { label: string; src: string | null; alt
 
 /** Old/new preview for an image change, replacing the "Binary file — diff not
  * shown." placeholder. Added and deleted files show a single side; modified
- * files show both side by side. A side that exists but exceeds the preview size
- * cap (no `data:` URL) gets an in-place notice instead of an image. */
+ * files show both side by side. A side that exists but has no `data:` URL
+ * (over the size cap, or a non-image extension on one side of a rename) gets an
+ * in-place notice instead of an image. Side presence follows `old_text` /
+ * `new_text`, which the backend sets to `""` (not `null`) for binary sides. */
 export function ImageDiff({
   diff,
   oldLabel = "Before",
@@ -78,14 +70,14 @@ export function ImageDiff({
         <ImageSide
           label={hasNew ? oldLabel : `${oldLabel} (deleted)`}
           src={diff.old_image}
-          alt={`${name} — ${oldLabel.toLowerCase()}`}
+          alt={`${name} — ${oldLabel}`}
         />
       )}
       {hasNew && (
         <ImageSide
           label={hasOld ? newLabel : `${newLabel} (added)`}
           src={diff.new_image}
-          alt={`${name} — ${newLabel.toLowerCase()}`}
+          alt={`${name} — ${newLabel}`}
         />
       )}
     </div>

@@ -128,7 +128,7 @@ fn worktree_file_diff_at(
         (old, new)
     };
 
-    Ok(build_file_diff(path.to_string(), old, new))
+    Ok(build_file_diff(path.to_string(), old_path, old, new))
 }
 
 /// Stage paths (`git add` — handles new, modified, and deleted files).

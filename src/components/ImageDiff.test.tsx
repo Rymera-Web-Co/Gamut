@@ -50,6 +50,6 @@ describe("ImageDiff", () => {
   it("shows a notice for a side that exists but has no preview", () => {
     render(<ImageDiff diff={diff({ old_text: "", new_text: "", old_image: PNG })} />);
     expect(screen.getAllByRole("img")).toHaveLength(1);
-    expect(screen.getByText("Image too large to preview.")).toBeInTheDocument();
+    expect(screen.getByText(/No preview available/)).toBeInTheDocument();
   });
 });

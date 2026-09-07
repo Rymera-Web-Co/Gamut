@@ -586,7 +586,9 @@ export function WorkingTree({ repoId }: { repoId: number }) {
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
               </div>
-            ) : diff.data.is_binary && isImagePath(selected.file.path) ? (
+            ) : diff.data.is_binary &&
+              (isImagePath(selected.file.path) ||
+                (selected.file.old_path != null && isImagePath(selected.file.old_path))) ? (
               <ImageDiff
                 diff={diff.data}
                 oldLabel={selected.staged ? "HEAD" : "Index"}

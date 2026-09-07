@@ -115,7 +115,8 @@ export function DiffModal({
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
             </div>
-          ) : diff.data?.is_binary && isImagePath(path) ? (
+          ) : diff.data?.is_binary &&
+            (isImagePath(path) || (oldPath != null && isImagePath(oldPath))) ? (
             <ImageDiff diff={diff.data} oldLabel="Parent" newLabel="This commit" />
           ) : diff.data?.is_binary ? (
             <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">

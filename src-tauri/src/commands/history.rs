@@ -192,18 +192,21 @@ pub(crate) fn blob_bytes(repo: &Repository, tree: &Tree, path: &str) -> Option<V
     Some(blob.content().to_vec())
 }
 
-/// Git's binary heuristic: a NUL byte in the first 8 KiB. Applied uniformly to
-/// blobs and on-disk files so the two sides of a diff cannot disagree.
+/// Binary heuristic: any NUL byte in the content. The bytes are already in
+/// memory, so a full scan is cheap, and applying it uniformly to blobs and
+/// on-disk files means the two sides of a diff cannot disagree.
 pub(crate) fn bytes_are_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(8192)].contains(&0)
+    bytes.contains(&0)
 }
 
 /// Assemble a [`FileDiff`] from the raw bytes of each side (`None` = the side
 /// does not exist). Text sides are decoded lossily for the diff editor; binary
 /// sides ship empty text, and supported image types additionally get a `data:`
-/// URL per side so the UI can show the old and new pictures.
+/// URL per side so the UI can show the old and new pictures. `old_path` is the
+/// pre-rename path (defaults to `path`) — the old side's image type follows it.
 pub(crate) fn build_file_diff(
     path: String,
+    old_path: Option<&str>,
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
 ) -> FileDiff {
@@ -216,19 +219,20 @@ pub(crate) fn build_file_diff(
             String::from_utf8_lossy(bytes).into_owned()
         }
     };
-    let image = |bytes: &Vec<u8>| {
+    let image = |side_path: &str, bytes: &Vec<u8>| {
         if is_binary {
-            crate::commands::files::image_data_url(&path, bytes)
+            crate::commands::files::image_data_url(side_path, bytes)
         } else {
             // Text images (SVG) go through the code diff editor.
             None
         }
     };
+    let old_side_path = old_path.unwrap_or(&path);
     FileDiff {
         old_text: old.as_ref().map(text),
         new_text: new.as_ref().map(text),
-        old_image: old.as_ref().and_then(image),
-        new_image: new.as_ref().and_then(image),
+        old_image: old.as_ref().and_then(|b| image(old_side_path, b)),
+        new_image: new.as_ref().and_then(|b| image(&path, b)),
         is_binary,
         path,
     }
@@ -401,7 +405,7 @@ pub async fn file_diff(
             None
         };
 
-        Ok(build_file_diff(path, old, new))
+        Ok(build_file_diff(path, old_path.as_deref(), old, new))
     })
     .await
 }
@@ -528,7 +532,12 @@ mod tests {
 
     #[test]
     fn text_diff_keeps_both_sides_and_no_images() {
-        let d = build_file_diff("a.txt".into(), Some(b"old".to_vec()), Some(b"new".to_vec()));
+        let d = build_file_diff(
+            "a.txt".into(),
+            None,
+            Some(b"old".to_vec()),
+            Some(b"new".to_vec()),
+        );
         assert!(!d.is_binary);
         assert_eq!(d.old_text.as_deref(), Some("old"));
         assert_eq!(d.new_text.as_deref(), Some("new"));
@@ -540,6 +549,7 @@ mod tests {
         // Modified: both sides present.
         let d = build_file_diff(
             "img/logo.png".into(),
+            None,
             Some(PNG.to_vec()),
             Some(PNG.to_vec()),
         );
@@ -556,7 +566,7 @@ mod tests {
         assert!(d.new_image.is_some());
 
         // Added: only the new side exists.
-        let added = build_file_diff("shot.PNG".into(), None, Some(PNG.to_vec()));
+        let added = build_file_diff("shot.PNG".into(), None, None, Some(PNG.to_vec()));
         assert!(added.old_text.is_none() && added.old_image.is_none());
         assert!(
             added.new_image.is_some(),
@@ -564,7 +574,7 @@ mod tests {
         );
 
         // Deleted: only the old side exists.
-        let deleted = build_file_diff("shot.webp".into(), Some(PNG.to_vec()), None);
+        let deleted = build_file_diff("shot.webp".into(), None, Some(PNG.to_vec()), None);
         assert!(deleted
             .old_image
             .as_deref()
@@ -574,20 +584,56 @@ mod tests {
 
     #[test]
     fn non_image_binary_and_text_svg_get_no_data_url() {
-        let bin = build_file_diff("blob.bin".into(), None, Some(PNG.to_vec()));
+        let bin = build_file_diff("blob.bin".into(), None, None, Some(PNG.to_vec()));
         assert!(bin.is_binary && bin.new_image.is_none());
 
         // SVG is text: it goes through the code diff editor, not the image pane.
-        let svg = build_file_diff("icon.svg".into(), None, Some(b"<svg/>".to_vec()));
+        let svg = build_file_diff("icon.svg".into(), None, None, Some(b"<svg/>".to_vec()));
         assert!(!svg.is_binary && svg.new_image.is_none());
         assert_eq!(svg.new_text.as_deref(), Some("<svg/>"));
+    }
+
+    #[test]
+    fn rename_across_extensions_types_each_side_by_its_own_path() {
+        // hero.png -> hero.webp: the old side is still a PNG.
+        let d = build_file_diff(
+            "hero.webp".into(),
+            Some("hero.png"),
+            Some(PNG.to_vec()),
+            Some(PNG.to_vec()),
+        );
+        assert!(d
+            .old_image
+            .as_deref()
+            .is_some_and(|u| u.starts_with("data:image/png;")));
+        assert!(d
+            .new_image
+            .as_deref()
+            .is_some_and(|u| u.starts_with("data:image/webp;")));
+
+        // hero.png -> hero.bin: only the old side is previewable.
+        let d = build_file_diff(
+            "hero.bin".into(),
+            Some("hero.png"),
+            Some(PNG.to_vec()),
+            Some(PNG.to_vec()),
+        );
+        assert!(d.old_image.is_some() && d.new_image.is_none());
+    }
+
+    #[test]
+    fn late_nul_still_counts_as_binary() {
+        let mut bytes = vec![b'a'; 9000];
+        bytes.push(0);
+        assert!(bytes_are_binary(&bytes));
+        assert!(!bytes_are_binary(b"plain text"));
     }
 
     #[test]
     fn oversized_image_is_binary_without_a_preview() {
         let mut big = PNG.to_vec();
         big.resize(10 * 1024 * 1024 + 1, 0);
-        let d = build_file_diff("huge.png".into(), None, Some(big));
+        let d = build_file_diff("huge.png".into(), None, None, Some(big));
         assert!(d.is_binary && d.new_image.is_none());
     }
 }

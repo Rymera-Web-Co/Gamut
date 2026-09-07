@@ -273,7 +273,9 @@ export function LocalReview({
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
               </div>
-            ) : diff.data.is_binary && isImagePath(selected.path) ? (
+            ) : diff.data.is_binary &&
+              (isImagePath(selected.path) ||
+                (selected.old_path != null && isImagePath(selected.old_path))) ? (
               <ImageDiff
                 diff={diff.data}
                 oldLabel={data?.base_label ?? "Before"}
