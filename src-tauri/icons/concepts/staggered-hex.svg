@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="mark" x1="512" y1="900" x2="512" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1597AE"/>
+      <stop offset="0.5" stop-color="#2BA591"/>
+      <stop offset="1" stop-color="#B2CE12"/>
+    </linearGradient>
+    <linearGradient id="navy" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102338"/>
+      <stop offset="1" stop-color="#0A1421"/>
+    </linearGradient>
+  </defs>
+  <path d="M512 76 L896 298 L896 726 L512 948 L128 726 L128 298 Z" fill="#7FC6DA" stroke="#7FC6DA" stroke-width="96" stroke-linejoin="round"/>
+  <path d="M512 76 L896 298 L896 726 L512 948 L128 726 L128 298 Z" fill="url(#navy)" stroke="url(#navy)" stroke-width="64" stroke-linejoin="round"/>
+  <g fill="none" stroke="url(#mark)" stroke-width="72" stroke-linecap="round">
+    <path d="M512 236 V801"/>
+    <path d="M512 417 L409 417 Q363 417 363 463 L363 576"/>
+    <path d="M512 601 L615 601 Q661 601 661 647 L661 732"/>
+  </g>
+  <g fill="url(#mark)">
+    <circle cx="512" cy="236" r="69"/>
+    <circle cx="512" cy="417" r="46"/>
+    <circle cx="363" cy="576" r="54"/>
+    <circle cx="512" cy="601" r="46"/>
+    <circle cx="661" cy="732" r="54"/>
+    <circle cx="512" cy="801" r="54"/>
+  </g>
+</svg>
