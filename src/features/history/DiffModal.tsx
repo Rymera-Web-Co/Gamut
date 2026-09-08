@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
 import { Loader2, X } from "lucide-react";
 
+import { ImageDiff } from "@/components/ImageDiff";
 import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import type { BlameHunk } from "@/lib/ipc";
+import { isImagePath } from "@/lib/images";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GAMUT_DARK } from "@/lib/monacoTheme";
 import { useDiffEditorPrefs, useSettings } from "@/lib/settings";
@@ -113,6 +115,9 @@ export function DiffModal({
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
             </div>
+          ) : diff.data?.is_binary &&
+            (isImagePath(path) || (oldPath != null && isImagePath(oldPath))) ? (
+            <ImageDiff diff={diff.data} oldLabel="Parent" newLabel="This commit" />
           ) : diff.data?.is_binary ? (
             <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
               Binary file — diff not shown.

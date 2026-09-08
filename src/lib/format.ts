@@ -97,3 +97,16 @@ export function formatTimestampMs(atMs: number): string {
 export function pathBasename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
+
+/** Human-readable byte size (`512 B`, `1.5 KB`, `12 MB`). */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let size = n / 1024;
+  let i = 0;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[i]}`;
+}

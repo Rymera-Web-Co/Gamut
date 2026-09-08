@@ -2,7 +2,9 @@ use git2::{DiffOptions, Oid, Repository};
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::history::{blob_text, files_from_diff, repo_path, FileChange, FileDiff};
+use crate::commands::history::{
+    blob_bytes, build_file_diff, files_from_diff, repo_path, FileChange, FileDiff,
+};
 use crate::commands::settings;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -145,36 +147,24 @@ pub async fn review_file_diff(
 
         let (old, new) = match source {
             ReviewSource::Working => {
-                let old = blob_text(&repo, &head_tree, old_lookup);
+                let old = blob_bytes(&repo, &head_tree, old_lookup);
                 // New content is the file on disk; missing means deleted.
-                let new = repo.workdir().and_then(|wd| {
-                    let full = wd.join(&path);
-                    std::fs::read(&full).ok().map(|bytes| {
-                        let is_binary = bytes.contains(&0);
-                        (String::from_utf8_lossy(&bytes).into_owned(), is_binary)
-                    })
-                });
+                let new = repo
+                    .workdir()
+                    .and_then(|wd| std::fs::read(wd.join(&path)).ok());
                 (old, new)
             }
             ReviewSource::Branch => {
                 let (base_oid, _) = resolve_base(&repo, base.as_deref(), &precedence)?;
                 let merge_base = repo.merge_base(head_commit.id(), base_oid)?;
                 let base_tree = repo.find_commit(merge_base)?.tree()?;
-                let old = blob_text(&repo, &base_tree, old_lookup);
-                let new = blob_text(&repo, &head_tree, &path);
+                let old = blob_bytes(&repo, &base_tree, old_lookup);
+                let new = blob_bytes(&repo, &head_tree, &path);
                 (old, new)
             }
         };
 
-        let is_binary = old.as_ref().map(|(_, b)| *b).unwrap_or(false)
-            || new.as_ref().map(|(_, b)| *b).unwrap_or(false);
-
-        Ok(FileDiff {
-            path,
-            old_text: old.map(|(t, _)| t),
-            new_text: new.map(|(t, _)| t),
-            is_binary,
-        })
+        Ok(build_file_diff(path, old_path.as_deref(), old, new))
     })
     .await
 }

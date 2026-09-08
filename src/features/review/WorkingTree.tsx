@@ -14,10 +14,12 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { FileActionsMenu, type FileMenuTarget } from "@/components/FileActionsMenu";
+import { ImageDiff } from "@/components/ImageDiff";
 import type { ContextMenuPosition } from "@/components/ui/context-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Panel, PanelGroup, ResizeHandle } from "@/components/ui/resizable";
 import type { FileChange } from "@/lib/ipc";
+import { isImagePath } from "@/lib/images";
 import { CodeDiffEditor } from "@/components/MonacoEditor";
 import { isDarkTheme, languageFor } from "@/lib/lang";
 import { GAMUT_DARK } from "@/lib/monacoTheme";
@@ -584,6 +586,14 @@ export function WorkingTree({ repoId }: { repoId: number }) {
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="animate-spin text-[var(--color-muted-foreground)]" />
               </div>
+            ) : diff.data.is_binary &&
+              (isImagePath(selected.file.path) ||
+                (selected.file.old_path != null && isImagePath(selected.file.old_path))) ? (
+              <ImageDiff
+                diff={diff.data}
+                oldLabel={selected.staged ? "HEAD" : "Index"}
+                newLabel={selected.staged ? "Index" : "Working tree"}
+              />
             ) : diff.data.is_binary ? (
               <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted-foreground)]">
                 Binary file — diff not shown.

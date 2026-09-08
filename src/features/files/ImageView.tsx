@@ -1,20 +1,9 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { useImageFile } from "./api";
+import { formatBytes } from "@/lib/format";
 
-/** Human-readable byte size for the preview caption. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB"];
-  let size = n / 1024;
-  let i = 0;
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[i]}`;
-}
+import { useImageFile } from "./api";
 
 /** Inline preview for an image file: the image scaled to fit the pane, with a
  * caption showing its name, on-disk size, and pixel dimensions. Replaces the

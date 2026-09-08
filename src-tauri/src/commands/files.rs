@@ -264,6 +264,34 @@ fn image_mime(ext: &str) -> &'static str {
     }
 }
 
+/// Lowercased extension of `rel_path`, or `""` when it has none.
+fn lower_ext(rel_path: &str) -> String {
+    Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Encode already-loaded image bytes as a `data:` URL for an `<img>` src.
+///
+/// Returns `None` when the path is not an allowed image type or the bytes
+/// exceed [`MAX_IMAGE_PREVIEW_BYTES`] — callers show a placeholder instead.
+/// Shared by the working-tree image preview and the diff views, which render
+/// the old/new sides of an image change (git blobs, not files on disk).
+pub(crate) fn image_data_url(rel_path: &str, bytes: &[u8]) -> Option<String> {
+    let ext = lower_ext(rel_path);
+    if !ALLOWED_IMAGE_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    if bytes.len() as u64 > MAX_IMAGE_PREVIEW_BYTES {
+        return None;
+    }
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:{};base64,{}", image_mime(&ext), encoded))
+}
+
 /// Read a working-tree image for inline preview, returning it as a `data:` URL.
 ///
 /// Deliberately separate from `read_file` (which flags images as binary and
@@ -280,11 +308,7 @@ pub fn read_image_file(
     let root = repo_path(&state, repo_id)?;
     let path = safe_join(&root, &rel_path)?;
 
-    let ext = Path::new(&rel_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = lower_ext(&rel_path);
     if !ALLOWED_IMAGE_EXTS.contains(&ext.as_str()) {
         return Err(AppError::Other("unsupported image file type".into()));
     }

@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::history::{
-    blob_text, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
+    blob_bytes, build_file_diff, files_from_diff, open_repo, repo_path, FileChange, FileDiff,
 };
 use crate::commands::sync::run_git;
 use crate::error::{AppError, AppResult};
@@ -19,15 +19,11 @@ pub struct WorktreeStatus {
     pub unstaged: Vec<FileChange>,
 }
 
-/// Read a path's blob from the index (stage 0) as UTF-8 text, plus binary flag.
-fn index_blob_text(repo: &Repository, index: &Index, path: &str) -> Option<(String, bool)> {
+/// Read a path's blob bytes from the index (stage 0); `None` when absent.
+fn index_blob_bytes(repo: &Repository, index: &Index, path: &str) -> Option<Vec<u8>> {
     let entry = index.get_path(Path::new(path), 0)?;
     let blob = repo.find_blob(entry.id).ok()?;
-    let is_binary = blob.is_binary();
-    Some((
-        String::from_utf8_lossy(blob.content()).into_owned(),
-        is_binary,
-    ))
+    Some(blob.content().to_vec())
 }
 
 /// Staged + unstaged changes for the working tree. Untracked files show up as
@@ -120,30 +116,19 @@ fn worktree_file_diff_at(
     let (old, new) = if staged {
         let old = head_tree
             .as_ref()
-            .and_then(|t| blob_text(&repo, t, old_lookup));
-        let new = index_blob_text(&repo, &index, path);
+            .and_then(|t| blob_bytes(&repo, t, old_lookup));
+        let new = index_blob_bytes(&repo, &index, path);
         (old, new)
     } else {
-        let old = index_blob_text(&repo, &index, old_lookup);
+        let old = index_blob_bytes(&repo, &index, old_lookup);
         // New content is the file on disk; missing means it was deleted.
-        let new = repo.workdir().and_then(|wd| {
-            std::fs::read(wd.join(path)).ok().map(|bytes| {
-                let is_binary = bytes.contains(&0);
-                (String::from_utf8_lossy(&bytes).into_owned(), is_binary)
-            })
-        });
+        let new = repo
+            .workdir()
+            .and_then(|wd| std::fs::read(wd.join(path)).ok());
         (old, new)
     };
 
-    let is_binary = old.as_ref().map(|(_, b)| *b).unwrap_or(false)
-        || new.as_ref().map(|(_, b)| *b).unwrap_or(false);
-
-    Ok(FileDiff {
-        path: path.to_string(),
-        old_text: old.map(|(t, _)| t),
-        new_text: new.map(|(t, _)| t),
-        is_binary,
-    })
+    Ok(build_file_diff(path.to_string(), old_path, old, new))
 }
 
 /// Stage paths (`git add` — handles new, modified, and deleted files).

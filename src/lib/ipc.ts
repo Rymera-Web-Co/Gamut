@@ -302,9 +302,16 @@ export interface CommitDetail {
 
 export interface FileDiff {
   path: string;
+  /** Lossy text per side; `null` when the side does not exist (added/deleted).
+   * Empty for binary sides. */
   old_text: string | null;
   new_text: string | null;
   is_binary: boolean;
+  /** `data:` URL per side for supported image types within the preview size
+   * cap — `null` when the side is missing, the file is not an image, or it is
+   * too large to preview. Set only when `is_binary` (SVG stays a text diff). */
+  old_image: string | null;
+  new_image: string | null;
 }
 
 export interface DirEntry {
