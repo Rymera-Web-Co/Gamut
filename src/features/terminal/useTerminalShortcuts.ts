@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 
+import { isMac } from "@/lib/shortcuts";
 import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
 
 /**
@@ -12,6 +13,32 @@ import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
  */
 export function isTabCycleChord(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Tab";
+}
+
+/**
+ * The close-active-tab chord (#338) — ⌘W on macOS, Ctrl+⇧+W elsewhere, matched
+ * on the physical `code` like every other terminal chord. Shared with the xterm
+ * custom key handler, which must return false for it: xterm would otherwise
+ * claim the chord and stop propagation, so the window listener would never see
+ * it (the same trap `isTabCycleChord` documents, #323).
+ *
+ * Both halves of the platform split are deliberate, because the chord is no
+ * longer scoped to the terminal pane:
+ *
+ *   - Off macOS the chord takes ⇧ so that plain Ctrl+W stays the shell's
+ *     delete-previous-word (readline `unix-word-rubout`) — a key people use
+ *     constantly while typing commands. Nothing was broken there to begin with:
+ *     only macOS gets a native menu, so only macOS ever had ⌘W close the
+ *     window.
+ *   - On macOS the chord is ⌘W alone, and Ctrl+W no longer closes a tab. The
+ *     old `metaKey || ctrlKey` match accepted it; now it goes back to the shell
+ *     there too.
+ *
+ * `mac` is injectable so tests can drive both platforms.
+ */
+export function isCloseTabChord(e: KeyboardEvent, mac = isMac()): boolean {
+  if (e.type !== "keydown" || e.code !== "KeyW" || e.altKey) return false;
+  return mac ? e.metaKey && !e.ctrlKey && !e.shiftKey : e.ctrlKey && e.shiftKey && !e.metaKey;
 }
 
 /** State + actions the terminal keyboard shortcuts operate on. */
@@ -28,6 +55,12 @@ export interface TerminalShortcutContext {
   activeGroupId: number | null;
   gt: GroupTerminals | undefined;
   activeTab: TermTab | undefined;
+  /**
+   * Whether the terminal view is on screen. The pane stays mounted and
+   * CSS-hidden when it is toggled away, so ⌘W — which fires app-wide — would
+   * otherwise close a tab the user cannot see (#338).
+   */
+  terminalOpen: boolean;
   /** Every group's id in sidebar order — the order the cycle chord walks. */
   groupOrder: number[];
   /** Every group's terminals, so the chord can reach tabs outside the active group. */
@@ -80,7 +113,7 @@ export function stepTerminalTab(
  * (not in the global hook) because closing a tab must also kill its panes' PTYs,
  * which only the pane component can do.
  *
- *   ⌘T new tab (opens the pane if hidden)   ⌘W close active tab
+ *   ⌘T new tab (opens the pane if hidden)   ⌘W / Ctrl+⇧+W close active tab
  *   ⌘⇧] / ⌘⇧[ next / prev terminal   Ctrl+Tab / Ctrl+⇧+Tab cycle terminals
  *   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split right   ⌘⇧D split down
  *
@@ -88,9 +121,11 @@ export function stepTerminalTab(
  * switch group when they step out of the active one; ⌘⌥1–9 stays an index into
  * the active group's own tab strip.
  *
- * Everything but ⌘T is scoped to the terminal pane (`hostRef`) having focus, so
- * it never steals keys from the editor (e.g. Monaco's own ⌘D). The live context
- * is read through a ref so the listener is registered once.
+ * Everything but ⌘T and ⌘W is scoped to the terminal pane (`hostRef`) having
+ * focus, so it never steals keys from the editor (e.g. Monaco's own ⌘D). Those
+ * two are app-wide on purpose: ⌘W must beat the native "Close Window"
+ * accelerator from every focus location (#338). The live context is read
+ * through a ref so the listener is registered once.
  */
 export function useTerminalShortcuts(
   hostRef: RefObject<HTMLDivElement | null>,
@@ -109,6 +144,31 @@ export function useTerminalShortcuts(
         s.handleNewTab();
         return;
       }
+      // ⌘W closes the active terminal tab from anywhere — deliberately outside
+      // the focus gate below (#338). Gated, it only ran while a terminal pane
+      // held focus; with focus in the sidebar, review pane, file tree or editor
+      // the key fell through to the native "Close Window" accelerator and took
+      // the whole window — every live terminal session — with it.
+      //
+      // The key is ALWAYS swallowed — with the terminal hidden, with no tab to
+      // close, on every platform — because that is what keeps the accelerator
+      // from firing; ⌘Q stays the way to quit. What varies is only whether a
+      // tab closes:
+      //   - the terminal view must be on screen. The pane stays mounted and
+      //     CSS-hidden when toggled away, so without this a press while reading
+      //     a diff would kill a session off-screen, with nothing to see.
+      //   - `repeat` events never close, so holding the chord closes one tab
+      //     rather than a burst (the close is async, so every repeat would
+      //     still read the same `activeTab`).
+      //
+      // This deliberately bypasses the `isTypingTarget` convention the global
+      // shortcuts follow: the chord must win over the native accelerator from
+      // every focus location, text fields included.
+      if (isCloseTabChord(e)) {
+        e.preventDefault();
+        if (!e.repeat && s.terminalOpen && s.activeTab) s.handleCloseTab(s.activeTab.id);
+        return;
+      }
       // The rest act on the focused terminal pane only.
       const focused = hostRef.current?.contains(document.activeElement) ?? false;
       if (!focused || s.activeGroupId == null) return;
@@ -122,13 +182,6 @@ export function useTerminalShortcuts(
           s.gt?.activeTabId,
           dir,
         );
-      if (!e.altKey && !e.shiftKey && e.code === "KeyW") {
-        // Always swallow ⌘W while the terminal is focused so it can't fall
-        // through to closing the Tauri window; no-op when there's no tab.
-        e.preventDefault();
-        if (s.activeTab) s.handleCloseTab(s.activeTab.id);
-        return;
-      }
       if (!e.altKey && !e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
         s.handleSplit("row");

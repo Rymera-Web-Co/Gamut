@@ -18,9 +18,109 @@ use tauri::{Manager, RunEvent, WindowEvent};
 
 use state::AppState;
 
+/// The macOS application menu — Tauri's default, minus every "Close Window"
+/// item (#338).
+///
+/// Tauri installs [`Menu::default`] on macOS whenever the builder supplies no
+/// menu of its own, and that menu carries `close_window` **twice**: once under
+/// `File` (its only item) and once under `Window`. Both take the ⌘W
+/// accelerator, and a native accelerator can fire without the webview ever
+/// seeing the key — for example while focus sits on the title bar. ⌘W then
+/// closed the whole window and killed every live terminal session, instead of
+/// closing the active terminal tab.
+///
+/// So this rebuilds the same menu without those two items: the `File` submenu
+/// disappears entirely (nothing else was in it) and `Window` keeps only
+/// minimize and maximize. Everything else — including ⌘Q, the clipboard items
+/// and Services — is reproduced exactly, because dropping the default menu
+/// wholesale would take those with it. The frontend closes the active terminal
+/// tab on ⌘W; ⌘Q still quits and the red button still closes the window.
+///
+/// Mirrors `Menu::default` as of tauri 2.11.2. Nothing enforces that, so keep
+/// the two in sync when upgrading Tauri: an item added upstream would simply go
+/// missing here, with no compile error and no failing test.
+#[cfg(target_os = "macos")]
+fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{
+        AboutMetadata, Menu, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
+    };
+
+    let pkg_info = app.package_info();
+    let config = app.config();
+    let about_metadata = AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        copyright: config.bundle.copyright.clone(),
+        authors: config.bundle.publisher.clone().map(|p| vec![p]),
+        ..Default::default()
+    };
+
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                pkg_info.name.clone(),
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?,
+            // No "File" submenu: `close_window` was the only item in it.
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?,
+            // The ids are the ones Tauri looks up to bind the native Window and
+            // Help menus, so they must survive the rebuild.
+            &Submenu::with_id_and_items(
+                app,
+                WINDOW_SUBMENU_ID,
+                "Window",
+                true,
+                &[
+                    &PredefinedMenuItem::minimize(app, None)?,
+                    &PredefinedMenuItem::maximize(app, None)?,
+                    // `close_window` omitted — it owns the ⌘W accelerator (#338).
+                ],
+            )?,
+            &Submenu::with_id_and_items(app, HELP_SUBMENU_ID, "Help", true, &[])?,
+        ],
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Replace the default macOS menu so no menu item owns ⌘W (#338). Only
+    // macOS gets a default menu from Tauri, so Linux and Windows keep having
+    // no menu bar at all.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_menu);
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())

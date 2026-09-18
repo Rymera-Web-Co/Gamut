@@ -2,8 +2,18 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TermTab } from "@/store/ui";
+import { isMac } from "@/lib/shortcuts";
+
+// jsdom reports `navigator.platform` as "", so the real `isMac()` is always
+// false — the macOS half of the close-tab chord would never run. Mock it so the
+// suite can drive both platforms (#338).
+vi.mock("@/lib/shortcuts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/shortcuts")>()),
+  isMac: vi.fn(() => false),
+}));
 import {
   flattenTerminalTabs,
+  isCloseTabChord,
   isTabCycleChord,
   stepTerminalTab,
   useTerminalShortcuts,
@@ -27,6 +37,7 @@ function makeCtx(overrides: Partial<TerminalShortcutContext> = {}): TerminalShor
     activeGroupId: 1,
     gt: { tabs: [tab], activeTabId: tab.id },
     activeTab: tab,
+    terminalOpen: true,
     groupOrder: [1],
     terminals: { 1: { tabs: [tab], activeTabId: tab.id } },
     ...overrides,
@@ -413,5 +424,293 @@ describe("terminal split shortcuts (#316)", () => {
     press("KeyD", { shiftKey: true });
 
     expect(ctx.handleSplit).not.toHaveBeenCalled();
+  });
+});
+
+describe.each([
+  { platform: "macOS", mac: true },
+  { platform: "Linux/Windows", mac: false },
+])("$platform: the close-tab chord closes the active terminal tab (#338)", ({ mac }) => {
+  beforeEach(() => {
+    vi.mocked(isMac).mockReturnValue(mac);
+  });
+
+  /**
+   * Press the close-tab chord — ⌘W on macOS, Ctrl+W elsewhere, matching what
+   * `isCloseTabChord` accepts on this platform. Cancelable so
+   * `defaultPrevented` reports the real `preventDefault()` call rather than a
+   * spy that would also pass on a non-cancelable event.
+   */
+  function closeTab(init: KeyboardEventInit = {}): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", {
+      code: "KeyW",
+      metaKey: mac,
+      ctrlKey: !mac,
+      shiftKey: !mac,
+      cancelable: true,
+      bubbles: true,
+      ...init,
+    });
+    window.dispatchEvent(e);
+    return e;
+  }
+
+  /**
+   * Focus an element outside `host`, attached to the document so it can take
+   * focus. Cleaned up in `afterEach` rather than by the caller, so a failed
+   * assertion cannot leave a focused node behind for the next test.
+   */
+  const outside: HTMLElement[] = [];
+  function focusOutside(tag: "button" | "input" | "textarea") {
+    const el = document.createElement(tag);
+    document.body.appendChild(el);
+    outside.push(el);
+    el.focus();
+    return el;
+  }
+
+  afterEach(() => {
+    for (const el of outside.splice(0)) el.remove();
+  });
+
+  it("closes the active tab exactly once with the terminal focused", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = closeTab();
+
+    // Exactly once: a second listener acting on the same chord would close two
+    // tabs per press and still satisfy a bare toHaveBeenCalledWith.
+    expect(ctx.handleCloseTab).toHaveBeenCalledTimes(1);
+    expect(ctx.handleCloseTab).toHaveBeenCalledWith("tab-1");
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("closes the active tab with nothing focused — the bug in #338", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    const e = closeTab();
+
+    expect(ctx.handleCloseTab).toHaveBeenCalledWith("tab-1");
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  // The sidebar, the review pane and the editor are all "some other element has
+  // focus" — including text fields, where the chord must still win.
+  it.each(["button", "input", "textarea"] as const)(
+    "closes the active tab with focus in a <%s> outside the terminal host",
+    (tag) => {
+      const ctx = makeCtx();
+      renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+      focusOutside(tag);
+
+      const e = closeTab();
+
+      expect(ctx.handleCloseTab).toHaveBeenCalledWith("tab-1");
+      expect(e.defaultPrevented).toBe(true);
+    },
+  );
+
+  it("does nothing — but still swallows the key — with no tabs open", () => {
+    const ctx = makeCtx({ gt: { tabs: [], activeTabId: null }, activeTab: undefined });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = closeTab();
+
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    // Swallowed even as a no-op: un-prevented, the key reaches the native
+    // "Close Window" accelerator and takes every terminal session with it.
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  // The branch sits above the `activeGroupId == null` gate, so these two pin
+  // that every "nothing to close" context state resolves through `activeTab`
+  // alone — and that none of them lets the key reach the window.
+  it("does nothing — but still swallows the key — with no active group", () => {
+    const ctx = makeCtx({ activeGroupId: null, gt: undefined, activeTab: undefined });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = closeTab();
+
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("does nothing when the active group has no tabs but another group does", () => {
+    const other = makeTabs(2);
+    const ctx = makeCtx({
+      activeGroupId: 1,
+      gt: { tabs: [], activeTabId: null },
+      activeTab: undefined,
+      groupOrder: [1, 2],
+      terminals: { 1: { tabs: [], activeTabId: null }, 2: { tabs: other, activeTabId: "tab-1" } },
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = closeTab();
+
+    // "The active tab" is the active group's own tab: a populated sibling group
+    // is not a candidate, and the chord never reaches into one.
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("closes nothing — but still swallows the key — while the terminal is hidden", () => {
+    const ctx = makeCtx({ terminalOpen: false });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = closeTab();
+
+    // The pane stays mounted and CSS-hidden, so without this gate the chord
+    // would kill an off-screen session with nothing on screen to show it.
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("closes one tab when the chord is held down", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    closeTab();
+    closeTab({ repeat: true });
+    closeTab({ repeat: true });
+
+    // The close is async, so every repeat would still read the same activeTab
+    // and kill a burst of sessions on one held keypress.
+    expect(ctx.handleCloseTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves plain Ctrl+W to the shell's delete-previous-word", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    // The reason the chord takes ⇧ off macOS: Ctrl+W must still reach the PTY
+    // as readline's delete-previous-word, on every platform.
+    const e = new KeyboardEvent("keydown", {
+      code: "KeyW",
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    window.dispatchEvent(e);
+
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("ignores the other platform's chord", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = new KeyboardEvent("keydown", {
+      code: "KeyW",
+      metaKey: !mac,
+      ctrlKey: mac,
+      shiftKey: mac,
+      cancelable: true,
+      bubbles: true,
+    });
+    window.dispatchEvent(e);
+
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("ignores the chord with ⌥ held, or with ⇧ on the wrong side of the split", () => {
+    const ctx = makeCtx();
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const alt = closeTab({ altKey: true });
+    // ⇧ is part of the chord off macOS, so flipping it is a near miss either way.
+    const shift = closeTab({ shiftKey: mac });
+
+    expect(ctx.handleCloseTab).not.toHaveBeenCalled();
+    expect(alt.defaultPrevented).toBe(false);
+    expect(shift.defaultPrevented).toBe(false);
+  });
+});
+
+describe("isCloseTabChord (#338)", () => {
+  const ev = (init: KeyboardEventInit, type = "keydown") =>
+    new KeyboardEvent(type, { code: "KeyW", ...init });
+
+  it("is ⌘W on macOS, where ⌘⇧W and Ctrl+W are not the chord", () => {
+    expect(isCloseTabChord(ev({ metaKey: true }), true)).toBe(true);
+    expect(isCloseTabChord(ev({ metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isCloseTabChord(ev({ ctrlKey: true }), true)).toBe(false);
+  });
+
+  it("is Ctrl+⇧+W elsewhere, and never plain Ctrl+W", () => {
+    expect(isCloseTabChord(ev({ ctrlKey: true, shiftKey: true }), false)).toBe(true);
+    // The whole point of the ⇧: this one belongs to the shell.
+    expect(isCloseTabChord(ev({ ctrlKey: true }), false)).toBe(false);
+    expect(isCloseTabChord(ev({ metaKey: true }), false)).toBe(false);
+  });
+
+  it("rejects near-miss chords on both platforms", () => {
+    for (const mac of [true, false]) {
+      const primary = mac ? { metaKey: true } : { ctrlKey: true, shiftKey: true };
+      expect(isCloseTabChord(ev({ ...primary, altKey: true }), mac)).toBe(false);
+      expect(isCloseTabChord(ev({ ...primary, metaKey: true, ctrlKey: true }), mac)).toBe(false);
+      expect(isCloseTabChord(ev({}), mac)).toBe(false);
+      // keyup/keypress must keep xterm's default handling, as for the cycle chord.
+      expect(isCloseTabChord(ev(primary, "keyup"), mac)).toBe(false);
+    }
+  });
+
+  it("matches only the W key", () => {
+    expect(
+      isCloseTabChord(new KeyboardEvent("keydown", { code: "KeyQ", metaKey: true }), true),
+    ).toBe(false);
+  });
+});
+
+describe("the pane-scoped chords keep their focus gate (#338)", () => {
+  /** Dispatch a cancelable chord on window and hand it back for inspection. */
+  function chord(init: KeyboardEventInit): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", { metaKey: true, cancelable: true, ...init });
+    window.dispatchEvent(e);
+    return e;
+  }
+
+  it("does nothing with focus outside the host — only ⌘T and ⌘W are app-wide", () => {
+    const tabs = makeTabs(2);
+    const ctx = oneGroupCtx(tabs, "tab-1");
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    const events = [
+      chord({ code: "KeyD" }),
+      chord({ code: "KeyD", shiftKey: true }),
+      chord({ code: "BracketRight", shiftKey: true }),
+      chord({ code: "BracketLeft", shiftKey: true }),
+      chord({ code: "Tab", metaKey: false, ctrlKey: true }),
+      chord({ code: "Digit1", altKey: true }),
+    ];
+
+    expect(ctx.handleSplit).not.toHaveBeenCalled();
+    expect(ctx.focusTerminal).not.toHaveBeenCalled();
+    expect(ctx.selectTerminalTab).not.toHaveBeenCalled();
+    for (const e of events) expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("still fires those chords with focus inside the host", () => {
+    const tabs = makeTabs(2);
+    const ctx = oneGroupCtx(tabs, "tab-1");
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    // The counterpart to the case above: without this, deleting every
+    // pane-scoped handler would leave that one green.
+    chord({ code: "KeyD" });
+    chord({ code: "KeyD", shiftKey: true });
+    chord({ code: "BracketRight", shiftKey: true });
+    chord({ code: "Digit1", altKey: true });
+
+    expect(ctx.handleSplit).toHaveBeenCalledWith("row");
+    expect(ctx.handleSplit).toHaveBeenCalledWith("column");
+    expect(ctx.focusTerminal).toHaveBeenCalledWith(1, "tab-2", "term-2");
+    expect(ctx.selectTerminalTab).toHaveBeenCalledWith(1, "tab-1");
   });
 });

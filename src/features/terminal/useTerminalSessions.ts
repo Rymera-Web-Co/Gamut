@@ -28,7 +28,7 @@ import { registerPathLinkProvider, stripLineSuffix } from "./pathLinks";
 import { setPendingCommand, takePendingCommand } from "./pendingCommands";
 import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
-import { isTabCycleChord } from "./useTerminalShortcuts";
+import { isCloseTabChord, isTabCycleChord } from "./useTerminalShortcuts";
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
@@ -493,6 +493,12 @@ export function useTerminalSessions({
       // and stop propagation, so the tab-cycle listener in
       // useTerminalShortcuts would never run (#323). False lets it bubble.
       if (isTabCycleChord(e)) return false;
+      // ⌘W / Ctrl+⇧+W closes the active terminal tab (#338). Same reason as
+      // the cycle chord above: xterm would otherwise claim the chord and stop
+      // propagation, so the window listener in useTerminalShortcuts would never
+      // see it. False lets it bubble. Plain Ctrl+W is deliberately NOT this
+      // chord, so it still reaches the PTY as delete-previous-word.
+      if (isCloseTabChord(e)) return false;
       if (e.type !== "keydown") return true;
       // Swallow the chord and write its byte sequence straight to the PTY.
       const sendSeq = (seq: string) => {
