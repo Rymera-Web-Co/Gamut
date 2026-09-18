@@ -34,7 +34,7 @@ function makeCtx(overrides: Partial<TerminalShortcutContext> = {}): TerminalShor
     handleCloseTab: vi.fn(),
     selectTerminalTab: vi.fn(),
     focusTerminal: vi.fn(),
-    activeGroupId: 1,
+    viewGroupId: 1,
     gt: { tabs: [tab], activeTabId: tab.id },
     activeTab: tab,
     terminalOpen: true,
@@ -251,12 +251,35 @@ describe("flattenTerminalTabs / stepTerminalTab (#328)", () => {
     expect(stepTerminalTab(ring, 1, "tab-1", 1)).toBeNull();
   });
 
-  it("returns null when the active tab is not in the ring", () => {
+  // #339: the position now comes from the VIEWED group, which is null before
+  // the first focus and has a null `activeTabId` when it holds no tabs. A null
+  // here would dead-end Ctrl+Tab forever, so an unmatched position enters the
+  // ring at its first tab instead.
+  it("enters the ring from the end the step heads away from, with no position", () => {
     const a = makeTabs(2);
     const ring = flattenTerminalTabs([1], { 1: { tabs: a, activeTabId: a[0].id } });
 
-    expect(stepTerminalTab(ring, 7, "tab-1", 1)).toBeNull();
-    expect(stepTerminalTab(ring, 1, "nope", 1)).toBeNull();
+    expect(stepTerminalTab(ring, 7, "tab-1", 1)).toEqual(ring[0]);
+    expect(stepTerminalTab(ring, 1, "nope", 1)).toEqual(ring[0]);
+    expect(stepTerminalTab(ring, null, null, 1)).toEqual(ring[0]);
+    // Backwards enters from the far end, so Ctrl+⇧+Tab's first press walks
+    // back rather than forward.
+    expect(stepTerminalTab(ring, null, null, -1)).toEqual(ring[ring.length - 1]);
+    expect(stepTerminalTab(ring, 7, "tab-1", -1)).toEqual(ring[ring.length - 1]);
+  });
+
+  it("returns null for an empty ring, whatever the position", () => {
+    expect(stepTerminalTab([], 1, "tab-1", 1)).toBeNull();
+    expect(stepTerminalTab([], null, null, 1)).toBeNull();
+  });
+
+  it("enters a single-tab ring from an unmatched position", () => {
+    const ring = flattenTerminalTabs([1], { 1: { tabs: makeTabs(1), activeTabId: "tab-1" } });
+
+    // One tab and nowhere to step from is still a tab worth showing; one tab
+    // that is already the position stays a no-op.
+    expect(stepTerminalTab(ring, null, null, 1)).toEqual(ring[0]);
+    expect(stepTerminalTab(ring, 1, "tab-1", 1)).toBeNull();
   });
 
   it("distinguishes same-named tab ids in different groups", () => {
@@ -525,11 +548,11 @@ describe.each([
     expect(e.defaultPrevented).toBe(true);
   });
 
-  // The branch sits above the `activeGroupId == null` gate, so these two pin
+  // The branch sits above the `viewGroupId == null` gate, so these two pin
   // that every "nothing to close" context state resolves through `activeTab`
   // alone — and that none of them lets the key reach the window.
-  it("does nothing — but still swallows the key — with no active group", () => {
-    const ctx = makeCtx({ activeGroupId: null, gt: undefined, activeTab: undefined });
+  it("does nothing — but still swallows the key — with no viewed group", () => {
+    const ctx = makeCtx({ viewGroupId: null, gt: undefined, activeTab: undefined });
     renderHook(() => useTerminalShortcuts({ current: host }, ctx));
 
     const e = closeTab();
@@ -538,10 +561,10 @@ describe.each([
     expect(e.defaultPrevented).toBe(true);
   });
 
-  it("does nothing when the active group has no tabs but another group does", () => {
+  it("does nothing when the viewed group has no tabs but another group does", () => {
     const other = makeTabs(2);
     const ctx = makeCtx({
-      activeGroupId: 1,
+      viewGroupId: 1,
       gt: { tabs: [], activeTabId: null },
       activeTab: undefined,
       groupOrder: [1, 2],
@@ -551,7 +574,7 @@ describe.each([
 
     const e = closeTab();
 
-    // "The active tab" is the active group's own tab: a populated sibling group
+    // "The active tab" is the viewed group's own tab: a populated sibling group
     // is not a candidate, and the chord never reaches into one.
     expect(ctx.handleCloseTab).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(true);
@@ -712,5 +735,126 @@ describe("the pane-scoped chords keep their focus gate (#338)", () => {
     expect(ctx.handleSplit).toHaveBeenCalledWith("column");
     expect(ctx.focusTerminal).toHaveBeenCalledWith(1, "tab-2", "term-2");
     expect(ctx.selectTerminalTab).toHaveBeenCalledWith(1, "tab-1");
+  });
+});
+
+// The terminal view moves independently of the active group (#339), so every
+// pane-scoped chord must act on the group whose session is on screen. The
+// context carries that group as `viewGroupId`; `gt` / `activeTab` come from the
+// same group, exactly as TerminalPane derives them.
+describe("the pane-scoped chords act on the viewed group (#339)", () => {
+  /** Group 1 active + two tabs; group 2 viewed + two tabs, first one active. */
+  function viewingGroup2() {
+    const g1 = makeTabs(2);
+    const g2 = makeTabs(2).map((t) => ({
+      ...t,
+      id: `g2-${t.id}`,
+      panes: t.panes.map((p) => ({ ...p, id: `g2-${p.id}` })),
+      activePaneId: `g2-${t.activePaneId}`,
+    }));
+    const terminals = {
+      1: { tabs: g1, activeTabId: g1[0].id },
+      2: { tabs: g2, activeTabId: g2[0].id },
+    };
+    return { g1, g2, terminals };
+  }
+
+  function key(init: KeyboardEventInit): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", { cancelable: true, bubbles: true, ...init });
+    window.dispatchEvent(e);
+    return e;
+  }
+
+  beforeEach(() => {
+    vi.mocked(isMac).mockReturnValue(false);
+  });
+
+  it("Ctrl+Tab steps from the viewed group's tab, not the active group's", () => {
+    const { g2, terminals } = viewingGroup2();
+    const ctx = makeCtx({
+      viewGroupId: 2,
+      gt: terminals[2],
+      activeTab: g2[0],
+      groupOrder: [1, 2],
+      terminals,
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    key({ code: "Tab", ctrlKey: true });
+
+    // Group 1's active tab is tab-1, so a coupled ring would have landed on
+    // tab-2 of group 1. The viewed ring starts at g2's tab-1 instead.
+    expect(ctx.focusTerminal).toHaveBeenCalledWith(2, g2[1].id, g2[1].activePaneId);
+  });
+
+  it("steps again from the tab the previous press landed on", () => {
+    const { g1, g2, terminals } = viewingGroup2();
+    // The state after the press above: the view is on g2's last tab.
+    const advanced = { 1: terminals[1], 2: { tabs: g2, activeTabId: g2[1].id } };
+    const ctx = makeCtx({
+      viewGroupId: 2,
+      gt: advanced[2],
+      activeTab: g2[1],
+      groupOrder: [1, 2],
+      terminals: advanced,
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    key({ code: "Tab", ctrlKey: true });
+
+    // Last tab of the last group wraps to the very first — the ring still walks
+    // every group, only the terminal view moves with it.
+    expect(ctx.focusTerminal).toHaveBeenCalledWith(1, g1[0].id, g1[0].activePaneId);
+  });
+
+  it("Ctrl+Shift+Tab steps backwards from the viewed group's tab", () => {
+    const { g1, g2, terminals } = viewingGroup2();
+    const ctx = makeCtx({
+      viewGroupId: 2,
+      gt: terminals[2],
+      activeTab: g2[0],
+      groupOrder: [1, 2],
+      terminals,
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    key({ code: "Tab", ctrlKey: true, shiftKey: true });
+
+    expect(ctx.focusTerminal).toHaveBeenCalledWith(1, g1[1].id, g1[1].activePaneId);
+  });
+
+  it("⌘⌥1-9 indexes the viewed group's tabs", () => {
+    const { g2, terminals } = viewingGroup2();
+    const ctx = makeCtx({
+      viewGroupId: 2,
+      gt: terminals[2],
+      activeTab: g2[0],
+      groupOrder: [1, 2],
+      terminals,
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    const e = key({ code: "Digit2", metaKey: true, altKey: true });
+
+    // Group id 2, and g2's own second tab: the rename to `viewGroupId` is what
+    // makes it impossible to select a viewed tab id against the active group.
+    expect(ctx.selectTerminalTab).toHaveBeenCalledWith(2, g2[1].id);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("the close-tab chord closes the viewed group's active tab", () => {
+    const { g2, terminals } = viewingGroup2();
+    const ctx = makeCtx({
+      viewGroupId: 2,
+      gt: terminals[2],
+      activeTab: g2[0],
+      groupOrder: [1, 2],
+      terminals,
+    });
+    renderHook(() => useTerminalShortcuts({ current: host }, ctx));
+
+    key({ code: "KeyW", ctrlKey: true, shiftKey: true });
+
+    expect(ctx.handleCloseTab).toHaveBeenCalledWith(g2[0].id);
   });
 });

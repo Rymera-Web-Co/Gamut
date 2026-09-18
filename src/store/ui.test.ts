@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { DEFAULTS, useSettings } from "@/lib/settings";
 import { parseStoredTerminals, useUiStore } from "./ui";
 
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
@@ -337,5 +338,283 @@ describe("showView (intentional workspace navigation)", () => {
     const s = useUiStore.getState();
     expect(s.view).toBe("files");
     expect(s.terminalOpen).toBe(true);
+  });
+});
+
+// #339: the terminal view and the workspace move independently. `focusTerminal`
+// is a "reveal this terminal" intent from the sidebar rail, the palette, the
+// cycle chords and the notification click — none of them asks for the workspace
+// to jump. `terminalFollowGroup` opts back into the old coupled behaviour.
+describe("terminal view group decoupling (#339)", () => {
+  /** Two groups, one tab each, so a focus can cross a group boundary. */
+  function seedTerminals() {
+    return {
+      1: {
+        activeTabId: "tab-1",
+        tabs: [
+          {
+            id: "tab-1",
+            title: "g1",
+            panes: [{ id: "term-1", cwd: "/a" }],
+            activePaneId: "term-1",
+          },
+        ],
+      },
+      2: {
+        activeTabId: "tab-2",
+        tabs: [
+          {
+            id: "tab-2",
+            title: "g2",
+            panes: [{ id: "term-2", cwd: "/b" }],
+            activePaneId: "term-2",
+          },
+        ],
+      },
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    useSettings.setState({ values: { ...DEFAULTS } });
+    useUiStore.setState({
+      activeGroupId: 1,
+      terminalViewGroupId: 1,
+      activeRepoId: 11,
+      activeWorktreePath: null,
+      selectedPrNumber: 4,
+      view: "history",
+      groupSelections: {},
+      terminalOpen: false,
+      terminalFocusNonce: 0,
+      terminals: seedTerminals(),
+    });
+  });
+
+  describe("focusTerminal with terminalFollowGroup off (the default)", () => {
+    it("leaves the active group where it is (A1) and moves the view alone (A2)", () => {
+      useUiStore.getState().focusTerminal(2, "tab-2", "term-2");
+
+      const s = useUiStore.getState();
+      expect(s.activeGroupId).toBe(1);
+      expect(s.terminalViewGroupId).toBe(2);
+    });
+
+    it("leaves every other workspace selection byte-identical (A3)", () => {
+      const before = useUiStore.getState();
+      const snapshot = {
+        activeRepoId: before.activeRepoId,
+        view: before.view,
+        activeWorktreePath: before.activeWorktreePath,
+        selectedPrNumber: before.selectedPrNumber,
+        groupSelections: before.groupSelections,
+      };
+
+      useUiStore.getState().focusTerminal(2, "tab-2", "term-2");
+
+      const after = useUiStore.getState();
+      expect(after.activeRepoId).toBe(snapshot.activeRepoId);
+      expect(after.view).toBe(snapshot.view);
+      expect(after.activeWorktreePath).toBe(snapshot.activeWorktreePath);
+      expect(after.selectedPrNumber).toBe(snapshot.selectedPrNumber);
+      // Same object, not merely equal: setActiveGroup would have rewritten the
+      // outgoing group's remembered repo/view into a fresh map.
+      expect(after.groupSelections).toBe(snapshot.groupSelections);
+    });
+
+    it("still opens the terminal, selects the tab, sets the pane and bumps the nonce (A5)", () => {
+      useUiStore.setState({
+        terminals: {
+          ...seedTerminals(),
+          2: {
+            activeTabId: "tab-2",
+            tabs: [
+              {
+                id: "tab-2",
+                title: "g2",
+                panes: [
+                  { id: "term-2", cwd: "/b" },
+                  { id: "term-3", cwd: "/b" },
+                ],
+                activePaneId: "term-2",
+              },
+            ],
+          },
+        },
+      });
+
+      useUiStore.getState().focusTerminal(2, "tab-2", "term-3");
+
+      const s = useUiStore.getState();
+      expect(s.terminalOpen).toBe(true);
+      expect(s.terminals[2].activeTabId).toBe("tab-2");
+      expect(s.terminals[2].tabs[0].activePaneId).toBe("term-3");
+      expect(s.terminalFocusNonce).toBe(1);
+    });
+  });
+
+  describe("focusTerminal with terminalFollowGroup on", () => {
+    beforeEach(() => {
+      useSettings.setState({ values: { ...DEFAULTS, terminalFollowGroup: true } });
+    });
+
+    it("moves the active group and the view together (A4)", () => {
+      useUiStore.getState().focusTerminal(2, "tab-2", "term-2");
+
+      const s = useUiStore.getState();
+      expect(s.activeGroupId).toBe(2);
+      expect(s.terminalViewGroupId).toBe(2);
+    });
+
+    it("still opens the terminal, selects the tab and bumps the nonce (A5)", () => {
+      useUiStore.getState().focusTerminal(2, "tab-2", "term-2");
+
+      const s = useUiStore.getState();
+      expect(s.terminalOpen).toBe(true);
+      expect(s.terminals[2].activeTabId).toBe("tab-2");
+      expect(s.terminals[2].tabs[0].activePaneId).toBe("term-2");
+      expect(s.terminalFocusNonce).toBe(1);
+    });
+  });
+
+  describe("setActiveGroup drags the terminal view with it (A6)", () => {
+    it("moves the view when the group changes", () => {
+      useUiStore.getState().setActiveGroup(2);
+
+      const s = useUiStore.getState();
+      expect(s.activeGroupId).toBe(2);
+      expect(s.terminalViewGroupId).toBe(2);
+    });
+
+    it("pulls a stranded view back even when the group is already active", () => {
+      // The user is viewing group 2's terminal while group 1 is active, then
+      // clicks group 1 in the sidebar to get back. Without this, the early
+      // return in setActiveGroup makes that click do nothing at all.
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+      useUiStore.getState().setActiveGroup(1);
+
+      const s = useUiStore.getState();
+      expect(s.activeGroupId).toBe(1);
+      expect(s.terminalViewGroupId).toBe(1);
+    });
+
+    it("leaves the rest of the state alone on the already-active path", () => {
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+      const before = useUiStore.getState();
+
+      useUiStore.getState().setActiveGroup(1);
+
+      const after = useUiStore.getState();
+      expect(after.activeRepoId).toBe(before.activeRepoId);
+      expect(after.view).toBe(before.view);
+      expect(after.selectedPrNumber).toBe(before.selectedPrNumber);
+      expect(after.groupSelections).toBe(before.groupSelections);
+    });
+  });
+
+  describe("addTerminalTab pulls the view to the group it reveals a tab in", () => {
+    // Regression guard: the view moves independently of the active group now,
+    // so every "New terminal" affordance that targets a group other than the
+    // viewed one — the rail's +, "Open terminal here" on a repo/worktree row,
+    // the file-tree folder menu, ⌘T — would otherwise spawn a live shell out
+    // of sight and look like it did nothing at all.
+    it("moves the view to the new tab's group", () => {
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+      useUiStore.getState().addTerminalTab(1, "/a", "fresh");
+
+      const s = useUiStore.getState();
+      expect(s.terminalViewGroupId).toBe(1);
+      expect(s.terminalOpen).toBe(true);
+      const added = s.terminals[1].tabs[s.terminals[1].tabs.length - 1];
+      expect(added.title).toBe("fresh");
+      expect(s.terminals[1].activeTabId).toBe(added.id);
+    });
+
+    it("leaves the view put for a background tab", () => {
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+      useUiStore.getState().addTerminalTab(1, "/a", "quiet", { background: true });
+
+      const s = useUiStore.getState();
+      // Not stealing the user's view is the whole point of the flag.
+      expect(s.terminalViewGroupId).toBe(2);
+      expect(s.terminalOpen).toBe(false);
+      expect(s.terminals[1].activeTabId).toBe("tab-1");
+    });
+  });
+
+  describe("closing the viewed group's last tab snaps the view back (A22)", () => {
+    it("snaps back when the viewed group is not the active group", () => {
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+      useUiStore.getState().closeTerminalTab(2, "tab-2");
+
+      const s = useUiStore.getState();
+      expect(s.terminals[2].tabs).toEqual([]);
+      // Otherwise the pane strands on an empty group whose "New terminal"
+      // button targets a different one, with no rail row left to get back from.
+      expect(s.terminalViewGroupId).toBe(1);
+    });
+
+    it("snaps back when the last pane of the last tab closes", () => {
+      useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+      useUiStore.getState().closeTerminalPane(2, "tab-2", "term-2");
+
+      const s = useUiStore.getState();
+      expect(s.terminals[2].tabs).toEqual([]);
+      expect(s.terminalViewGroupId).toBe(1);
+    });
+
+    it("leaves the view alone while the viewed group still has tabs", () => {
+      useUiStore.setState({
+        activeGroupId: 1,
+        terminalViewGroupId: 2,
+        terminals: {
+          ...seedTerminals(),
+          2: {
+            activeTabId: "tab-2",
+            tabs: [
+              {
+                id: "tab-2",
+                title: "g2",
+                panes: [{ id: "term-2", cwd: "/b" }],
+                activePaneId: "term-2",
+              },
+              {
+                id: "tab-3",
+                title: "g2b",
+                panes: [{ id: "term-3", cwd: "/b" }],
+                activePaneId: "term-3",
+              },
+            ],
+          },
+        },
+      });
+
+      useUiStore.getState().closeTerminalTab(2, "tab-2");
+
+      expect(useUiStore.getState().terminalViewGroupId).toBe(2);
+    });
+
+    it("leaves the view alone when the emptied group is the active one", () => {
+      useUiStore.setState({ activeGroupId: 2, terminalViewGroupId: 2 });
+
+      useUiStore.getState().closeTerminalTab(2, "tab-2");
+
+      // Nothing to snap to: the pane's "New terminal" button already targets
+      // this group, so the empty state is the correct thing to show.
+      expect(useUiStore.getState().terminalViewGroupId).toBe(2);
+    });
+  });
+
+  it("setTerminalViewGroup moves the view without touching the active group", () => {
+    useUiStore.getState().setTerminalViewGroup(2);
+
+    const s = useUiStore.getState();
+    expect(s.terminalViewGroupId).toBe(2);
+    expect(s.activeGroupId).toBe(1);
   });
 });

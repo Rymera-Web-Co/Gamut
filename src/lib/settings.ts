@@ -58,6 +58,12 @@ export interface Settings {
   // Reopen the terminal layout (tabs/splits/cwds) on launch, respawning a fresh
   // shell per pane at its saved directory (#155). Off → start with a clean slate.
   terminalRestoreSessions: boolean;
+  // Make the active terminal drag the active group with it (#339). Off → the
+  // terminal view and the workspace are independent: focusing a terminal that
+  // belongs to another group shows that terminal without moving the active
+  // group, repo or main view, so you can browse one group while working in a
+  // terminal from another. On → the old coupled behaviour.
+  terminalFollowGroup: boolean;
   // Render terminals with xterm's WebGL (GPU) renderer (#211). The DOM renderer
   // is the fallback. Defaults on for macOS/Windows (where WKWebView/WebView2
   // handle WebGL cleanly) but off on Linux, whose WebKitGTK + GPU-driver combos
@@ -176,6 +182,9 @@ export const DEFAULTS: Settings = {
   // On by default: reopening yesterday's terminal layout is the point of the
   // feature; opt out for a clean slate each launch.
   terminalRestoreSessions: true,
+  // Off by default: switching terminals must not move the active group (#339).
+  // Opt in to get the old coupled behaviour back.
+  terminalFollowGroup: false,
   // On for macOS/Windows (preserves #211), off on Linux where the WebKitGTK
   // WebGL path renders stale cells / lags on some GPU drivers. Users can flip
   // it either way; this is only the default.

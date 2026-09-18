@@ -27,6 +27,7 @@ const splitButtonClass =
  */
 export function TerminalHeader() {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -39,9 +40,13 @@ export function TerminalHeader() {
 
   const groups = useGroups();
   const repos = useRepos();
-  const group = (groups.data ?? []).find((g) => g.id === activeGroupId);
+  // The header describes the session actually on screen, which may belong to a
+  // group that is not the active one (#339) — the breadcrumb is what names that
+  // group, since the pane has no tab strip of its own.
+  const viewGroupId = terminalViewGroupId ?? activeGroupId;
+  const group = (groups.data ?? []).find((g) => g.id === viewGroupId);
 
-  const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
+  const gt = viewGroupId != null ? terminals[viewGroupId] : undefined;
   const tab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
   const folder = cwd ? pathBasename(cwd) : undefined;
@@ -62,25 +67,26 @@ export function TerminalHeader() {
   useEffect(() => setEditing(false), [tab?.id]);
 
   function commitRename() {
-    if (activeGroupId != null && tab) renameTerminalTab(activeGroupId, tab.id, draft);
+    if (viewGroupId != null && tab) renameTerminalTab(viewGroupId, tab.id, draft);
     setEditing(false);
   }
 
-  const splitDisabled = !tab || !cwd || activeGroupId == null;
+  const splitDisabled = !tab || !cwd || viewGroupId == null;
   function splitInto(direction: SplitDirection) {
-    if (activeGroupId == null || !tab || !cwd) return;
-    splitTerminal(activeGroupId, cwd, direction);
+    if (viewGroupId == null || !tab || !cwd) return;
+    splitTerminal(viewGroupId, cwd, direction);
   }
 
   // Jump back to the repo workspace, selecting the repo the session is rooted
   // in when we can resolve one. The repo may have left the session's group
   // since the terminal opened — switch to a group that actually contains it
   // (the shared groupToReveal rule) so the reconciler can't silently swap in
-  // a different repo.
+  // a different repo. The preferred group is the session's own (#339): that is
+  // the group the breadcrumb names, and the control reads as "open THIS".
   function openWorkspace(target?: Repo) {
     if (target) {
-      const activeGroup = (groups.data ?? []).find((g) => g.id === activeGroupId);
-      const groupId = groupToReveal(target, activeGroup, groups.data ?? []);
+      const sessionGroup = (groups.data ?? []).find((g) => g.id === viewGroupId);
+      const groupId = groupToReveal(target, sessionGroup, groups.data ?? []);
       if (groupId != null) setActiveGroup(groupId);
       setActiveRepo(target.id);
       ipc.touchRepo(target.id);

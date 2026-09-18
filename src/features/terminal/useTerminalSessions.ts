@@ -317,7 +317,9 @@ interface SessionsOptions {
   /** The pane the user is actually viewing (focused pane of the active tab). */
   visiblePaneId: string | null;
   terminalFocusNonce: number;
-  activeGroupId: number | null;
+  /** The group whose terminals are on screen — not necessarily the active
+   * group (#339). Routes `setActivePane` to the record the user is looking at. */
+  viewGroupId: number | null;
   markTermActivity: (paneId: string, kind: TermActivityKind) => void;
   clearTermActivity: (paneId: string) => void;
   setActivePane: (groupId: number, tabId: string, paneId: string) => void;
@@ -343,7 +345,7 @@ export function useTerminalSessions({
   theme,
   visiblePaneId,
   terminalFocusNonce,
-  activeGroupId,
+  viewGroupId,
   markTermActivity,
   clearTermActivity,
   setActivePane,
@@ -362,8 +364,8 @@ export function useTerminalSessions({
   const bgQueue = useUiStore((s) => s.terminalBgQueue);
 
   // Keep the latest group/tab around for the imperative click handlers.
-  const ctxRef = useRef({ groupId: activeGroupId, tabId: activeTab?.id });
-  ctxRef.current = { groupId: activeGroupId, tabId: activeTab?.id };
+  const ctxRef = useRef({ groupId: viewGroupId, tabId: activeTab?.id });
+  ctxRef.current = { groupId: viewGroupId, tabId: activeTab?.id };
 
   // The one pane the user is actually looking at. Only this pane is exempt from
   // activity badging (no self-badging) and is auto-cleared when it comes in view.

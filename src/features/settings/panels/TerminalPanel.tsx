@@ -18,6 +18,7 @@ export function TerminalPanel() {
   const [terminalGpuRenderer, setGpuRenderer] = useSetting("terminalGpuRenderer");
   const [newTabDir, setNewTabDir] = useSetting("terminalNewTabDir");
   const [restoreSessions, setRestoreSessions] = useSetting("terminalRestoreSessions");
+  const [followGroup, setFollowGroup] = useSetting("terminalFollowGroup");
 
   return (
     <div>
@@ -76,6 +77,13 @@ export function TerminalPanel() {
         hint="Reopen your terminal tabs and splits, respawning a fresh shell in each saved directory. Scrollback and running processes aren't restored."
       >
         <Toggle checked={restoreSessions} onChange={setRestoreSessions} />
+      </Field>
+      <Divider />
+      <Field
+        label="Follow terminal into its group"
+        hint="Switch the active group when you focus a terminal from another group. Off keeps the sidebar, repo list and main view where they are."
+      >
+        <Toggle checked={followGroup} onChange={setFollowGroup} />
       </Field>
     </div>
   );
