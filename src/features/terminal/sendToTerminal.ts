@@ -61,15 +61,24 @@ export function filePathsForShell(paths: string[]): string {
  * carriage return, so it stages at the cursor and can be wrapped in a command
  * before the user hits Enter (issue #199).
  *
- * Targets the active tab's active pane; if no terminal is open at all, one is
- * opened in the active group first. The text is queued via the pending-command
- * store and the pane is revealed: the session manager drains the queue whether
- * the PTY is already live or spawns on reveal, so there's never a double write.
+ * Prefers a terminal belonging to the active group — the text is usually a path
+ * from the repo the user is browsing, and the terminal list spans every group
+ * now, so targeting the globally-active tab could stage that path in a shell
+ * rooted in a different repo. Falls back to the globally-active tab when the
+ * active group has no terminal; if none is open at all, one is opened in the
+ * active group first. The text is queued via the pending-command store and the
+ * pane is revealed: the session manager drains the queue whether the PTY is
+ * already live or spawns on reveal, so there's never a double write.
  */
 export function sendToActiveTerminal(text: string): void {
   const ui = useUiStore.getState();
   const { tabs, activeTabId } = ui.terminals;
-  const tab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+  const inGroup = tabs.filter((t) => t.groupId === ui.activeGroupId);
+  const tab =
+    inGroup.find((t) => t.id === activeTabId) ??
+    inGroup[0] ??
+    tabs.find((t) => t.id === activeTabId) ??
+    tabs[0];
 
   let tabId: string;
   let paneId: string;

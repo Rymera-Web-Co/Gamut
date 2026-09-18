@@ -50,11 +50,13 @@ function asView(v: string | undefined): View | null {
 
 /**
  * Open a terminal tab for a repo and (optionally) run a command in it — the
- * `term` control command. The integrated terminal is per-group, so we open it in
- * a group the repo is actually visible in and switch the view there; otherwise the
- * active-repo reconciler would revert the selection and the tab would be
- * stranded under a group that doesn't list the repo. The command is queued
- * against the new pane and typed in once its PTY spawns (see `pendingCommands`).
+ * `term` control command. The rail lists every terminal at once, but a tab still
+ * records the group it was opened in, so we open it under a group the repo is
+ * actually visible in; otherwise the active-repo reconciler would revert the
+ * selection and the tab would name a group that doesn't list the repo — and the
+ * `--name` reuse lookup, which is scoped per group, would miss it next time. The
+ * command is queued against the new pane and typed in once its PTY spawns (see
+ * `pendingCommands`).
  */
 async function openTerm(nav: UiNav): Promise<void> {
   const ui = useUiStore.getState();

@@ -169,6 +169,9 @@ function isValidTab(t: unknown): t is TermTab {
   const tab = t as TermTab;
   return (
     typeof tab.id === "string" &&
+    // Absent on a legacy per-group blob, where the bucket key supplies it — the
+    // caller stamps that before this runs on the flat shape.
+    (tab.groupId === undefined || Number.isFinite(tab.groupId)) &&
     typeof tab.title === "string" &&
     (tab.customTitle === undefined || typeof tab.customTitle === "string") &&
     (tab.rowSizes === undefined ||
@@ -467,6 +470,13 @@ interface UiState {
   closeTerminalTab: (tabId: string) => void;
   /** Remove one split pane; removes the tab if it was the last pane. */
   closeTerminalPane: (tabId: string, paneId: string) => void;
+  /**
+   * Re-home every terminal whose group no longer exists onto `fallbackGroupId`.
+   * A deleted group used to take its terminals off every surface with it; the
+   * list is global now, so without this the tab keeps a live PTY and stays
+   * reachable by the cycle chords while showing no group — and no way back.
+   */
+  reparentOrphanTerminals: (liveGroupIds: number[], fallbackGroupId: number) => void;
   /** Flag a hidden pane as having unseen activity (escalating by salience). */
   markTermActivity: (paneId: string, kind: TermActivityKind) => void;
   /** Clear a pane's unseen-activity flag (on focus or when the pane is gone). */
@@ -777,6 +787,15 @@ export const useUiStore = create<UiState>((set, get) => ({
         t.id === tabId ? { ...t, panes, rowSizes, activePaneId } : t,
       );
       return { ...patch, terminals: { ...g, tabs } };
+    }),
+  reparentOrphanTerminals: (liveGroupIds, fallbackGroupId) =>
+    set((s) => {
+      const live = new Set(liveGroupIds);
+      if (s.terminals.tabs.every((t) => live.has(t.groupId))) return {};
+      const tabs = s.terminals.tabs.map((t) =>
+        live.has(t.groupId) ? t : { ...t, groupId: fallbackGroupId },
+      );
+      return { terminals: { ...s.terminals, tabs } };
     }),
   markTermActivity: (paneId, kind) =>
     set((s) => {

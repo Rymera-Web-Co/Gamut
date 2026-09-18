@@ -102,9 +102,11 @@ function activityLabel(kind: TermActivityKind): string {
  * #280). Right-click opens a session menu (focus / rename / copy path / open
  * repo workspace / close); rename happens inline in the row.
  */
-function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
+function TerminalRow({ group, tab }: { group: Group | undefined; tab: TermTab }) {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
-  const terminals = useUiStore((s) => s.terminals);
+  // Narrow: the row reads only which tab is active, so a reorder, rename,
+  // resize or split elsewhere in the list must not re-render every row.
+  const activeTabId = useUiStore((s) => s.terminals.activeTabId);
   const termActivity = useUiStore((s) => s.termActivity);
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
@@ -119,7 +121,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const activity = tabActivityKind(tab, termActivity);
   // The list is global, so the highlighted row is simply the active tab — no
   // group has to match for a row to be the one on screen.
-  const current = terminalOpen && terminals.activeTabId === tab.id;
+  const current = terminalOpen && activeTabId === tab.id;
   const cwd = tab.panes[0]?.cwd ?? "";
   // The registered repo this session is rooted in, when its cwd matches one.
   const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
@@ -240,8 +242,8 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
             </button>
           )}
           <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
-            {group.name}
-            {cwd ? ` · ${pathBasename(cwd)}` : ""}
+            {group?.name ?? ""}
+            {cwd ? `${group ? " · " : ""}${pathBasename(cwd)}` : ""}
           </div>
         </div>
         {activity && (
@@ -735,14 +737,13 @@ export function Sidebar() {
     !!menuRepo && menuRepo.is_git_repo && !menuRepo.missing,
   );
 
-  // Flat terminal rail: every open tab across all groups, in group order.
   // The rail is the terminal list itself, in the order the user arranged it
-  // (#340) — not grouped, and not sorted. A tab whose group has since been
-  // deleted drops out: its row has no name to show and nowhere to navigate to.
-  const termEntries = terminals.tabs.flatMap((tab) => {
-    const group = list.find((g) => g.id === tab.groupId);
-    return group ? [{ group, tab }] : [];
-  });
+  // (#340) — not grouped, and not sorted. Every tab gets a row, including one
+  // whose group was just deleted: useActiveGroupFallback re-homes it, and
+  // dropping it here in the meantime would hide a live shell with no way to
+  // close it.
+  const groupById = new Map(list.map((g) => [g.id, g]));
+  const termEntries = terminals.tabs.map((tab) => ({ group: groupById.get(tab.groupId), tab }));
   // "Running" approximates the design's state column with what we can know:
   // a session counts until its shell exits (unseen-exit activity).
   const runningCount = termEntries.filter(
@@ -939,7 +940,7 @@ export function Sidebar() {
       </div>
       <div className="flex flex-col gap-px px-2">
         {termEntries.map(({ group, tab }) => (
-          <TerminalRow key={`${group.id}:${tab.id}`} group={group} tab={tab} />
+          <TerminalRow key={tab.id} group={group} tab={tab} />
         ))}
         <button
           disabled={!newTermTarget || activeGroupId == null}

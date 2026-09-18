@@ -12,18 +12,27 @@ import { useUiStore } from "@/store/ui";
  * `activeGroupId` null and every group-scoped surface (terminals, shortcuts,
  * CLI nav) pointing nowhere.
  *
- * The terminal needs no repair of its own: its list is global, so deleting a
- * group never leaves the pane pointing at nothing.
+ * Terminals whose group was deleted are re-homed onto the same fallback group.
+ * The terminal list is global, so a deleted group no longer takes its terminals
+ * off screen with it: the tab would otherwise keep a live shell and stay
+ * reachable by the cycle chords while naming no group and offering no way back.
  */
 export function useActiveGroupFallback() {
   const groupsData = useGroups().data;
   const activeGroupId = useUiStore((s) => s.activeGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
+  const reparentOrphanTerminals = useUiStore((s) => s.reparentOrphanTerminals);
 
   useEffect(() => {
     if (!groupsData || groupsData.length === 0) return;
-    if (groupsData.some((g) => g.id === activeGroupId)) return;
     const fallback = groupsData.find((g) => g.is_default) ?? groupsData[0];
+    if (fallback) {
+      reparentOrphanTerminals(
+        groupsData.map((g) => g.id),
+        fallback.id,
+      );
+    }
+    if (groupsData.some((g) => g.id === activeGroupId)) return;
     setActiveGroup(fallback?.id ?? null);
-  }, [groupsData, activeGroupId, setActiveGroup]);
+  }, [groupsData, activeGroupId, setActiveGroup, reparentOrphanTerminals]);
 }

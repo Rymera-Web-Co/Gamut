@@ -142,10 +142,10 @@ describe("sendToActiveTerminal", () => {
     expect(useUiStore.getState().terminalOpen).toBe(false);
   });
 
-  // #340: the terminal list is one flat sequence, so the active tab is targeted
-  // whatever group it was opened in — there's no separate "active group's
-  // terminal" to fall back to once a terminal is already open.
-  it("targets the active tab even when it belongs to a different group than the active group", () => {
+  // #340: the list spans every group now, so the globally-active tab can be
+  // rooted in a repo the user isn't looking at. The text is a path from the repo
+  // they ARE looking at, so the active group's terminal wins.
+  it("prefers the active group's terminal over an active tab in another group", () => {
     useUiStore.setState({
       activeGroupId: 1,
       terminals: {
@@ -171,10 +171,35 @@ describe("sendToActiveTerminal", () => {
 
     sendToActiveTerminal("src/foo.ts#L1");
 
-    expect(takePendingCommand("term-2")).toBe("src/foo.ts#L1");
-    expect(takePendingCommand("term-1")).toBeUndefined();
+    expect(takePendingCommand("term-1")).toBe("src/foo.ts#L1");
+    expect(takePendingCommand("term-2")).toBeUndefined();
     const s = useUiStore.getState();
     expect(s.activeGroupId).toBe(1);
     expect(s.terminalOpen).toBe(true);
+  });
+
+  it("falls back to the active tab when the active group has no terminal", () => {
+    useUiStore.setState({
+      activeGroupId: 1,
+      terminals: {
+        activeTabId: "tab-2",
+        tabs: [
+          {
+            id: "tab-2",
+            groupId: 2,
+            title: "other",
+            panes: [{ id: "term-2", cwd: "/other" }],
+            activePaneId: "term-2",
+          },
+        ],
+      },
+    });
+
+    sendToActiveTerminal("src/foo.ts#L1");
+
+    // No new tab is opened: an existing shell, even in another group, beats
+    // spawning one the user did not ask for.
+    expect(takePendingCommand("term-2")).toBe("src/foo.ts#L1");
+    expect(useUiStore.getState().terminals.tabs).toHaveLength(1);
   });
 });

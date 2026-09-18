@@ -17,7 +17,7 @@ import { useTerminalShortcuts } from "./useTerminalShortcuts";
 const MIN_SHARE = 0.08;
 
 /**
- * The integrated terminal pane: a per-group set of tabs, each holding a grid
+ * The integrated terminal pane: one flat list of tabs (#340), each holding a grid
  * of split panes — rows of side-by-side panes, any mix (#316) — with
  * drag-to-resize dividers between panes and between rows. The live xterm
  * instances, their layout/spawn and theme/resize coordination live in

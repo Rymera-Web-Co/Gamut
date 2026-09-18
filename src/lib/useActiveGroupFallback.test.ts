@@ -58,6 +58,64 @@ describe("useActiveGroupFallback (hidden-sidebar boot regression)", () => {
     expect(useUiStore.getState().activeGroupId).toBe(2);
   });
 
+  // #340: the terminal list is global, so a deleted group no longer takes its
+  // terminals off screen with it. An orphan would keep a live shell while naming
+  // no group and offering no row to close it from, so it is re-homed instead.
+  it("re-homes a terminal whose group was deleted onto the fallback group", () => {
+    useUiStore.setState({
+      activeGroupId: 1,
+      terminals: {
+        activeTabId: "tab-9",
+        tabs: [
+          {
+            id: "tab-1",
+            groupId: 1,
+            title: "kept",
+            panes: [{ id: "term-1", cwd: "/a" }],
+            activePaneId: "term-1",
+          },
+          {
+            id: "tab-9",
+            groupId: 9,
+            title: "orphan",
+            panes: [{ id: "term-9", cwd: "/b" }],
+            activePaneId: "term-9",
+          },
+        ],
+      },
+    });
+    useGroupsMock.mockReturnValue({ data: [group(1, true), group(2)] });
+
+    renderHook(() => useActiveGroupFallback());
+
+    const { tabs, activeTabId } = useUiStore.getState().terminals;
+    expect(tabs.map((t) => t.groupId)).toEqual([1, 1]);
+    // Only the group moves: the tab, its order and the active selection stay.
+    expect(tabs.map((t) => t.id)).toEqual(["tab-1", "tab-9"]);
+    expect(tabs[1].panes[0].id).toBe("term-9");
+    expect(activeTabId).toBe("tab-9");
+  });
+
+  it("leaves terminals alone when every group is still live", () => {
+    const tabs = [
+      {
+        id: "tab-1",
+        groupId: 2,
+        title: "kept",
+        panes: [{ id: "term-1", cwd: "/a" }],
+        activePaneId: "term-1",
+      },
+    ];
+    useUiStore.setState({ activeGroupId: 2, terminals: { activeTabId: "tab-1", tabs } });
+    useGroupsMock.mockReturnValue({ data: [group(1, true), group(2)] });
+
+    renderHook(() => useActiveGroupFallback());
+
+    // Reference-identical: a needless rewrite would wake the persistence
+    // subscriber and re-report the registry on every group query.
+    expect(useUiStore.getState().terminals.tabs).toBe(tabs);
+  });
+
   it("does nothing while the group list is empty or unloaded", () => {
     useGroupsMock.mockReturnValue({ data: [] });
     renderHook(() => useActiveGroupFallback());
