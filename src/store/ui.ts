@@ -687,7 +687,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
   selectTerminalTab: (tabId) =>
     set((s) =>
-      s.terminals.activeTabId === tabId ? {} : { terminals: { ...s.terminals, activeTabId: tabId } },
+      s.terminals.activeTabId === tabId
+        ? {}
+        : { terminals: { ...s.terminals, activeTabId: tabId } },
     ),
   renameTerminalTab: (tabId, title) =>
     set((s) => {

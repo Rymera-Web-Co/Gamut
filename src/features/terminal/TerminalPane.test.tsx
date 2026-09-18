@@ -190,9 +190,7 @@ describe("TerminalPane renders the active tab, whatever its group (#340)", () =>
     });
 
     const s = useUiStore.getState();
-    const sizes = s.terminals.tabs
-      .find((t) => t.id === "g2-tab")!
-      .panes.map((p) => p.size ?? 1);
+    const sizes = s.terminals.tabs.find((t) => t.id === "g2-tab")!.panes.map((p) => p.size ?? 1);
     expect(sizes[0]).toBeLessThan(sizes[1]);
     expect(s.terminals.tabs.find((t) => t.id === "g1-tab")).toBe(beforeG1);
   });

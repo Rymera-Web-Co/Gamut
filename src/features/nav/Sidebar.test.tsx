@@ -604,9 +604,9 @@ describe("Sidebar terminal rail", () => {
     fireEvent.change(input, { target: { value: "build loop" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(
-      useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-1")?.customTitle,
-    ).toBe("build loop");
+    expect(useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-1")?.customTitle).toBe(
+      "build loop",
+    );
     expect(screen.getByText("build loop")).toBeTruthy();
   });
 
@@ -864,21 +864,13 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 25 });
     win("pointermove", 5, 55); // term-y's lower half (rect 40-60, midpoint 50)
     win("pointerup", 5, 55);
-    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual([
-      "t-solo",
-      "t-y",
-      "t-x",
-    ]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual(["t-solo", "t-y", "t-x"]);
 
     stubRects(["term-solo", "term-y", "term-x"]);
     fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 45 });
     win("pointermove", 5, 22); // term-y's upper half (rect 20-40)
     win("pointerup", 5, 22);
-    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual([
-      "t-solo",
-      "t-x",
-      "t-y",
-    ]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual(["t-solo", "t-x", "t-y"]);
   });
 
   it("A22: a below-threshold press still clicks; an above-threshold press does not", async () => {
@@ -968,9 +960,9 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     const input = screen.getByLabelText("Rename terminal");
     fireEvent.change(input, { target: { value: "renamed" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(
-      useUiStore.getState().terminals.tabs.find((t) => t.id === "t-a")?.customTitle,
-    ).toBe("renamed");
+    expect(useUiStore.getState().terminals.tabs.find((t) => t.id === "t-a")?.customTitle).toBe(
+      "renamed",
+    );
   });
 
   it("A26: a double-click does not drag, reorder, or enter rename mode", async () => {

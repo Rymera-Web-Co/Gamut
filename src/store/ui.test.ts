@@ -197,13 +197,23 @@ describe("parseStoredTerminals", () => {
         2: {
           activeTabId: "tab-5",
           tabs: [
-            { id: "tab-5", title: "b", panes: [{ id: "term-9", cwd: "/b" }], activePaneId: "term-9" },
+            {
+              id: "tab-5",
+              title: "b",
+              panes: [{ id: "term-9", cwd: "/b" }],
+              activePaneId: "term-9",
+            },
           ],
         },
         1: {
           activeTabId: "tab-1",
           tabs: [
-            { id: "tab-1", title: "a", panes: [{ id: "term-1", cwd: "/a" }], activePaneId: "term-1" },
+            {
+              id: "tab-1",
+              title: "a",
+              panes: [{ id: "term-1", cwd: "/a" }],
+              activePaneId: "term-1",
+            },
           ],
         },
       },
