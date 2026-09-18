@@ -149,6 +149,9 @@ export function TerminalPane() {
     activeGroupId,
     gt,
     activeTab,
+    // ⌘W is app-wide, so it must know whether the terminal is actually on
+    // screen before closing anything (#338).
+    terminalOpen,
     // The cycle chord walks every group's terminals in sidebar order (#328),
     // so it needs the group order and the whole terminals map, not just `gt`.
     groupOrder: groupList.map((g) => g.id),

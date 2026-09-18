@@ -48,12 +48,12 @@ See [Review](features/review.md).
 
 ## Terminal
 
-`⌘/Ctrl+T` works anywhere; the rest apply while the integrated terminal has focus.
+`⌘/Ctrl+T` and the close-tab chord work anywhere; the rest apply while the integrated terminal has focus.
 
 | Shortcut | Action |
 | --- | --- |
 | `⌘/Ctrl+T` | Open a new terminal tab (reveals the terminal if hidden) |
-| `⌘/Ctrl+W` | Close the active terminal tab |
+| `⌘W` (macOS) / `Ctrl+⇧+W` | Close the active terminal tab. Off macOS the chord takes `⇧` so that plain `Ctrl+W` stays the shell's delete-previous-word. Does nothing while the terminal view is hidden. |
 | `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal — across **all** groups, switching group at a group boundary |
 | `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous terminal — across **all** groups, switching group at a group boundary (Control on all platforms; only with ≥2 terminals) |
 | `⌘/Ctrl+⌥+1`…`9` | Jump to terminal tab N in the active group (`9` jumps to its last tab) |
