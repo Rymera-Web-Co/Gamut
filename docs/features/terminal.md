@@ -4,8 +4,9 @@ Gamut has a terminal built into the app, so you can run commands right next to y
 code instead of switching to a separate terminal window. Each pane is backed by a real
 PTY — a genuine terminal session, not just a box that echoes command output — so colors
 and full-screen programs behave exactly as they would in your regular terminal app.
-Sessions are organised per group and survive tab/group switches — a long-running build
-or `tail -f` keeps going while the terminal is hidden.
+Every terminal you open lives in one list, whatever group you opened it from, and the
+sidebar rail shows them all at once. Sessions survive switching tabs and groups — a
+long-running build or `tail -f` keeps going while the terminal is hidden.
 
 ## Opening & toggling
 
@@ -35,17 +36,18 @@ or `tail -f` keeps going while the terminal is hidden.
 
 ## Tabs & splits
 
-- Each group keeps its own set of tabs. Click a tab to activate it, or cycle through
-  every group's terminals with `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[`. While the terminal is focused, `Ctrl+Tab` /
+- Click a terminal in the sidebar rail to activate it, or step through the list with
+  `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[`. While the terminal is focused, `Ctrl+Tab` /
   `Ctrl+⇧+Tab` also cycle to the next / previous terminal (with two or more terminals).
-  Both bindings walk **every** terminal in **every** group, in sidebar order: past the
-  last tab of a group they step into the first tab of the next group (and make that group
-  active), and the order wraps from the very last terminal back to the very first.
-  `⌘/Ctrl+⌥+1`…`9` stays an index into the active group's own tab strip.
-- **Reorder** — in the sidebar terminal rail, drag a terminal row and drop it
-  before/after another row in the same group; an insertion line shows where
-  it'll land. Reordering stays within the group and doesn't change which
-  terminal is active or disturb running panes.
+  Every binding walks the same single list, in the order the rail shows it, wrapping from
+  the last terminal back to the first. `⌘/Ctrl+⌥+1`…`9` jumps by position in that list
+  (`9` is the last one).
+- **Reorder** — drag a terminal row in the sidebar rail and drop it before or after any
+  other row; an insertion line shows where it'll land. You can arrange the list however
+  you like: terminals aren't grouped or sorted for you, and a terminal from one repo can
+  sit anywhere among the others. Reordering never changes which terminal is active and
+  never disturbs a running pane. A terminal keeps the group it was opened in — that's
+  what the second line of its row names — no matter where you move it.
 - **Split** the active tab to show panes side-by-side; close a split with its **×**
   (shown only when a tab has more than one pane). A tab's title shows a pane count when
   split (e.g. `repo ×2`).
@@ -64,13 +66,13 @@ or `tail -f` keeps going while the terminal is hidden.
   interrupted. When a shell exits, the pane shows **[process exited]** with a **Restart**
   button. All sessions are killed on app close.
 
-When a group has no terminals: *"No terminals open in this group"* (or a prompt to add a
-repo / bind a folder first).
+When nothing is open: *"No terminals open"* (or a prompt to add a repo / bind a folder
+first).
 
 ## Session restore
 
-The terminal **layout** — each group's tabs, splits, working directories and titles — is
-saved as you work and reopened on the next launch, so a quit or crash doesn't mean
+The terminal **layout** — your terminals in order, with their splits, working
+directories and titles — is saved as you work and reopened on the next launch, so a quit or crash doesn't mean
 rebuilding your workspace by hand. On launch each pane respawns a **fresh** shell in its
 saved directory (the previous shells are gone, so this is a re-open, not a literal process
 resume).
@@ -90,8 +92,8 @@ shell process exits. The flag shows as a small dot:
 
 - on the pane's **tab**, while that tab is inactive;
 - on each **split pane** that changed, so a split tab shows *which* pane has activity;
-- on the **group rail** entry for any other group with terminal activity;
-- on the **terminal toggle** icon when the panel is collapsed and the active group has
+- on the **Groups** list entry for any group whose terminals have activity;
+- on the **terminal toggle** icon when the sidebar is hidden and any terminal has
   activity.
 
 The dot is colored by the most salient event: blue for output, amber for a bell, red for a
@@ -118,7 +120,7 @@ Configure it under **Settings → Notifications** (⌘,):
   a custom file is read on demand and capped at 8 MB.
 - **Show desktop notification** — also post a native OS notification (off by default). It
   asks for notification permission when enabled and respects the OS Do-Not-Disturb state;
-  clicking the notification focuses Gamut and reveals the originating group, tab and pane.
+  clicking the notification focuses Gamut and reveals the originating terminal and pane.
 
 ## Behind the scenes
 

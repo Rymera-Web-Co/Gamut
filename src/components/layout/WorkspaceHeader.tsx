@@ -14,7 +14,7 @@ import {
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { useGroups, useRepoStatuses, useRepos } from "@/features/repos/api";
 import { SyncControls } from "@/features/sync/SyncControls";
-import { ActivityDot, groupActivityKind } from "@/features/terminal/activity";
+import { ActivityDot, tabsActivityKind } from "@/features/terminal/activity";
 import { groupColor } from "@/lib/groupIcons";
 import { useActiveRepoIsGit } from "@/lib/useActiveRepo";
 import { useTheme } from "@/lib/theme";
@@ -65,11 +65,9 @@ export function WorkspaceHeader() {
   // With the sidebar hidden the terminal rail can't surface unseen bell/exit
   // activity — badge the terminal toggle here so "needs input"/"exited" is
   // never invisible everywhere at once. (Whenever this header is visible the
-  // terminal view is closed, so the sidebar is the only other surface.)
-  const activity =
-    activeGroupId != null && repoSidebarHidden
-      ? groupActivityKind(terminals[activeGroupId], termActivity)
-      : undefined;
+  // terminal view is closed, so the sidebar is the only other surface.) The
+  // rail lists every terminal, so this badge covers every terminal too.
+  const activity = repoSidebarHidden ? tabsActivityKind(terminals.tabs, termActivity) : undefined;
 
   return (
     <div className="flex h-11 shrink-0 items-stretch gap-2 border-b bg-[var(--color-card)] pl-2 pr-2.5">

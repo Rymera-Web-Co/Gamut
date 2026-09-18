@@ -142,11 +142,10 @@ beforeEach(() => {
   useSettings.setState({ values: { ...DEFAULTS } });
   useUiStore.setState({
     activeGroupId: 1,
-    terminalViewGroupId: 1,
     activeRepoId: null,
     activeWorktreePath: null,
     terminalOpen: false,
-    terminals: {},
+    terminals: { tabs: [], activeTabId: null },
     termActivity: {},
     groupSelections: {},
   });
@@ -340,8 +339,8 @@ describe("Sidebar repo row branch line (#312)", () => {
     fireEvent.click(screen.getByLabelText(`Open terminal in ${A.name}`));
 
     const s = useUiStore.getState();
-    expect(s.terminals[1]?.tabs).toHaveLength(1);
-    expect(s.terminals[1].tabs[0].panes[0].cwd).toBe(A.path);
+    expect(s.terminals.tabs).toHaveLength(1);
+    expect(s.terminals.tabs[0].panes[0].cwd).toBe(A.path);
     expect(s.activeRepoId).toBeNull();
   });
 
@@ -497,31 +496,26 @@ describe("Sidebar terminal rail", () => {
   function seedTerminals() {
     useUiStore.setState({
       terminals: {
-        1: {
-          activeTabId: "tab-1",
-          tabs: [
-            {
-              id: "tab-1",
-              title: "alpha shell",
-              panes: [{ id: "term-1", cwd: "/repos/alpha" }],
-              activePaneId: "term-1",
-            },
-          ],
-        },
-        2: {
-          activeTabId: "tab-2",
-          tabs: [
-            {
-              id: "tab-2",
-              title: "beta shell",
-              panes: [
-                { id: "term-2", cwd: "/repos/beta" },
-                { id: "term-3", cwd: "/repos/beta" },
-              ],
-              activePaneId: "term-2",
-            },
-          ],
-        },
+        activeTabId: "tab-1",
+        tabs: [
+          {
+            id: "tab-1",
+            groupId: 1,
+            title: "alpha shell",
+            panes: [{ id: "term-1", cwd: "/repos/alpha" }],
+            activePaneId: "term-1",
+          },
+          {
+            id: "tab-2",
+            groupId: 2,
+            title: "beta shell",
+            panes: [
+              { id: "term-2", cwd: "/repos/beta" },
+              { id: "term-3", cwd: "/repos/beta" },
+            ],
+            activePaneId: "term-2",
+          },
+        ],
       },
     });
   }
@@ -540,12 +534,11 @@ describe("Sidebar terminal rail", () => {
     fireEvent.click(await screen.findByText("beta shell"));
 
     const s = useUiStore.getState();
-    // The terminal view crosses into group 2; the workspace stays on group 1,
-    // so the sidebar, repo list and main view do not jump.
-    expect(s.terminalViewGroupId).toBe(2);
+    // The rail is global — focusing a tab from group 2 doesn't move the
+    // active group, so the sidebar, repo list and main view do not jump.
     expect(s.activeGroupId).toBe(1);
     expect(s.terminalOpen).toBe(true);
-    expect(s.terminals[2].activeTabId).toBe("tab-2");
+    expect(s.terminals.activeTabId).toBe("tab-2");
   });
 
   it("clicking a terminal row still switches group with terminalFollowGroup on", async () => {
@@ -556,17 +549,20 @@ describe("Sidebar terminal rail", () => {
 
     const s = useUiStore.getState();
     expect(s.activeGroupId).toBe(2);
-    expect(s.terminalViewGroupId).toBe(2);
     expect(s.terminalOpen).toBe(true);
-    expect(s.terminals[2].activeTabId).toBe("tab-2");
+    expect(s.terminals.activeTabId).toBe("tab-2");
   });
 
-  it("highlights the focused row even when its group is not the active one (#339)", async () => {
+  it("highlights the focused row keyed off the active tab, not the active group (#339)", async () => {
     seedTerminals();
-    useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2, terminalOpen: true });
+    useUiStore.setState((s) => ({
+      activeGroupId: 1,
+      terminalOpen: true,
+      terminals: { ...s.terminals, activeTabId: "tab-2" },
+    }));
     renderSidebar();
 
-    // Keyed off the active group, nothing in the whole rail would be marked.
+    // Keyed off the active tab, not the active group.
     expect((await screen.findByText("beta shell")).getAttribute("aria-current")).toBe("true");
     expect(screen.getByText("alpha shell").getAttribute("aria-current")).toBeNull();
   });
@@ -580,7 +576,7 @@ describe("Sidebar terminal rail", () => {
 
     expect(mocks.terminalKill).toHaveBeenCalledWith("term-2");
     expect(mocks.terminalKill).toHaveBeenCalledWith("term-3");
-    expect(useUiStore.getState().terminals[2].tabs).toHaveLength(0);
+    expect(useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-2")).toBeUndefined();
     expect(screen.queryByText("beta shell")).toBeNull();
   });
 
@@ -594,7 +590,7 @@ describe("Sidebar terminal rail", () => {
 
     expect(mocks.terminalKill).toHaveBeenCalledWith("term-2");
     expect(mocks.terminalKill).toHaveBeenCalledWith("term-3");
-    expect(useUiStore.getState().terminals[2].tabs).toHaveLength(0);
+    expect(useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-2")).toBeUndefined();
   });
 
   it("the context menu renames a terminal inline", async () => {
@@ -608,7 +604,9 @@ describe("Sidebar terminal rail", () => {
     fireEvent.change(input, { target: { value: "build loop" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(useUiStore.getState().terminals[1].tabs[0].customTitle).toBe("build loop");
+    expect(
+      useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-1")?.customTitle,
+    ).toBe("build loop");
     expect(screen.getByText("build loop")).toBeTruthy();
   });
 
@@ -620,9 +618,9 @@ describe("Sidebar terminal rail", () => {
     fireEvent.click(screen.getByText("New terminal"));
 
     const s = useUiStore.getState();
-    expect(s.terminals[1]?.tabs).toHaveLength(1);
-    expect(s.terminals[1].tabs[0].title).toBe("alpha");
-    expect(s.terminals[1].tabs[0].panes[0].cwd).toBe(A.path);
+    expect(s.terminals.tabs).toHaveLength(1);
+    expect(s.terminals.tabs[0].title).toBe("alpha");
+    expect(s.terminals.tabs[0].panes[0].cwd).toBe(A.path);
   });
 
   it("New terminal is disabled with no repo selected and no group folder", async () => {
@@ -637,9 +635,10 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
   // Group 1 (id 1) gets three terminals, group 2 (id 2) gets two — the sizes
   // the contract's boundary/adjacency assertions need. Labels are distinct
   // from any repo/group name in this file so text queries can't collide.
-  function tab(id: string, title: string) {
+  function tab(id: string, title: string, groupId: number) {
     return {
       id,
+      groupId,
       title,
       panes: [{ id: `pane-${id}`, cwd: `/repos/${id}` }],
       activePaneId: `pane-${id}`,
@@ -649,14 +648,14 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
   function seedRail() {
     useUiStore.setState({
       terminals: {
-        1: {
-          activeTabId: "t-a",
-          tabs: [tab("t-a", "term-a"), tab("t-b", "term-b"), tab("t-c", "term-c")],
-        },
-        2: {
-          activeTabId: "t-e",
-          tabs: [tab("t-e", "term-e"), tab("t-f", "term-f")],
-        },
+        activeTabId: "t-a",
+        tabs: [
+          tab("t-a", "term-a", 1),
+          tab("t-b", "term-b", 1),
+          tab("t-c", "term-c", 1),
+          tab("t-e", "term-e", 2),
+          tab("t-f", "term-f", 2),
+        ],
       },
     });
   }
@@ -740,17 +739,20 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     expect(railOrder()).toEqual(["term-a", "term-c", "term-b", "term-e", "term-f"]);
   });
 
-  it("A16: a cross-group drop reorders neither group", async () => {
+  it("A16: a cross-group drop is accepted and reorders the flat list", async () => {
     seedRail();
     renderSidebar();
     await screen.findByText("term-a");
     stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
 
     fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
-    win("pointermove", 5, 65); // over term-e, a different group
+    win("pointermove", 5, 65); // term-e's upper half (rect 60-80, midpoint 70), a different group
     win("pointerup", 5, 65);
 
-    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    // The rail is one flat list — the tab moves into group 2's stretch, and
+    // its groupId does not change (it still labels its own group's name).
+    expect(railOrder()).toEqual(["term-b", "term-c", "term-a", "term-e", "term-f"]);
+    expect(useUiStore.getState().terminals.tabs.find((t) => t.id === "t-a")?.groupId).toBe(1);
   });
 
   it("A17: exactly one row carries the drop-edge attribute, matching the pointer's half", async () => {
@@ -827,8 +829,8 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
   it("A21: a one-terminal group can be pressed and dragged without error, reordering nothing", async () => {
     useUiStore.setState({
       terminals: {
-        1: { activeTabId: "t-solo", tabs: [tab("t-solo", "term-solo")] },
-        2: { activeTabId: "t-x", tabs: [tab("t-x", "term-x"), tab("t-y", "term-y")] },
+        activeTabId: "t-solo",
+        tabs: [tab("t-solo", "term-solo", 1), tab("t-x", "term-x", 2), tab("t-y", "term-y", 2)],
       },
     });
     renderSidebar();
@@ -839,20 +841,20 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     fireEvent.pointerDown(rowFor("term-solo"), { button: 0, clientX: 5, clientY: 5 });
     win("pointermove", 5, 12);
     win("pointerup", 5, 12);
-    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-solo"]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual(["t-solo", "t-x", "t-y"]);
 
     // Release over empty rail space.
     fireEvent.pointerDown(rowFor("term-solo"), { button: 0, clientX: 5, clientY: 5 });
     win("pointermove", 5, 500);
     win("pointerup", 5, 500);
-    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-solo"]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual(["t-solo", "t-x", "t-y"]);
   });
 
   it("A21: a two-terminal group swaps in both directions", async () => {
     useUiStore.setState({
       terminals: {
-        1: { activeTabId: "t-solo", tabs: [tab("t-solo", "term-solo")] },
-        2: { activeTabId: "t-x", tabs: [tab("t-x", "term-x"), tab("t-y", "term-y")] },
+        activeTabId: "t-solo",
+        tabs: [tab("t-solo", "term-solo", 1), tab("t-x", "term-x", 2), tab("t-y", "term-y", 2)],
       },
     });
     renderSidebar();
@@ -862,13 +864,21 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 25 });
     win("pointermove", 5, 55); // term-y's lower half (rect 40-60, midpoint 50)
     win("pointerup", 5, 55);
-    expect(useUiStore.getState().terminals[2].tabs.map((t) => t.id)).toEqual(["t-y", "t-x"]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual([
+      "t-solo",
+      "t-y",
+      "t-x",
+    ]);
 
     stubRects(["term-solo", "term-y", "term-x"]);
     fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 45 });
     win("pointermove", 5, 22); // term-y's upper half (rect 20-40)
     win("pointerup", 5, 22);
-    expect(useUiStore.getState().terminals[2].tabs.map((t) => t.id)).toEqual(["t-x", "t-y"]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual([
+      "t-solo",
+      "t-x",
+      "t-y",
+    ]);
   });
 
   it("A22: a below-threshold press still clicks; an above-threshold press does not", async () => {
@@ -882,10 +892,10 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     win("pointermove", 5, 25);
     win("pointerup", 5, 25);
     fireEvent.click(rowFor("term-b"));
-    expect(useUiStore.getState().terminals[1].activeTabId).toBe("t-b");
+    expect(useUiStore.getState().terminals.activeTabId).toBe("t-b");
 
     useUiStore.setState((s) => ({
-      terminals: { ...s.terminals, 1: { ...s.terminals[1], activeTabId: "t-a" } },
+      terminals: { ...s.terminals, activeTabId: "t-a" },
     }));
 
     // 12px move — above the threshold — is a drag, and the resulting click
@@ -894,7 +904,7 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     win("pointermove", 5, 53);
     win("pointerup", 5, 53);
     fireEvent.click(rowFor("term-c"));
-    expect(useUiStore.getState().terminals[1].activeTabId).toBe("t-a");
+    expect(useUiStore.getState().terminals.activeTabId).toBe("t-a");
   });
 
   it("A23: pressing and dragging the close button still just closes the tab", async () => {
@@ -909,7 +919,12 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     win("pointerup", 5, 30);
     fireEvent.click(closeBtn);
 
-    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-b", "t-c"]);
+    expect(useUiStore.getState().terminals.tabs.map((t) => t.id)).toEqual([
+      "t-b",
+      "t-c",
+      "t-e",
+      "t-f",
+    ]);
   });
 
   it("A24: a press-and-move on a row mid-rename starts no drag", async () => {
@@ -953,9 +968,9 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     const input = screen.getByLabelText("Rename terminal");
     fireEvent.change(input, { target: { value: "renamed" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(useUiStore.getState().terminals[1].tabs.find((t) => t.id === "t-a")?.customTitle).toBe(
-      "renamed",
-    );
+    expect(
+      useUiStore.getState().terminals.tabs.find((t) => t.id === "t-a")?.customTitle,
+    ).toBe("renamed");
   });
 
   it("A26: a double-click does not drag, reorder, or enter rename mode", async () => {
@@ -982,14 +997,14 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     renderSidebar();
     await screen.findByText("term-a");
     stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
-    const before = useUiStore.getState().terminals[1].activeTabId;
+    const before = useUiStore.getState().terminals.activeTabId;
 
     fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
     win("pointermove", 5, 5000); // well outside every stubbed row
     win("pointerup", 5, 5000);
 
     expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
-    expect(useUiStore.getState().terminals[1].activeTabId).toBe(before);
+    expect(useUiStore.getState().terminals.activeTabId).toBe(before);
   });
 
   it("A28: dropping on the '+ New terminal' button reorders and creates nothing", async () => {
@@ -1001,14 +1016,32 @@ describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
     // (rect 80-100), so the release genuinely lands on it.
     const newTermButton = screen.getByText("New terminal").closest("button") as HTMLElement;
     newTermButton.getBoundingClientRect = () => rect(0, 100, 100, 120);
-    const newTermCount = useUiStore.getState().terminals[1].tabs.length;
+    const newTermCount = useUiStore.getState().terminals.tabs.length;
 
     fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
     win("pointermove", 5, 110); // over the "+ New terminal" button's stubbed rect
     win("pointerup", 5, 110);
 
     expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
-    expect(useUiStore.getState().terminals[1].tabs.length).toBe(newTermCount);
+    expect(useUiStore.getState().terminals.tabs.length).toBe(newTermCount);
     expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+  });
+
+  it("A29: a cross-group drop calls reorderTerminalTab with just (srcId, targetId, edge)", async () => {
+    seedRail();
+    const reorderSpy = vi.spyOn(useUiStore.getState(), "reorderTerminalTab");
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    // term-a belongs to group 1, term-e to group 2 — the drop used to be
+    // rejected across groups; now the rail is one flat list and it's accepted.
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 65); // term-e's upper half (rect 60-80, midpoint 70) → "before"
+    win("pointerup", 5, 65);
+
+    expect(reorderSpy).toHaveBeenCalledTimes(1);
+    expect(reorderSpy).toHaveBeenCalledWith("t-a", "t-e", "before");
+    expect(railOrder()).toEqual(["term-b", "term-c", "term-a", "term-e", "term-f"]);
   });
 });

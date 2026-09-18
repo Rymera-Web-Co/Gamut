@@ -5,9 +5,9 @@ import type { Group, Repo } from "@/lib/ipc";
 import { DEFAULTS, useSettings } from "@/lib/settings";
 
 // The live xterm sessions are out of scope here: this suite is about WHICH
-// group's layout the pane drives. The hook is mocked so the options it receives
-// (the panes, the tab and the group id that routes `setActivePane`) are directly
-// assertable, and no PTY or WebGL context is needed in jsdom.
+// tab's layout the pane drives. The hook is mocked so the options it receives
+// (the panes and the active tab) are directly assertable, and no PTY or WebGL
+// context is needed in jsdom.
 const sessions = vi.hoisted(() => ({
   options: null as Record<string, unknown> | null,
   killPane: vi.fn(),
@@ -62,40 +62,38 @@ function repo(id: number, name: string, groupIds: number[]): Repo {
   };
 }
 
-/** Group 1 (active) with one single-pane tab; group 2 (viewed) with a split tab. */
+/**
+ * One flat terminal list (#340): a single-pane tab opened in group 1, a split
+ * tab opened in group 2 — active. The two groups pin that the pane follows
+ * `activeTabId` alone, never the tab's own `groupId`.
+ */
 function seed() {
   useUiStore.setState({
     activeGroupId: 1,
-    terminalViewGroupId: 2,
     activeRepoId: null,
     activeWorktreePath: null,
     terminalOpen: true,
     terminals: {
-      1: {
-        activeTabId: "g1-tab",
-        tabs: [
-          {
-            id: "g1-tab",
-            title: "alpha",
-            panes: [{ id: "g1-pane", cwd: "/repos/alpha" }],
-            activePaneId: "g1-pane",
-          },
-        ],
-      },
-      2: {
-        activeTabId: "g2-tab",
-        tabs: [
-          {
-            id: "g2-tab",
-            title: "beta",
-            panes: [
-              { id: "g2-pane-a", cwd: "/repos/beta" },
-              { id: "g2-pane-b", cwd: "/repos/beta" },
-            ],
-            activePaneId: "g2-pane-a",
-          },
-        ],
-      },
+      activeTabId: "g2-tab",
+      tabs: [
+        {
+          id: "g1-tab",
+          groupId: 1,
+          title: "alpha",
+          panes: [{ id: "g1-pane", cwd: "/repos/alpha" }],
+          activePaneId: "g1-pane",
+        },
+        {
+          id: "g2-tab",
+          groupId: 2,
+          title: "beta",
+          panes: [
+            { id: "g2-pane-a", cwd: "/repos/beta" },
+            { id: "g2-pane-b", cwd: "/repos/beta" },
+          ],
+          activePaneId: "g2-pane-a",
+        },
+      ],
     },
   });
 }
@@ -112,12 +110,10 @@ beforeEach(() => {
   seed();
 });
 
-// #339: the pane renders the VIEWED group's session, which need not be the
-// active group's. ⌘T is the one exception — it opens a terminal for the
-// workspace you are looking at, so it targets the active group and drags the
-// view there.
-describe("TerminalPane viewed vs active group (#339)", () => {
-  it("drives the viewed group's tab, not the active group's (A7)", () => {
+// #340: the terminal list is one flat sequence, so the pane always renders
+// whichever tab is `terminals.activeTabId` — never scoped to a group.
+describe("TerminalPane renders the active tab, whatever its group (#340)", () => {
+  it("drives the active tab's panes (A7)", () => {
     render(<TerminalPane />);
 
     const o = sessions.options!;
@@ -126,84 +122,78 @@ describe("TerminalPane viewed vs active group (#339)", () => {
       "g2-pane-a",
       "g2-pane-b",
     ]);
-    // The group id that routes `setActivePane` from a pane click (A18).
-    expect(o.viewGroupId).toBe(2);
-    expect(o.paneKey as string).toMatch(/^2\|g2-tab\|/);
-    // Group 2 has tabs, so the "no terminals" empty state must not show even
-    // though the ACTIVE group's own tab list is irrelevant here.
-    expect(screen.queryByText("No terminals open in this group.")).toBeNull();
+    expect(o.paneKey as string).toMatch(/^g2-tab\|/);
+    // The list has tabs, so the empty state must not show even though the
+    // active tab belongs to a group other than the active one.
+    expect(screen.queryByText("No terminals open.")).toBeNull();
   });
 
-  it("falls back to the active group before the first focus (boot, A23)", () => {
-    // The boot window: `terminalViewGroupId` is null until something focuses a
-    // terminal, so the pane must still render the active group's restored tabs.
-    useUiStore.setState({ terminalViewGroupId: null, activeGroupId: 1 });
+  it("shows the empty state with no tabs open at all", () => {
+    useUiStore.setState({ terminals: { tabs: [], activeTabId: null } });
     render(<TerminalPane />);
 
-    const o = sessions.options!;
-    expect(o.viewGroupId).toBe(1);
-    expect((o.activeTab as { id: string }).id).toBe("g1-tab");
+    expect(screen.getByText("No terminals open.")).toBeTruthy();
   });
 
-  it("shows the empty state for a viewed group with no tabs, not the active one's tabs", () => {
-    useUiStore.setState({ terminalViewGroupId: 3 });
-    mocks.groups = [...mocks.groups, group(3, "Empty")];
+  it("⌘T adds a tab to the active group and makes it the new active tab (A8)", () => {
     render(<TerminalPane />);
-
-    expect(screen.getByText("No terminals open in this group.")).toBeTruthy();
-  });
-
-  it("⌘T adds a tab to the ACTIVE group and moves the view there (A8)", () => {
-    render(<TerminalPane />);
-    const beforeG2 = useUiStore.getState().terminals[2];
+    const beforeG1 = useUiStore.getState().terminals.tabs.find((t) => t.id === "g1-tab");
+    const beforeG2 = useUiStore.getState().terminals.tabs.find((t) => t.id === "g2-tab");
 
     fireEvent.keyDown(window, { code: "KeyT", metaKey: true });
 
     const s = useUiStore.getState();
-    expect(s.terminals[1].tabs).toHaveLength(2);
-    // The viewed group's record is untouched — same object, not merely equal.
-    expect(s.terminals[2]).toBe(beforeG2);
-    // …and the new tab is visible, rather than added off-screen in group 1.
-    expect(s.terminalViewGroupId).toBe(1);
+    expect(s.terminals.tabs).toHaveLength(3);
+    // The pre-existing tabs are untouched — same objects, not merely equal.
+    expect(s.terminals.tabs.find((t) => t.id === "g1-tab")).toBe(beforeG1);
+    expect(s.terminals.tabs.find((t) => t.id === "g2-tab")).toBe(beforeG2);
+    // …and the new tab is the one now on screen.
+    const added = s.terminals.tabs.find((t) => t.id !== "g1-tab" && t.id !== "g2-tab")!;
+    expect(added.groupId).toBe(1);
+    expect(s.terminals.activeTabId).toBe(added.id);
   });
 
-  it("the close-tab chord closes the VIEWED group's tab (A9)", () => {
+  it("the close-tab chord closes the active tab (A9)", () => {
     render(<TerminalPane />);
-    const beforeG1 = useUiStore.getState().terminals[1];
+    const beforeG1 = useUiStore.getState().terminals.tabs.find((t) => t.id === "g1-tab");
 
     // Non-macOS chord: jsdom reports no platform, so isMac() is false.
     fireEvent.keyDown(window, { code: "KeyW", ctrlKey: true, shiftKey: true });
 
     const s = useUiStore.getState();
-    expect(s.terminals[2].tabs).toHaveLength(0);
-    expect(s.terminals[1]).toBe(beforeG1);
+    expect(s.terminals.tabs.find((t) => t.id === "g2-tab")).toBeUndefined();
+    expect(s.terminals.tabs.find((t) => t.id === "g1-tab")).toBe(beforeG1);
     // Both panes' PTYs are killed, not just the active one.
     expect(sessions.killPane).toHaveBeenCalledWith("g2-pane-a");
     expect(sessions.killPane).toHaveBeenCalledWith("g2-pane-b");
   });
 
-  it("the per-split close button closes a pane of the VIEWED group (A9)", () => {
+  it("the per-split close button closes a pane of the active tab (A9)", () => {
     render(<TerminalPane />);
-    const beforeG1 = useUiStore.getState().terminals[1];
+    const beforeG1 = useUiStore.getState().terminals.tabs.find((t) => t.id === "g1-tab");
 
     fireEvent.click(screen.getAllByLabelText("Close split")[1]);
 
     const s = useUiStore.getState();
-    expect(s.terminals[2].tabs[0].panes.map((p) => p.id)).toEqual(["g2-pane-a"]);
-    expect(s.terminals[1]).toBe(beforeG1);
+    expect(s.terminals.tabs.find((t) => t.id === "g2-tab")!.panes.map((p) => p.id)).toEqual([
+      "g2-pane-a",
+    ]);
+    expect(s.terminals.tabs.find((t) => t.id === "g1-tab")).toBe(beforeG1);
   });
 
-  it("a divider nudge resizes the VIEWED group's panes (A9)", () => {
+  it("a divider nudge resizes the active tab's panes only", () => {
     render(<TerminalPane />);
-    const beforeG1 = useUiStore.getState().terminals[1];
+    const beforeG1 = useUiStore.getState().terminals.tabs.find((t) => t.id === "g1-tab");
 
     fireEvent.keyDown(screen.getByLabelText("Resize split columns (row 1)"), {
       key: "ArrowLeft",
     });
 
     const s = useUiStore.getState();
-    const sizes = s.terminals[2].tabs[0].panes.map((p) => p.size ?? 1);
+    const sizes = s.terminals.tabs
+      .find((t) => t.id === "g2-tab")!
+      .panes.map((p) => p.size ?? 1);
     expect(sizes[0]).toBeLessThan(sizes[1]);
-    expect(s.terminals[1]).toBe(beforeG1);
+    expect(s.terminals.tabs.find((t) => t.id === "g1-tab")).toBe(beforeG1);
   });
 });

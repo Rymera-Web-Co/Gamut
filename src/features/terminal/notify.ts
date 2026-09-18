@@ -61,7 +61,6 @@ export function playSound(name: TerminalSound) {
 
 /** Where a notification points back to, carried through the OS notification. */
 export interface NotifyTarget {
-  groupId: number;
   tabId: string;
   paneId: string;
 }
@@ -108,7 +107,7 @@ function focusTarget(target: NotifyTarget) {
   void win.show().catch(() => {});
   void win.setFocus().catch(() => {});
 
-  useUiStore.getState().focusTerminal(target.groupId, target.tabId, target.paneId);
+  useUiStore.getState().focusTerminal(target.tabId, target.paneId);
 }
 
 /**
@@ -121,7 +120,7 @@ async function ensureActionListener() {
   try {
     await onAction((n) => {
       const t = n.extra?.target as NotifyTarget | undefined;
-      if (t && typeof t.groupId === "number" && t.tabId && t.paneId) focusTarget(t);
+      if (t && t.tabId && t.paneId) focusTarget(t);
     });
   } catch {
     // Action delivery is platform-dependent; the notification itself still

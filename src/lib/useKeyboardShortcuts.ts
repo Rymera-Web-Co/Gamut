@@ -211,21 +211,15 @@ export function useKeyboardShortcuts() {
 
     // Select the Nth group in the rail (1-based), in rail order (`groups.data`).
     // Returns false for an out-of-range number so the key isn't swallowed.
-    // Group jumps keep the full-screen terminal only when the target group has
-    // sessions to show (cmux-style terminal cycling); a session-less group
-    // falls back to its workspace instead of the empty terminal state. Same
-    // rule as the palette's group jump.
-    function leaveTerminalIfGroupHasNoSessions(groupId: number) {
-      const gt = useUiStore.getState().terminals[groupId];
-      if (!gt?.tabs.length) ref.current.setTerminalOpen(false);
-    }
-
+    // A group jump is a workspace action, and the terminal list is global, so
+    // it always leaves the full-screen terminal — staying in it would show no
+    // sign that the jump happened. Same rule as the palette's group jump.
     function selectGroup(n: number): boolean {
       const s = ref.current;
       const group = (s.groups ?? [])[n - 1];
       if (!group) return false;
       s.setActiveGroup(group.id);
-      leaveTerminalIfGroupHasNoSessions(group.id);
+      s.setTerminalOpen(false);
       return true;
     }
 
@@ -239,7 +233,7 @@ export function useKeyboardShortcuts() {
       const cur = list.findIndex((g) => g.id === s.activeGroupId);
       const next = cur < 0 ? list[0] : list[(cur + dir + list.length) % list.length];
       s.setActiveGroup(next.id);
-      leaveTerminalIfGroupHasNoSessions(next.id);
+      s.setTerminalOpen(false);
       return true;
     }
 

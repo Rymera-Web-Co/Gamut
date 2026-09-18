@@ -1,10 +1,5 @@
 import { cn } from "@/lib/utils";
-import {
-  ACTIVITY_PRIORITY,
-  type GroupTerminals,
-  type TermActivityKind,
-  type TermTab,
-} from "@/store/ui";
+import { ACTIVITY_PRIORITY, type TermActivityKind, type TermTab } from "@/store/ui";
 
 /** Activity badge colour, keyed off the most salient pending event. */
 export function activityColor(kind: TermActivityKind): string {
@@ -43,21 +38,21 @@ export function tabActivityKind(
 }
 
 /**
- * The most salient unseen-activity kind across a group's panes, if any.
+ * The most salient unseen-activity kind across a set of tabs' panes, if any —
+ * a group's tabs for the Groups list dot, or every tab for an app-wide badge.
  *
  * `output` is deliberately excluded here (issue #124): a plain PTY-output dot
  * fires constantly while a session is just working, so on the group icon it's
  * noise rather than signal. Only `bell` (attention required) and `exit` light
- * up the group dot. `output` still surfaces at the tab level via
- * `tabActivityKind`, where it usefully points at the busy tab.
+ * up the dot. `output` still surfaces at the tab level via `tabActivityKind`,
+ * where it usefully points at the busy tab.
  */
-export function groupActivityKind(
-  gt: GroupTerminals | undefined,
+export function tabsActivityKind(
+  tabs: TermTab[],
   termActivity: Record<string, TermActivityKind>,
 ): TermActivityKind | undefined {
-  if (!gt) return undefined;
   let best: TermActivityKind | undefined;
-  for (const tab of gt.tabs) {
+  for (const tab of tabs) {
     const k = tabActivityKind(tab, termActivity);
     if (k === "output") continue;
     if (k && (!best || ACTIVITY_PRIORITY[k] > ACTIVITY_PRIORITY[best])) best = k;

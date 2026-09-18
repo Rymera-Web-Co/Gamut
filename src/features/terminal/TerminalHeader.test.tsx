@@ -59,20 +59,18 @@ function repo(id: number, name: string, overrides: Partial<Repo> = {}): Repo {
 function seedTerminal(cwd = "/repos/alpha") {
   useUiStore.setState({
     activeGroupId: 2,
-    terminalViewGroupId: 2,
     terminalOpen: true,
     terminals: {
-      2: {
-        activeTabId: "tab-1",
-        tabs: [
-          {
-            id: "tab-1",
-            title: "alpha shell",
-            panes: [{ id: "term-1", cwd }],
-            activePaneId: "term-1",
-          },
-        ],
-      },
+      activeTabId: "tab-1",
+      tabs: [
+        {
+          id: "tab-1",
+          groupId: 2,
+          title: "alpha shell",
+          panes: [{ id: "term-1", cwd }],
+          activePaneId: "term-1",
+        },
+      ],
     },
   });
 }
@@ -83,11 +81,10 @@ beforeEach(() => {
   mocks.repos = [repo(1, "alpha", { group_ids: [2] })];
   useUiStore.setState({
     activeGroupId: 2,
-    terminalViewGroupId: 2,
     activeRepoId: null,
     activeWorktreePath: null,
     terminalOpen: true,
-    terminals: {},
+    terminals: { tabs: [], activeTabId: null },
     termActivity: {},
     groupSelections: {},
   });
@@ -110,7 +107,7 @@ describe("TerminalHeader", () => {
 
     fireEvent.click(screen.getByLabelText("Split terminal down"));
 
-    const tab = useUiStore.getState().terminals[2].tabs[0];
+    const tab = useUiStore.getState().terminals.tabs[0];
     expect(tab.panes.map((p) => p.row ?? 0)).toEqual([0, 1]);
   });
 
@@ -120,7 +117,7 @@ describe("TerminalHeader", () => {
 
     fireEvent.click(screen.getByLabelText("Split terminal right"));
 
-    const tab = useUiStore.getState().terminals[2].tabs[0];
+    const tab = useUiStore.getState().terminals.tabs[0];
     expect(tab.panes.map((p) => p.row ?? 0)).toEqual([0, 0]);
   });
 
@@ -136,7 +133,7 @@ describe("TerminalHeader", () => {
     fireEvent.click(down);
 
     // …and adds a new row below the active pane's row: 50/50 over 100.
-    const tab = useUiStore.getState().terminals[2].tabs[0];
+    const tab = useUiStore.getState().terminals.tabs[0];
     expect(tab.panes.map((p) => p.row ?? 0)).toEqual([0, 0, 1]);
   });
 
@@ -177,7 +174,7 @@ describe("TerminalHeader", () => {
     fireEvent.change(input, { target: { value: "crawler" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(useUiStore.getState().terminals[2].tabs[0].customTitle).toBe("crawler");
+    expect(useUiStore.getState().terminals.tabs[0].customTitle).toBe("crawler");
     expect(screen.getByText("crawler")).toBeTruthy();
   });
 
@@ -190,13 +187,13 @@ describe("TerminalHeader", () => {
     fireEvent.change(input, { target: { value: "nope" } });
     fireEvent.keyDown(input, { key: "Escape" });
 
-    expect(useUiStore.getState().terminals[2].tabs[0].customTitle).toBeUndefined();
+    expect(useUiStore.getState().terminals.tabs[0].customTitle).toBeUndefined();
     expect(screen.getByText("alpha shell")).toBeTruthy();
   });
 
   it("committing an empty draft reverts to the default title", () => {
     seedTerminal();
-    useUiStore.getState().renameTerminalTab(2, "tab-1", "custom");
+    useUiStore.getState().renameTerminalTab("tab-1", "custom");
     render(<TerminalHeader />);
 
     fireEvent.click(screen.getByText("custom"));
@@ -204,61 +201,59 @@ describe("TerminalHeader", () => {
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(useUiStore.getState().terminals[2].tabs[0].customTitle).toBeUndefined();
+    expect(useUiStore.getState().terminals.tabs[0].customTitle).toBeUndefined();
     expect(screen.getByText("alpha shell")).toBeTruthy();
   });
 
-  // #339: the pane has no tab strip, so this breadcrumb is what tells the user
-  // which group the on-screen terminal belongs to. It must name the VIEWED
-  // group — the terminal can belong to a group that is not the active one.
-  describe("viewing a group that is not the active one (#339)", () => {
-    /** Group 1 active with its own session; group 2 viewed. */
+  // The header names the ACTIVE TAB's own group, whatever the active group is
+  // — the terminal list is flat now, so a tab from any group can be on screen
+  // (#340).
+  describe("the active tab's own group can differ from the active group (#340)", () => {
+    /** Group 1 active; the on-screen tab belongs to group 2. */
     function seedCrossGroup() {
       seedTerminal();
       useUiStore.setState({
         activeGroupId: 1,
-        terminalViewGroupId: 2,
         terminals: {
-          1: {
-            activeTabId: "tab-9",
-            tabs: [
-              {
-                id: "tab-9",
-                title: "default shell",
-                panes: [{ id: "term-9", cwd: "/repos/other" }],
-                activePaneId: "term-9",
-              },
-            ],
-          },
-          ...useUiStore.getState().terminals,
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-9",
+              groupId: 1,
+              title: "default shell",
+              panes: [{ id: "term-9", cwd: "/repos/other" }],
+              activePaneId: "term-9",
+            },
+            ...useUiStore.getState().terminals.tabs,
+          ],
         },
       });
     }
 
-    it("names the viewed group in the breadcrumb, not the active group", () => {
+    it("names the tab's own group in the breadcrumb, not the active group", () => {
       seedCrossGroup();
       render(<TerminalHeader />);
 
       expect(screen.getByText("Tools")).toBeTruthy();
       expect(screen.queryByText("Default")).toBeNull();
-      // And the session it describes is the viewed group's, not group 1's.
+      // And the session it describes is the active tab's, not group 1's.
       expect(screen.getByText("alpha shell")).toBeTruthy();
     });
 
-    it("Split acts on the viewed group's session and leaves the active group's alone", () => {
+    it("Split acts on the active tab and leaves the other tab alone", () => {
       seedCrossGroup();
-      const before = useUiStore.getState().terminals[1];
+      const beforeOther = useUiStore.getState().terminals.tabs.find((t) => t.id === "tab-9");
       render(<TerminalHeader />);
 
       fireEvent.click(screen.getByLabelText("Split terminal right"));
 
       const s = useUiStore.getState();
-      expect(s.terminals[2].tabs[0].panes).toHaveLength(2);
-      // Same object reference: group 1's record was not rewritten at all.
-      expect(s.terminals[1]).toBe(before);
+      expect(s.terminals.tabs.find((t) => t.id === "tab-1")!.panes).toHaveLength(2);
+      // Same object reference: the other tab was not rewritten at all.
+      expect(s.terminals.tabs.find((t) => t.id === "tab-9")).toBe(beforeOther);
     });
 
-    it("renaming writes to the viewed group's tab", () => {
+    it("renaming writes to the active tab only", () => {
       seedCrossGroup();
       render(<TerminalHeader />);
 
@@ -268,8 +263,8 @@ describe("TerminalHeader", () => {
       fireEvent.keyDown(input, { key: "Enter" });
 
       const s = useUiStore.getState();
-      expect(s.terminals[2].tabs[0].customTitle).toBe("crawler");
-      expect(s.terminals[1].tabs[0].customTitle).toBeUndefined();
+      expect(s.terminals.tabs.find((t) => t.id === "tab-1")!.customTitle).toBe("crawler");
+      expect(s.terminals.tabs.find((t) => t.id === "tab-9")!.customTitle).toBeUndefined();
     });
   });
 });

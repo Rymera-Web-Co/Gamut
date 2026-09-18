@@ -26,8 +26,6 @@ const splitButtonClass =
  * "Open repo workspace" controls on the right.
  */
 export function TerminalHeader() {
-  const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -40,14 +38,12 @@ export function TerminalHeader() {
 
   const groups = useGroups();
   const repos = useRepos();
-  // The header describes the session actually on screen, which may belong to a
-  // group that is not the active one (#339) — the breadcrumb is what names that
-  // group, since the pane has no tab strip of its own.
-  const viewGroupId = terminalViewGroupId ?? activeGroupId;
+  // The header describes the session actually on screen. The terminal list is
+  // global, so that session may belong to a group that is not the active one —
+  // the breadcrumb names the tab's own group, since the pane has no tab strip.
+  const tab = terminals.tabs.find((t) => t.id === terminals.activeTabId);
+  const viewGroupId = tab?.groupId ?? null;
   const group = (groups.data ?? []).find((g) => g.id === viewGroupId);
-
-  const gt = viewGroupId != null ? terminals[viewGroupId] : undefined;
-  const tab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
   const folder = cwd ? pathBasename(cwd) : undefined;
   const activity = tab ? tabActivityKind(tab, termActivity) : undefined;
@@ -67,14 +63,14 @@ export function TerminalHeader() {
   useEffect(() => setEditing(false), [tab?.id]);
 
   function commitRename() {
-    if (viewGroupId != null && tab) renameTerminalTab(viewGroupId, tab.id, draft);
+    if (tab) renameTerminalTab(tab.id, draft);
     setEditing(false);
   }
 
-  const splitDisabled = !tab || !cwd || viewGroupId == null;
+  const splitDisabled = !tab || !cwd;
   function splitInto(direction: SplitDirection) {
-    if (viewGroupId == null || !tab || !cwd) return;
-    splitTerminal(viewGroupId, cwd, direction);
+    if (!tab || !cwd) return;
+    splitTerminal(cwd, direction);
   }
 
   // Jump back to the repo workspace, selecting the repo the session is rooted

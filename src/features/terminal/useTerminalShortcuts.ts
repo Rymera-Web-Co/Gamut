@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 
 import { isMac } from "@/lib/shortcuts";
-import type { GroupTerminals, SplitDirection, TermTab } from "@/store/ui";
+import type { SplitDirection, TermTab, Terminals } from "@/store/ui";
 
 /**
  * The Ctrl+Tab / Ctrl+⇧+Tab tab-cycle chord (#156), physical-`code` matched
@@ -46,20 +46,12 @@ export interface TerminalShortcutContext {
   handleNewTab: () => void;
   handleSplit: (direction: SplitDirection) => void;
   handleCloseTab: (tabId: string) => void;
-  selectTerminalTab: (groupId: number, tabId: string) => void;
+  selectTerminalTab: (tabId: string) => void;
   /**
-   * Switch group + tab + pane and re-focus the xterm. The cross-group cycle
-   * chord needs all of that, not just a tab selection (#328).
+   * Switch tab + pane and re-focus the xterm. The cycle chord needs both, not
+   * just a tab selection (#328).
    */
-  focusTerminal: (groupId: number, tabId: string, paneId: string) => void;
-  /**
-   * The group whose terminals are on screen — not necessarily the active group
-   * (#339). A rename rather than a second field on purpose: every chord here
-   * acts on the session the user is looking at, so a lingering `activeGroupId`
-   * could only ever target the wrong group's record.
-   */
-  viewGroupId: number | null;
-  gt: GroupTerminals | undefined;
+  focusTerminal: (tabId: string, paneId: string) => void;
   activeTab: TermTab | undefined;
   /**
    * Whether the terminal view is on screen. The pane stays mounted and
@@ -67,61 +59,34 @@ export interface TerminalShortcutContext {
    * otherwise close a tab the user cannot see (#338).
    */
   terminalOpen: boolean;
-  /** Every group's id in sidebar order — the order the cycle chord walks. */
-  groupOrder: number[];
-  /** Every group's terminals, so the chord can reach tabs outside the active group. */
-  terminals: Record<number, GroupTerminals>;
-}
-
-/** One terminal tab, paired with the group that owns it. */
-export interface GroupTab {
-  groupId: number;
-  tab: TermTab;
-}
-
-/**
- * Every terminal tab in every group, flattened into one ring: groups in
- * sidebar order (`groupOrder`), tabs in tab-strip order within a group. Groups
- * with no terminals — and stale `terminals` entries for groups that no longer
- * exist — drop out. This is the ring the Ctrl+Tab chord walks (#328).
- */
-export function flattenTerminalTabs(
-  groupOrder: number[],
-  terminals: Record<number, GroupTerminals>,
-): GroupTab[] {
-  const ring: GroupTab[] = [];
-  for (const groupId of groupOrder) {
-    for (const tab of terminals[groupId]?.tabs ?? []) ring.push({ groupId, tab });
-  }
-  return ring;
+  /** The whole terminal list — the ring the cycle chord walks, in rail order. */
+  terminals: Terminals;
 }
 
 /**
  * The tab `dir` steps away from the current position in the ring, wrapping past
- * both ends — so the last tab of a group steps into the first tab of the next
- * group, and the very last tab wraps back to the very first.
+ * both ends — so the last tab steps back to the very first. The ring is the
+ * terminal list in rail order, which the user arranges by hand (#340).
  *
  * A position that is not in the ring enters it instead of no-opping (#339) —
  * at the first tab going forward, the last tab going back, so the first press
- * moves the way the user asked. The position now comes from the *viewed*
- * group, which is null before the first focus and whose `activeTabId` is null
- * for a group with no tabs — without this the chord would dead-end
- * permanently. Null only when there is genuinely nothing to step to: an empty
- * ring, or a single tab that is already the current position.
+ * moves the way the user asked. `fromTabId` is null before anything has been
+ * focused; without this the chord would dead-end permanently. Null only when
+ * there is genuinely nothing to step to: an empty ring, or a single tab that is
+ * already the current position.
  */
 export function stepTerminalTab(
-  ring: GroupTab[],
-  fromGroupId: number | null,
+  ring: TermTab[],
   fromTabId: string | null | undefined,
   dir: 1 | -1,
-): GroupTab | null {
+): TermTab | null {
   if (ring.length === 0) return null;
-  const i = ring.findIndex((e) => e.groupId === fromGroupId && e.tab.id === fromTabId);
-  // No current position — the viewed group has no terminals, or nothing has
-  // been focused yet (#339). Enter the ring from the end the step is heading
-  // away from, so the first press moves in the direction the user asked for
-  // instead of always walking forward. Without this the chord dead-ends: the
-  // old `null` return made Ctrl+Tab a permanent no-op in that state.
+  const i = ring.findIndex((t) => t.id === fromTabId);
+  // No current position — nothing has been focused yet (#339). Enter the ring
+  // from the end the step is heading away from, so the first press moves in the
+  // direction the user asked for instead of always walking forward. Without
+  // this the chord dead-ends: the old `null` return made Ctrl+Tab a permanent
+  // no-op in that state.
   if (i < 0) return dir === 1 ? ring[0] : ring[ring.length - 1];
   if (ring.length < 2) return null;
   return ring[(i + dir + ring.length) % ring.length];
@@ -136,10 +101,8 @@ export function stepTerminalTab(
  *   ⌘⇧] / ⌘⇧[ next / prev terminal   Ctrl+Tab / Ctrl+⇧+Tab cycle terminals
  *   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split right   ⌘⇧D split down
  *
- * The two next/prev bindings walk every terminal in every group (#328) and
- * move the terminal view when they step out of the viewed one — the active
- * group itself no longer follows (#339); ⌘⌥1–9 stays an index into the viewed
- * group's own tab strip.
+ * The terminal list is one flat sequence in rail order (#340), so next/prev,
+ * Ctrl+Tab and ⌘⌥1–9 all walk the same list — none of them is group-scoped.
  *
  * Everything but ⌘T and ⌘W is scoped to the terminal pane (`hostRef`) having
  * focus, so it never steals keys from the editor (e.g. Monaco's own ⌘D). Those
@@ -191,17 +154,11 @@ export function useTerminalShortcuts(
       }
       // The rest act on the focused terminal pane only.
       const focused = hostRef.current?.contains(document.activeElement) ?? false;
-      if (!focused || s.viewGroupId == null) return;
-      const tabs = s.gt?.tabs ?? [];
-      // The next/prev-terminal step both bindings below share: one ring of
-      // every terminal in every group (#328).
-      const step = (dir: 1 | -1) =>
-        stepTerminalTab(
-          flattenTerminalTabs(s.groupOrder, s.terminals),
-          s.viewGroupId,
-          s.gt?.activeTabId,
-          dir,
-        );
+      if (!focused) return;
+      const tabs = s.terminals.tabs;
+      // The next/prev-terminal step both bindings below share: one ring over
+      // the whole terminal list (#328).
+      const step = (dir: 1 | -1) => stepTerminalTab(tabs, s.terminals.activeTabId, dir);
       if (!e.altKey && !e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
         s.handleSplit("row");
@@ -213,22 +170,21 @@ export function useTerminalShortcuts(
         s.handleSplit("column");
         return;
       }
-      // ⌘⇧] / ⌘⇧[ = next / prev terminal. Walks the same every-group ring as
-      // Ctrl+Tab below (#328) so the two bindings share one mental model.
+      // ⌘⇧] / ⌘⇧[ = next / prev terminal. Walks the same ring as Ctrl+Tab
+      // below (#328) so the two bindings share one mental model.
       if (e.shiftKey && !e.altKey && (e.code === "BracketRight" || e.code === "BracketLeft")) {
         const next = step(e.code === "BracketRight" ? 1 : -1);
         if (next) {
           e.preventDefault();
-          s.focusTerminal(next.groupId, next.tab.id, next.tab.activePaneId);
+          s.focusTerminal(next.id, next.activePaneId);
         }
         return;
       }
       // Ctrl+Tab / Ctrl+⇧+Tab cycle terminal tabs while the terminal is focused
       // (#156). Control-only on every platform, matching the repo-cycle binding
       // it shadows here — the global repo-cycle is suppressed while .xterm has
-      // focus, so the two never fight. The ring spans *every* group, not just
-      // the active one (#328), so it also switches group when it steps out of
-      // the current one. Only rotates with ≥2 terminals.
+      // focus, so the two never fight. The ring is the whole terminal list
+      // (#328, #340). Only rotates with ≥2 terminals.
       if (isTabCycleChord(e)) {
         // Always swallow the chord while the terminal is focused (same rule as
         // ⌘W above): xterm no longer handles it, so an un-prevented event
@@ -238,17 +194,16 @@ export function useTerminalShortcuts(
         const next = step(e.shiftKey ? -1 : 1);
         // focusTerminal, not selectTerminalTab: the step may land in another
         // group, which must become active and take keyboard focus.
-        if (next) s.focusTerminal(next.groupId, next.tab.id, next.tab.activePaneId);
+        if (next) s.focusTerminal(next.id, next.activePaneId);
         return;
       }
-      // ⌘⌥1–9 jumps by index inside the *viewed group's* tab strip — the one
-      // tab binding that deliberately stays group-scoped (#328, #339).
+      // ⌘⌥1–9 jumps by index into the terminal list, in rail order (9 = last).
       if (e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
         const n = Number(e.code.slice(5));
         const idx = n === 9 ? tabs.length - 1 : n - 1;
         if (tabs[idx]) {
           e.preventDefault();
-          s.selectTerminalTab(s.viewGroupId, tabs[idx].id);
+          s.selectTerminalTab(tabs[idx].id);
         }
         return;
       }

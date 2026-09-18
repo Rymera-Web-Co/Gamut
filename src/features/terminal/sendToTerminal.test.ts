@@ -98,8 +98,7 @@ describe("sendToActiveTerminal", () => {
   beforeEach(() => {
     useUiStore.setState({
       activeGroupId: 1,
-      terminalViewGroupId: 1,
-      terminals: {},
+      terminals: { tabs: [], activeTabId: null },
       terminalOpen: false,
     });
   });
@@ -107,17 +106,16 @@ describe("sendToActiveTerminal", () => {
   it("queues the text against the active pane and reveals it", () => {
     useUiStore.setState({
       terminals: {
-        1: {
-          activeTabId: "tab-3",
-          tabs: [
-            {
-              id: "tab-3",
-              title: "gamut",
-              panes: [{ id: "term-3", cwd: "/repo" }],
-              activePaneId: "term-3",
-            },
-          ],
-        },
+        activeTabId: "tab-3",
+        tabs: [
+          {
+            id: "tab-3",
+            groupId: 1,
+            title: "gamut",
+            panes: [{ id: "term-3", cwd: "/repo" }],
+            activePaneId: "term-3",
+          },
+        ],
       },
     });
 
@@ -131,9 +129,9 @@ describe("sendToActiveTerminal", () => {
   it("opens a terminal when the active group has none", () => {
     sendToActiveTerminal("src/bar.ts");
 
-    const group = useUiStore.getState().terminals[1];
-    expect(group?.tabs).toHaveLength(1);
-    const paneId = group!.tabs[0].activePaneId;
+    const tabs = useUiStore.getState().terminals.tabs;
+    expect(tabs).toHaveLength(1);
+    const paneId = tabs[0].activePaneId;
     expect(takePendingCommand(paneId)).toBe("src/bar.ts");
     expect(useUiStore.getState().terminalOpen).toBe(true);
   });
@@ -144,47 +142,38 @@ describe("sendToActiveTerminal", () => {
     expect(useUiStore.getState().terminalOpen).toBe(false);
   });
 
-  // #339 decoupled the terminal view from the active group, but this action is
-  // deliberately unchanged: the file it sends belongs to the ACTIVE group's
-  // repo, so the active group's terminal is the only coherent target. It ends
-  // in focusTerminal, so the view follows the command there — it never lands
-  // off screen.
-  it("keeps targeting the active group and pulls the view back to it", () => {
+  // #340: the terminal list is one flat sequence, so the active tab is targeted
+  // whatever group it was opened in — there's no separate "active group's
+  // terminal" to fall back to once a terminal is already open.
+  it("targets the active tab even when it belongs to a different group than the active group", () => {
     useUiStore.setState({
       activeGroupId: 1,
-      terminalViewGroupId: 2,
       terminals: {
-        1: {
-          activeTabId: "tab-1",
-          tabs: [
-            {
-              id: "tab-1",
-              title: "gamut",
-              panes: [{ id: "term-1", cwd: "/repo" }],
-              activePaneId: "term-1",
-            },
-          ],
-        },
-        2: {
-          activeTabId: "tab-2",
-          tabs: [
-            {
-              id: "tab-2",
-              title: "other",
-              panes: [{ id: "term-2", cwd: "/other" }],
-              activePaneId: "term-2",
-            },
-          ],
-        },
+        activeTabId: "tab-2",
+        tabs: [
+          {
+            id: "tab-1",
+            groupId: 1,
+            title: "gamut",
+            panes: [{ id: "term-1", cwd: "/repo" }],
+            activePaneId: "term-1",
+          },
+          {
+            id: "tab-2",
+            groupId: 2,
+            title: "other",
+            panes: [{ id: "term-2", cwd: "/other" }],
+            activePaneId: "term-2",
+          },
+        ],
       },
     });
 
     sendToActiveTerminal("src/foo.ts#L1");
 
-    expect(takePendingCommand("term-1")).toBe("src/foo.ts#L1");
-    expect(takePendingCommand("term-2")).toBeUndefined();
+    expect(takePendingCommand("term-2")).toBe("src/foo.ts#L1");
+    expect(takePendingCommand("term-1")).toBeUndefined();
     const s = useUiStore.getState();
-    expect(s.terminalViewGroupId).toBe(1);
     expect(s.activeGroupId).toBe(1);
     expect(s.terminalOpen).toBe(true);
   });

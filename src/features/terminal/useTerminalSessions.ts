@@ -157,20 +157,15 @@ const TERM_ALT_KEYS: Record<string, string> = {
 };
 
 /**
- * Find which group/tab a pane belongs to (a background pane firing an event may
- * live in any group/tab, not the active one). Used to build the notification's
+ * Find which tab a pane belongs to (a background pane firing an event may live
+ * in any tab, not the active one). Used to build the notification's
  * click-to-focus target and pick a human title.
  */
 function locatePane(paneId: string): { target: NotifyTarget; title: string } | null {
   const { terminals } = useUiStore.getState();
-  for (const [gid, gt] of Object.entries(terminals)) {
-    for (const tab of gt.tabs) {
-      if (tab.panes.some((p) => p.id === paneId)) {
-        return {
-          target: { groupId: Number(gid), tabId: tab.id, paneId },
-          title: termTabLabel(tab),
-        };
-      }
+  for (const tab of terminals.tabs) {
+    if (tab.panes.some((p) => p.id === paneId)) {
+      return { target: { tabId: tab.id, paneId }, title: termTabLabel(tab) };
     }
   }
   return null;
@@ -317,12 +312,9 @@ interface SessionsOptions {
   /** The pane the user is actually viewing (focused pane of the active tab). */
   visiblePaneId: string | null;
   terminalFocusNonce: number;
-  /** The group whose terminals are on screen — not necessarily the active
-   * group (#339). Routes `setActivePane` to the record the user is looking at. */
-  viewGroupId: number | null;
   markTermActivity: (paneId: string, kind: TermActivityKind) => void;
   clearTermActivity: (paneId: string) => void;
-  setActivePane: (groupId: number, tabId: string, paneId: string) => void;
+  setActivePane: (tabId: string, paneId: string) => void;
 }
 
 /**
@@ -345,7 +337,6 @@ export function useTerminalSessions({
   theme,
   visiblePaneId,
   terminalFocusNonce,
-  viewGroupId,
   markTermActivity,
   clearTermActivity,
   setActivePane,
@@ -364,8 +355,8 @@ export function useTerminalSessions({
   const bgQueue = useUiStore((s) => s.terminalBgQueue);
 
   // Keep the latest group/tab around for the imperative click handlers.
-  const ctxRef = useRef({ groupId: viewGroupId, tabId: activeTab?.id });
-  ctxRef.current = { groupId: viewGroupId, tabId: activeTab?.id };
+  const ctxRef = useRef({ tabId: activeTab?.id });
+  ctxRef.current = { tabId: activeTab?.id };
 
   // The one pane the user is actually looking at. Only this pane is exempt from
   // activity badging (no self-badging) and is auto-cleared when it comes in view.
@@ -560,8 +551,8 @@ export function useTerminalSessions({
       }
     });
     el.addEventListener("mousedown", () => {
-      const { groupId, tabId } = ctxRef.current;
-      if (groupId != null && tabId) setActivePane(groupId, tabId, pane.id);
+      const { tabId } = ctxRef.current;
+      if (tabId) setActivePane(tabId, pane.id);
     });
     const entry: SessionEntry = {
       term,
@@ -780,8 +771,8 @@ export function useTerminalSessions({
             setPendingCommand(hit.id, text);
           }
           // Focus the dropped-on pane so the staged path is where the user types.
-          const { groupId, tabId } = ctxRef.current;
-          if (groupId != null && tabId) setActivePane(groupId, tabId, hit.id);
+          const { tabId } = ctxRef.current;
+          if (tabId) setActivePane(tabId, hit.id);
           hit.e.term.focus();
         }
       })
@@ -846,8 +837,8 @@ export function useTerminalSessions({
             setPendingCommand(paneId, text);
           }
           // Focus the dropped-on pane so the staged path is where the user types.
-          const { groupId, tabId } = ctxRef.current;
-          if (groupId != null && tabId) setActivePane(groupId, tabId, paneId);
+          const { tabId } = ctxRef.current;
+          if (tabId) setActivePane(tabId, paneId);
           live.term.focus();
         })
         .catch(() => {});
@@ -924,9 +915,7 @@ export function useTerminalSessions({
   // store is enough to fully tear down its shell, not just hide it.
   useEffect(() => {
     const live = new Set<string>();
-    for (const g of Object.values(allTerminals)) {
-      for (const t of g.tabs) for (const p of t.panes) live.add(p.id);
-    }
+    for (const t of allTerminals.tabs) for (const p of t.panes) live.add(p.id);
     for (const id of [...sessionsRef.current.keys()]) {
       if (!live.has(id)) killPane(id);
     }
@@ -939,18 +928,16 @@ export function useTerminalSessions({
   // `term --silent` runs its command without the user ever switching to it. For
   // each queued pane we create its (hidden) session and spawn its PTY just like a
   // visible one; the layout effect above will simply reveal it if/when the user
-  // navigates to its group. A pane not yet in the layout is left queued and
+  // selects its tab. A pane not yet in the layout is left queued and
   // retried when `allTerminals` next changes.
   useEffect(() => {
     if (!hostRef.current || bgQueue.length === 0) return;
     const clear = useUiStore.getState().clearBackgroundTerminal;
     for (const paneId of bgQueue) {
       let pane: TermPane | undefined;
-      for (const g of Object.values(allTerminals)) {
-        for (const t of g.tabs) {
-          const p = t.panes.find((x) => x.id === paneId);
-          if (p) pane = p;
-        }
+      for (const t of allTerminals.tabs) {
+        const p = t.panes.find((x) => x.id === paneId);
+        if (p) pane = p;
       }
       if (!pane) continue; // not in the layout yet — retry on the next change
       const e = ensureEntry(pane);

@@ -18,9 +18,10 @@
 export type DragItem =
   | { kind: "repo"; id: number }
   | { kind: "group"; id: number }
-  // Terminal tabs reorder within a single group; `groupId` scopes the drag so a
-  // tab can't be dropped onto another group's strip. Tab ids are strings.
-  | { kind: "tab"; groupId: number; id: string }
+  // A terminal tab being reordered in the sidebar rail. The rail is one flat
+  // list, so the drag is unscoped — any tab can take any slot. Tab ids are
+  // strings.
+  | { kind: "tab"; id: string }
   // One or more file-tree entries being dragged to move them into a folder.
   // `repoId` scopes the drag to its own tree; `paths` are repo-relative (the
   // whole multi-selection when dragging a selected row, else just that row).

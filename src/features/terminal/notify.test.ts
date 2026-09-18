@@ -42,22 +42,20 @@ beforeEach(() => {
   });
   useUiStore.setState({
     activeGroupId: 1,
-    terminalViewGroupId: 1,
     activeRepoId: 7,
     view: "history",
     terminalOpen: false,
     terminals: {
-      2: {
-        activeTabId: "tab-2",
-        tabs: [
-          {
-            id: "tab-2",
-            title: "worker",
-            panes: [{ id: "term-2", cwd: "/repos/beta" }],
-            activePaneId: "term-2",
-          },
-        ],
-      },
+      activeTabId: null,
+      tabs: [
+        {
+          id: "tab-2",
+          groupId: 2,
+          title: "worker",
+          panes: [{ id: "term-2", cwd: "/repos/beta" }],
+          activePaneId: "term-2",
+        },
+      ],
     },
   });
 });
@@ -70,7 +68,7 @@ describe("terminal notification click (#339)", () => {
     notifyTerminalEvent({
       kind: "bell",
       title: "worker",
-      target: { groupId: 2, tabId: "tab-2", paneId: "term-2" },
+      target: { tabId: "tab-2", paneId: "term-2" },
     });
     await vi.waitFor(() => expect(tauri.sendNotification).toHaveBeenCalled());
 
@@ -78,9 +76,8 @@ describe("terminal notification click (#339)", () => {
     tauri.action!({ extra });
 
     const s = useUiStore.getState();
-    expect(s.terminalViewGroupId).toBe(2);
     expect(s.terminalOpen).toBe(true);
-    expect(s.terminals[2].activeTabId).toBe("tab-2");
+    expect(s.terminals.activeTabId).toBe("tab-2");
     // The workspace stays exactly where the user left it.
     expect(s.activeGroupId).toBe(1);
     expect(s.activeRepoId).toBe(7);

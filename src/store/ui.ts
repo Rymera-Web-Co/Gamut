@@ -27,9 +27,11 @@ export interface CompareSelection {
 }
 
 /**
- * Integrated-terminal model. Terminals are scoped to a **group**: each group
- * keeps its own set of tabs, so switching repos never disturbs them and
- * switching groups swaps the whole set. A tab holds a **grid** of split panes
+ * Integrated-terminal model. Every terminal lives in **one flat list**, whatever
+ * group it was opened from — the sidebar rail shows them all at once and the
+ * user orders them by hand (#340). A tab still records the group it belongs to,
+ * which keeps its rail subtitle, its group activity dot and the control
+ * channel's per-repo name lookups correct. A tab holds a **grid** of split panes
  * (#316): one or more rows, each row holding one or more side-by-side panes —
  * so `50/50` above `100`, or `33/33/33` above `50/50`, are all reachable.
  * Each pane is an independent PTY session keyed by `pane.id`.
@@ -71,6 +73,14 @@ export type SplitDirection = "row" | "column";
 
 export interface TermTab {
   id: string;
+  /**
+   * The group this terminal was opened in. The rail no longer groups by it —
+   * the list is one hand-ordered sequence — but the tab keeps it so the row can
+   * name its group, the Groups list can show a per-group activity dot, and
+   * `term-send`/`term-close`/`term-rename` can still resolve a tab name within
+   * one repo's groups instead of colliding across the whole app.
+   */
+  groupId: number;
   /** Auto-derived default label (group/repo name), set once at creation. */
   title: string;
   /**
@@ -94,7 +104,8 @@ export interface TermTab {
 export function termTabLabel(tab: TermTab): string {
   return tab.customTitle ?? tab.title;
 }
-export interface GroupTerminals {
+/** The whole terminal list, plus which tab the terminal view is showing. */
+export interface Terminals {
   tabs: TermTab[];
   activeTabId: string | null;
 }
@@ -194,10 +205,13 @@ function normalizeTabGrid(tab: TermTab): TermTab {
  * collide with a restored session.
  */
 export function parseStoredTerminals(raw: string): {
-  terminals: Record<number, GroupTerminals>;
+  terminals: Terminals;
   nextTermId: number;
 } {
-  const empty = { terminals: {}, nextTermId: 1 };
+  const empty: { terminals: Terminals; nextTermId: number } = {
+    terminals: { tabs: [], activeTabId: null },
+    nextTermId: 1,
+  };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -208,33 +222,67 @@ export function parseStoredTerminals(raw: string): {
   const src = (parsed as { terminals?: unknown }).terminals;
   if (typeof src !== "object" || src === null) return empty;
 
-  const terminals: Record<number, GroupTerminals> = {};
   let maxId = 0;
   const noteId = (id: string) => {
     const n = Number(id.split("-").pop());
     if (Number.isFinite(n) && n > maxId) maxId = n;
   };
-  for (const [gid, value] of Object.entries(src as Record<string, unknown>)) {
-    const groupId = Number(gid);
-    if (!Number.isFinite(groupId)) continue;
-    const g = value as GroupTerminals;
-    if (typeof g !== "object" || g === null || !Array.isArray(g.tabs)) continue;
-    const tabs = g.tabs.filter(isValidTab).map(normalizeTabGrid);
-    if (tabs.length === 0) continue;
-    tabs.forEach((t) => {
+
+  // Two shapes reach this. The current one is `{ tabs, activeTabId }`. Blobs
+  // written before the rail was flattened (#340) are `{ [groupId]: { tabs,
+  // activeTabId } }`; read those too and splice the buckets into one list, in
+  // group-id order, so an upgrade keeps every restored session instead of
+  // silently dropping the lot.
+  const flat = (src as { tabs?: unknown }).tabs;
+  const buckets: { groupId: number; tabs: unknown[]; activeTabId: unknown }[] = [];
+  if (Array.isArray(flat)) {
+    buckets.push({
+      groupId: 0,
+      tabs: flat,
+      activeTabId: (src as { activeTabId?: unknown }).activeTabId,
+    });
+  } else {
+    for (const [gid, value] of Object.entries(src as Record<string, unknown>)) {
+      const groupId = Number(gid);
+      if (!Number.isFinite(groupId)) continue;
+      const g = value as { tabs?: unknown; activeTabId?: unknown };
+      if (typeof g !== "object" || g === null || !Array.isArray(g.tabs)) continue;
+      buckets.push({ groupId, tabs: g.tabs, activeTabId: g.activeTabId });
+    }
+    buckets.sort((a, b) => a.groupId - b.groupId);
+  }
+
+  const tabs: TermTab[] = [];
+  // The legacy shape holds one active tab per group; only one of them can stay
+  // active now, so the first group that names a live tab wins.
+  let activeTabId: string | null = null;
+  for (const bucket of buckets) {
+    const valid = bucket.tabs
+      .filter(isValidTab)
+      .map(normalizeTabGrid)
+      // A legacy tab carries no `groupId` of its own — it is the bucket's key.
+      .map((t) => (Number.isFinite(t.groupId) ? t : { ...t, groupId: bucket.groupId }));
+    valid.forEach((t) => {
       noteId(t.id);
       t.panes.forEach((p) => noteId(p.id));
     });
-    const activeTabId = tabs.some((t) => t.id === g.activeTabId) ? g.activeTabId : tabs[0].id;
-    terminals[groupId] = { tabs, activeTabId };
+    if (activeTabId === null && valid.some((t) => t.id === bucket.activeTabId)) {
+      activeTabId = bucket.activeTabId as string;
+    }
+    tabs.push(...valid);
   }
-  return { terminals, nextTermId: maxId + 1 };
+  if (tabs.length === 0) return empty;
+
+  return { terminals: { tabs, activeTabId: activeTabId ?? tabs[0].id }, nextTermId: maxId + 1 };
 }
 
 /** The terminal layout to start with: the saved one if session restore is on
  * and a valid blob exists, otherwise empty. */
-function storedTerminals(): { terminals: Record<number, GroupTerminals>; nextTermId: number } {
-  const empty = { terminals: {}, nextTermId: 1 };
+function storedTerminals(): { terminals: Terminals; nextTermId: number } {
+  const empty: { terminals: Terminals; nextTermId: number } = {
+    terminals: { tabs: [], activeTabId: null },
+    nextTermId: 1,
+  };
   if (!useSettings.getState().values.terminalRestoreSessions) return empty;
   const raw = localStorage.getItem(TERMINALS_KEY);
   return raw ? parseStoredTerminals(raw) : empty;
@@ -242,7 +290,7 @@ function storedTerminals(): { terminals: Record<number, GroupTerminals>; nextTer
 
 /** Write the current terminal layout so the next launch can reopen it. Called on
  * every mutation (not just clean quit) so a crash still leaves it restorable. */
-function persistTerminals(terminals: Record<number, GroupTerminals>, nextTermId: number) {
+function persistTerminals(terminals: Terminals, nextTermId: number) {
   try {
     localStorage.setItem(TERMINALS_KEY, JSON.stringify({ terminals, nextTermId }));
   } catch {
@@ -270,16 +318,10 @@ interface UiState {
   // Carries the branch name so the dialog needs no query of its own.
   pushConfirm: { repoId: number; branch: string } | null;
   // Integrated terminal view. `terminalOpen` (persisted) switches the main
-  // area to the full-height terminal; `terminals` holds each group's
-  // tabs/panes (in-memory, by group id).
+  // area to the full-height terminal; `terminals` holds every tab/pane in one
+  // hand-ordered list (in-memory), whatever group each tab belongs to.
   terminalOpen: boolean;
-  terminals: Record<number, GroupTerminals>;
-  // Which group's terminals the terminal pane is showing (#339). Normally the
-  // active group, but focusing a terminal from another group moves this alone —
-  // the sidebar, repo list and main view stay where they are — unless the
-  // `terminalFollowGroup` setting is on. `null` until the first focus; readers
-  // fall back to `activeGroupId`. In-memory only, like `activeGroupId`.
-  terminalViewGroupId: number | null;
+  terminals: Terminals;
   // Per-group memory of the last-selected repo and view tab, keyed by group id.
   // Switching groups restores the entry for the group being entered (the repo
   // is re-validated against the group's actual membership by the
@@ -337,15 +379,8 @@ interface UiState {
   showView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null, worktreePath?: string | null) => void;
-  /**
-   * Select a group. An explicit group selection is a "take me to this group"
-   * intent, so it drags the terminal view along (#339) — that is what keeps the
-   * sidebar group click, ⌘1–9, the group-cycle chord and the external nav
-   * working exactly as before, with no change at any of those call sites.
-   */
+  /** Select a group. The terminal list is global, so this never moves it. */
   setActiveGroup: (id: number | null) => void;
-  /** Point the terminal pane at a group without touching the active group (#339). */
-  setTerminalViewGroup: (id: number | null) => void;
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
@@ -394,49 +429,44 @@ interface UiState {
   /** Drop a pane id from the background-spawn queue once it's been spawned. */
   clearBackgroundTerminal: (paneId: string) => void;
   /**
-   * Split the group's active tab, adding a pane rooted at `cwd` (#316):
+   * Split the active tab, adding a pane rooted at `cwd` (#316):
    * `row` (the default) puts it beside the active pane, in its row; `column`
    * puts it in a new row of its own, directly below the active pane's row.
    * Any mix is allowed — the tab is a grid of rows.
    */
-  splitTerminal: (groupId: number, cwd: string, direction?: SplitDirection) => void;
+  splitTerminal: (cwd: string, direction?: SplitDirection) => void;
   /**
    * Rebalance split weights after a divider drag (#316): per-pane width
    * weights (keyed by pane id) and/or the tab's per-row height weights.
    */
   resizeTerminalSplit: (
-    groupId: number,
     tabId: string,
     patch: { paneSizes?: Record<string, number>; rowSizes?: number[] },
   ) => void;
-  selectTerminalTab: (groupId: number, tabId: string) => void;
+  selectTerminalTab: (tabId: string) => void;
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
-  renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
+  renameTerminalTab: (tabId: string, title: string) => void;
   /**
-   * Reorder a tab within its group (sidebar terminal rail drag, #340). Moves
-   * `srcId` to just before/after `targetId`. Reorder only — never touches
-   * `activeTabId`, any `TermTab` object, or its panes/PTYs, so the active
-   * terminal and every running session are preserved.
+   * Reorder the terminal list (sidebar rail drag, #340). Moves `srcId` to just
+   * before/after `targetId`. Any tab can move to any slot — the list is one
+   * flat sequence, so a tab from one group can sit between two of another's.
+   * Reorder only — never touches `activeTabId`, any `TermTab` object, or its
+   * panes/PTYs, so the active terminal and every running session are preserved.
    */
-  reorderTerminalTab: (
-    groupId: number,
-    srcId: string,
-    targetId: string,
-    position: "before" | "after",
-  ) => void;
-  setActivePane: (groupId: number, tabId: string, paneId: string) => void;
+  reorderTerminalTab: (srcId: string, targetId: string, position: "before" | "after") => void;
+  setActivePane: (tabId: string, paneId: string) => void;
   /**
    * Reveal a terminal pane and put keyboard focus in it: open the panel, switch
-   * to its group/tab/pane, then bump `terminalFocusNonce` so the pane re-focuses
-   * its xterm even when none of that state changed. Used by the command palette,
+   * to its tab/pane, then bump `terminalFocusNonce` so the pane re-focuses its
+   * xterm even when none of that state changed. Used by the command palette,
    * the notification-click handler, the sidebar terminal rail, and the terminal
    * next/prev-terminal chords (#328).
    */
-  focusTerminal: (groupId: number, tabId: string, paneId: string) => void;
+  focusTerminal: (tabId: string, paneId: string) => void;
   /** Remove a tab (caller kills its panes' PTYs first). */
-  closeTerminalTab: (groupId: number, tabId: string) => void;
+  closeTerminalTab: (tabId: string) => void;
   /** Remove one split pane; removes the tab if it was the last pane. */
-  closeTerminalPane: (groupId: number, tabId: string, paneId: string) => void;
+  closeTerminalPane: (tabId: string, paneId: string) => void;
   /** Flag a hidden pane as having unseen activity (escalating by salience). */
   markTermActivity: (paneId: string, kind: TermActivityKind) => void;
   /** Clear a pane's unseen-activity flag (on focus or when the pane is gone). */
@@ -450,25 +480,7 @@ const restoredTerminals = storedTerminals();
 // The terminal view now takes over the whole main area, so booting into it
 // only makes sense when there are restored sessions to show — otherwise a
 // persisted `terminalOpen` would greet the user with an empty terminal.
-const hasRestoredTabs = Object.keys(restoredTerminals.terminals).length > 0;
-
-/**
- * The `terminalViewGroupId` patch to apply after a close emptied a group's tab
- * list. Closing the last tab of the group the pane is viewing — while that
- * group is not the active one — would strand the pane on an empty group whose
- * "New terminal" button targets a different group, with no row left in the
- * sidebar rail to get back from. Snap the view to the active group instead
- * (#339). Any other close leaves the view alone.
- */
-function terminalViewSnapBack(
-  s: UiState,
-  groupId: number,
-  remainingTabs: TermTab[],
-): { terminalViewGroupId?: number | null } {
-  if (remainingTabs.length > 0) return {};
-  if (s.terminalViewGroupId !== groupId || s.activeGroupId === groupId) return {};
-  return { terminalViewGroupId: s.activeGroupId };
-}
+const hasRestoredTabs = restoredTerminals.terminals.tabs.length > 0;
 
 export const useUiStore = create<UiState>((set, get) => ({
   view: "files",
@@ -476,7 +488,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeRepoId: null,
   activeWorktreePath: null,
   activeGroupId: null,
-  terminalViewGroupId: null,
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
   pushConfirm: null,
@@ -512,13 +523,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   // the content area never shows a repo outside the active group.
   setActiveGroup: (id) =>
     set((s) => {
-      // The terminal view follows an explicit group selection even when the
-      // group is already active (#339): the user may be looking at another
-      // group's terminal, and a bare early return would strand the view there
-      // — clicking the active group in the sidebar would do nothing at all.
-      if (id === s.activeGroupId) {
-        return s.terminalViewGroupId === id ? {} : { terminalViewGroupId: id };
-      }
+      if (id === s.activeGroupId) return {};
       const groupSelections =
         s.activeGroupId == null
           ? s.groupSelections
@@ -529,7 +534,6 @@ export const useUiStore = create<UiState>((set, get) => ({
       const remembered = id != null ? groupSelections[id] : undefined;
       return {
         activeGroupId: id,
-        terminalViewGroupId: id,
         groupSelections,
         activeRepoId: remembered ? remembered.repoId : null,
         activeWorktreePath: null,
@@ -537,7 +541,6 @@ export const useUiStore = create<UiState>((set, get) => ({
         selectedPrNumber: null,
       };
     }),
-  setTerminalViewGroup: (terminalViewGroupId) => set({ terminalViewGroupId }),
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),
@@ -584,35 +587,22 @@ export const useUiStore = create<UiState>((set, get) => ({
     const paneId = `term-${n}`;
     const tab: TermTab = {
       id: `tab-${n}`,
+      groupId,
       title,
       panes: [{ id: paneId, cwd }],
       activePaneId: paneId,
     };
     const background = opts?.background ?? false;
-    // A background tab must not steal the user's view: don't reveal the panel and
-    // don't switch the group's active tab (only adopt it if the group had none).
+    // A background tab must not steal the user's view: don't reveal the panel
+    // and don't switch the active tab (only adopt it if there was none).
     if (!background) get().setTerminalOpen(true);
-    set((s) => {
-      const g = s.terminals[groupId] ?? { tabs: [], activeTabId: null };
-      return {
-        nextTermId: n + 1,
-        // A revealed new tab must be the one on screen (#339). The view moves
-        // independently of the active group now, so without this every "New
-        // terminal" affordance that targets a group other than the viewed one
-        // — the rail's +, "Open terminal here" on a repo/worktree row, the
-        // file-tree folder menu — would spawn a live shell out of sight and
-        // look like it did nothing. A background tab keeps the view put: not
-        // stealing it is the whole point of that flag.
-        ...(background ? {} : { terminalViewGroupId: groupId }),
-        terminals: {
-          ...s.terminals,
-          [groupId]: {
-            tabs: [...g.tabs, tab],
-            activeTabId: background ? (g.activeTabId ?? tab.id) : tab.id,
-          },
-        },
-      };
-    });
+    set((s) => ({
+      nextTermId: n + 1,
+      terminals: {
+        tabs: [...s.terminals.tabs, tab],
+        activeTabId: background ? (s.terminals.activeTabId ?? tab.id) : tab.id,
+      },
+    }));
     return paneId;
   },
   requestBackgroundTerminal: (paneId) =>
@@ -621,12 +611,12 @@ export const useUiStore = create<UiState>((set, get) => ({
     ),
   clearBackgroundTerminal: (paneId) =>
     set((s) => ({ terminalBgQueue: s.terminalBgQueue.filter((id) => id !== paneId) })),
-  splitTerminal: (groupId, cwd, direction = "row") => {
+  splitTerminal: (cwd, direction = "row") => {
     const n = get().nextTermId;
     const paneId = `term-${n}`;
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g || !g.activeTabId) return {};
+      const g = s.terminals;
+      if (!g.activeTabId) return {};
       const tabs = g.tabs.map((t) => {
         if (t.id !== g.activeTabId) return t;
         const active = t.panes.find((p) => p.id === t.activePaneId) ?? t.panes[t.panes.length - 1];
@@ -669,17 +659,12 @@ export const useUiStore = create<UiState>((set, get) => ({
         ];
         return { ...t, panes, activePaneId: paneId };
       });
-      return {
-        nextTermId: n + 1,
-        terminals: { ...s.terminals, [groupId]: { ...g, tabs } },
-      };
+      return { nextTermId: n + 1, terminals: { ...g, tabs } };
     });
   },
-  resizeTerminalSplit: (groupId, tabId, patch) =>
+  resizeTerminalSplit: (tabId, patch) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
-      const tabs = g.tabs.map((t) => {
+      const tabs = s.terminals.tabs.map((t) => {
         if (t.id !== tabId) return t;
         const panes = patch.paneSizes
           ? t.panes.map((p) =>
@@ -688,41 +673,35 @@ export const useUiStore = create<UiState>((set, get) => ({
           : t.panes;
         return { ...t, panes, rowSizes: patch.rowSizes ?? t.rowSizes };
       });
-      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      return { terminals: { ...s.terminals, tabs } };
     }),
-  selectTerminalTab: (groupId, tabId) =>
+  selectTerminalTab: (tabId) =>
+    set((s) =>
+      s.terminals.activeTabId === tabId ? {} : { terminals: { ...s.terminals, activeTabId: tabId } },
+    ),
+  renameTerminalTab: (tabId, title) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
-      return { terminals: { ...s.terminals, [groupId]: { ...g, activeTabId: tabId } } };
-    }),
-  renameTerminalTab: (groupId, tabId, title) =>
-    set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
       const customTitle = title.trim() || undefined;
-      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, customTitle } : t));
-      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      const tabs = s.terminals.tabs.map((t) => (t.id === tabId ? { ...t, customTitle } : t));
+      return { terminals: { ...s.terminals, tabs } };
     }),
-  setActivePane: (groupId, tabId, paneId) =>
+  setActivePane: (tabId, paneId) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
-      const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t));
-      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      const tabs = s.terminals.tabs.map((t) =>
+        t.id === tabId ? { ...t, activePaneId: paneId } : t,
+      );
+      return { terminals: { ...s.terminals, tabs } };
     }),
-  reorderTerminalTab: (groupId, srcId, targetId, position) =>
+  reorderTerminalTab: (srcId, targetId, position) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
       if (srcId === targetId) return {};
-      const srcIdx = g.tabs.findIndex((t) => t.id === srcId);
+      const srcIdx = s.terminals.tabs.findIndex((t) => t.id === srcId);
       if (srcIdx < 0) return {};
-      const src = g.tabs[srcIdx];
+      const src = s.terminals.tabs[srcIdx];
       // Remove first, THEN find the target's index in what's left — indexing
       // into the original array here would be off by one whenever the target
       // sits after the source.
-      const rest = g.tabs.filter((t) => t.id !== srcId);
+      const rest = s.terminals.tabs.filter((t) => t.id !== srcId);
       const targetIdx = rest.findIndex((t) => t.id === targetId);
       if (targetIdx < 0) return {};
       const insertAt = position === "before" ? targetIdx : targetIdx + 1;
@@ -730,25 +709,26 @@ export const useUiStore = create<UiState>((set, get) => ({
       // don't hand the persistence subscriber a fresh `terminals` for nothing.
       if (insertAt === srcIdx) return {};
       const tabs = [...rest.slice(0, insertAt), src, ...rest.slice(insertAt)];
-      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      return { terminals: { ...s.terminals, tabs } };
     }),
-  focusTerminal: (groupId, tabId, paneId) => {
+  focusTerminal: (tabId, paneId) => {
     const ui = get();
-    // Revealing a terminal moves the terminal view alone (#339): the active
-    // group — and with it the sidebar, the repo list and the main view — stays
-    // put, so you can browse one group while working in another's terminal.
-    // `terminalFollowGroup` opts back into the old coupled behaviour.
-    if (useSettings.getState().values.terminalFollowGroup) ui.setActiveGroup(groupId);
-    ui.setTerminalViewGroup(groupId);
+    // Revealing a terminal leaves the workspace where it is: the terminal list
+    // is global, so a tab from another group is reachable without moving the
+    // sidebar, the repo list or the main view. `terminalFollowGroup` opts into
+    // dragging the active group to the tab's own group instead.
+    if (useSettings.getState().values.terminalFollowGroup) {
+      const tab = ui.terminals.tabs.find((t) => t.id === tabId);
+      if (tab) ui.setActiveGroup(tab.groupId);
+    }
     ui.setTerminalOpen(true);
-    ui.selectTerminalTab(groupId, tabId);
-    ui.setActivePane(groupId, tabId, paneId);
+    ui.selectTerminalTab(tabId);
+    ui.setActivePane(tabId, paneId);
     set((s) => ({ terminalFocusNonce: s.terminalFocusNonce + 1 }));
   },
-  closeTerminalTab: (groupId, tabId) =>
+  closeTerminalTab: (tabId) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
+      const g = s.terminals;
       const idx = g.tabs.findIndex((t) => t.id === tabId);
       if (idx < 0) return {};
       const tabs = g.tabs.filter((t) => t.id !== tabId);
@@ -758,15 +738,11 @@ export const useUiStore = create<UiState>((set, get) => ({
             ? tabs[Math.min(idx, tabs.length - 1)].id
             : null
           : g.activeTabId;
-      return {
-        ...terminalViewSnapBack(s, groupId, tabs),
-        terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } },
-      };
+      return { terminals: { tabs, activeTabId } };
     }),
-  closeTerminalPane: (groupId, tabId, paneId) =>
+  closeTerminalPane: (tabId, paneId) =>
     set((s) => {
-      const g = s.terminals[groupId];
-      if (!g) return {};
+      const g = s.terminals;
       const tab = g.tabs.find((t) => t.id === tabId);
       if (!tab) return {};
       const { [paneId]: _gone, ...termActivity } = s.termActivity;
@@ -783,11 +759,7 @@ export const useUiStore = create<UiState>((set, get) => ({
               ? tabs[Math.min(idx, tabs.length - 1)].id
               : null
             : g.activeTabId;
-        return {
-          ...patch,
-          ...terminalViewSnapBack(s, groupId, tabs),
-          terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } },
-        };
+        return { ...patch, terminals: { tabs, activeTabId } };
       }
       // If that was the row's last pane, the row collapses: rows below shift
       // up and its height weight is dropped, so numbering stays contiguous.
@@ -804,7 +776,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       const tabs = g.tabs.map((t) =>
         t.id === tabId ? { ...t, panes, rowSizes, activePaneId } : t,
       );
-      return { ...patch, terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+      return { ...patch, terminals: { ...g, tabs } };
     }),
   markTermActivity: (paneId, kind) =>
     set((s) => {
@@ -821,18 +793,17 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
 }));
 
-// Flatten the per-group terminal layout into the snapshot the backend mirrors
-// for the `term-list` control query (one entry per open tab).
-function reportTerminals(terminals: Record<number, GroupTerminals>) {
-  const entries = Object.entries(terminals).flatMap(([groupId, g]) =>
-    g.tabs.map((t) => ({
-      group_id: Number(groupId),
-      tab_id: t.id,
-      name: termTabLabel(t),
-      panes: t.panes.length,
-      cwd: t.panes[0]?.cwd || undefined,
-    })),
-  );
+// The snapshot the backend mirrors for the `term-list` control query (one entry
+// per open tab). Each entry still names the tab's group, so a control-channel
+// caller can tell two same-named tabs in different repos apart.
+function reportTerminals(terminals: Terminals) {
+  const entries = terminals.tabs.map((t) => ({
+    group_id: t.groupId,
+    tab_id: t.id,
+    name: termTabLabel(t),
+    panes: t.panes.length,
+    cwd: t.panes[0]?.cwd || undefined,
+  }));
   // Fire-and-forget; outside Tauri (tests) or before the backend is up, ignore.
   ipc.terminalRegistryReport(entries).catch(() => {});
 }
