@@ -48,6 +48,7 @@ import {
 import { activityColor, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
+import { dropEdge } from "@/lib/dropEdge";
 import { GROUP_ICONS, groupColor, groupInitials } from "@/lib/groupIcons";
 import { groupToReveal, visibleRepos } from "@/lib/groupRepos";
 import {
@@ -59,6 +60,7 @@ import {
   type RepoStatus,
 } from "@/lib/ipc";
 import { pathBasename } from "@/lib/format";
+import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
@@ -109,6 +111,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
+  const reorderTerminalTab = useUiStore((s) => s.reorderTerminalTab);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -146,6 +149,27 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
     closeTerminalTab(group.id, tab.id);
   }
 
+  // Drag to reorder rows within the group's rail (#340). `disabled` while
+  // renaming so a drag can't hijack the input's own pointer interactions.
+  const drag = useDraggable({ kind: "tab", groupId: group.id, id: tab.id }, termTabLabel(tab), {
+    disabled: editing,
+  });
+  // `accepts` rejects both a cross-group drop and a self-drop, so the row
+  // being dragged never shows its own insertion indicator.
+  const { ref: dropRef, state: dropEdgeState } = useDropTarget<"before" | "after", HTMLDivElement>({
+    accepts: (d) => d.kind === "tab" && d.groupId === group.id && d.id !== tab.id,
+    compute: (_d, rect, _x, y) => dropEdge(rect, y),
+    onDrop: (d, rect, _x, y) => {
+      // Commit the edge the indicator last showed; a fast flick can cross the
+      // midpoint between the final move and the release, and the user should
+      // get the slot they saw. Fall back to the release point if the pointer
+      // reached this row only on the release itself.
+      if (d.kind === "tab") {
+        reorderTerminalTab(group.id, d.id, tab.id, dropEdgeState ?? dropEdge(rect, y));
+      }
+    },
+  });
+
   return (
     <>
       {/* A plain div, not role="button": the row nests real buttons (label,
@@ -153,6 +177,8 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
           ARIA. Mouse users click anywhere on the row; keyboard users get the
           focusable label button. */}
       <div
+        ref={dropRef}
+        {...drag}
         onClick={() => {
           if (!editing) focusTerminal(group.id, tab.id, tab.activePaneId);
         }}
@@ -161,13 +187,23 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
           e.stopPropagation();
           setMenuAt({ x: e.clientX, y: e.clientY });
         }}
+        data-drop-edge={dropEdgeState ?? undefined}
         className={cn(
-          "group/term flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
+          "group/term relative flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
           current
             ? "border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
             : "hover:bg-[var(--color-accent)]",
         )}
       >
+        {dropEdgeState && (
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-x-1 h-px bg-[var(--color-primary)]",
+              dropEdgeState === "before" ? "top-0" : "bottom-0",
+            )}
+          />
+        )}
         <span
           aria-hidden
           className={cn("size-[7px] shrink-0 rounded-full", !activity && "gamut-pulse")}
@@ -224,6 +260,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
         <button
           aria-label={`Close ${termTabLabel(tab)} terminal`}
           title="Close terminal"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             closeTab();

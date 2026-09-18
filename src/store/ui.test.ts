@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ipc } from "@/lib/ipc";
 import { DEFAULTS, useSettings } from "@/lib/settings";
-import { parseStoredTerminals, useUiStore } from "./ui";
+import { parseStoredTerminals, useUiStore, type TermTab } from "./ui";
 
 const REPO_SIDEBAR_KEY = "gamut.repoSidebarHidden";
 
@@ -616,5 +617,225 @@ describe("terminal view group decoupling (#339)", () => {
     const s = useUiStore.getState();
     expect(s.terminalViewGroupId).toBe(2);
     expect(s.activeGroupId).toBe(1);
+  });
+});
+
+describe("reorderTerminalTab (#340)", () => {
+  // Fixture: group 1 has four tabs, group 2 has two — the sizes the contract's
+  // boundary/adjacency assertions need.
+  function mkTab(id: string): TermTab {
+    return {
+      id,
+      title: id,
+      panes: [{ id: `pane-${id}`, cwd: `/repo/${id}` }],
+      activePaneId: `pane-${id}`,
+    };
+  }
+
+  function seed() {
+    useUiStore.setState({
+      terminals: {
+        1: { activeTabId: "B", tabs: ["A", "B", "C", "D"].map(mkTab) },
+        2: { activeTabId: "E", tabs: ["E", "F"].map(mkTab) },
+      },
+      activeGroupId: 1,
+      terminalViewGroupId: 1,
+    });
+  }
+
+  function order(groupId: number): string[] {
+    return useUiStore.getState().terminals[groupId].tabs.map((t) => t.id);
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    seed();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("A1: moves the source before the target, from both sides of it", () => {
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "before");
+    expect(order(1)).toEqual(["B", "A", "C", "D"]);
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "D", "B", "before");
+    expect(order(1)).toEqual(["A", "D", "B", "C"]);
+  });
+
+  it("A2: moves the source after the target, from both sides of it", () => {
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+    expect(order(1)).toEqual(["B", "C", "A", "D"]);
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "D", "B", "after");
+    expect(order(1)).toEqual(["A", "B", "D", "C"]);
+  });
+
+  it("A3: adjacent rows, both directions and both positions", () => {
+    useUiStore.getState().reorderTerminalTab(1, "A", "B", "before");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]); // a genuine no-op
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "A", "B", "after");
+    expect(order(1)).toEqual(["B", "A", "C", "D"]);
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "B", "A", "after");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]);
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "B", "A", "before");
+    expect(order(1)).toEqual(["B", "A", "C", "D"]);
+  });
+
+  it("A4: boundaries — first row to last, last row to first", () => {
+    useUiStore.getState().reorderTerminalTab(1, "A", "D", "after");
+    expect(order(1)).toEqual(["B", "C", "D", "A"]);
+
+    seed();
+    useUiStore.getState().reorderTerminalTab(1, "D", "A", "before");
+    expect(order(1)).toEqual(["D", "A", "B", "C"]);
+  });
+
+  it("A5: dropping a row onto itself is a no-op for both positions", () => {
+    useUiStore.getState().reorderTerminalTab(1, "B", "B", "before");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]);
+
+    useUiStore.getState().reorderTerminalTab(1, "B", "B", "after");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("A6: a no-op writes nothing — no IPC report, no localStorage write", () => {
+    const spy = vi.spyOn(ipc, "terminalRegistryReport").mockResolvedValue(undefined);
+    localStorage.removeItem("gamut.terminals");
+
+    useUiStore.getState().reorderTerminalTab(1, "B", "B", "before");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(localStorage.getItem("gamut.terminals")).toBeNull();
+
+    // The adjacency no-op: "A" dropped just "before" its own neighbour "B"
+    // recomputes the same slot it already occupies — no write either.
+    useUiStore.getState().reorderTerminalTab(1, "A", "B", "before");
+    expect(order(1)).toEqual(["A", "B", "C", "D"]);
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(localStorage.getItem("gamut.terminals")).toBeNull();
+  });
+
+  it("A7: every guard leaves both groups' tabs unchanged", () => {
+    const before1 = order(1);
+    const before2 = order(2);
+
+    useUiStore.getState().reorderTerminalTab(99, "A", "B", "before"); // unknown group
+    useUiStore.getState().reorderTerminalTab(1, "Z", "B", "before"); // unknown src
+    useUiStore.getState().reorderTerminalTab(1, "A", "Z", "before"); // unknown target
+    useUiStore.getState().reorderTerminalTab(1, "A", "E", "before"); // src/target in different groups
+
+    expect(order(1)).toEqual(before1);
+    expect(order(2)).toEqual(before2);
+  });
+
+  it("A8: activeTabId and its resolved tab object survive a reorder — dragged row active", () => {
+    useUiStore.setState((s) => ({
+      terminals: { ...s.terminals, 1: { ...s.terminals[1], activeTabId: "A" } },
+    }));
+    const activeBefore = useUiStore.getState().terminals[1].tabs.find((t) => t.id === "A")!;
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    const g = useUiStore.getState().terminals[1];
+    expect(g.activeTabId).toBe("A");
+    expect(g.tabs.find((t) => t.id === "A")).toBe(activeBefore);
+  });
+
+  it("A8: activeTabId and its resolved tab object survive a reorder — target row active", () => {
+    useUiStore.setState((s) => ({
+      terminals: { ...s.terminals, 1: { ...s.terminals[1], activeTabId: "C" } },
+    }));
+    const activeBefore = useUiStore.getState().terminals[1].tabs.find((t) => t.id === "C")!;
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    const g = useUiStore.getState().terminals[1];
+    expect(g.activeTabId).toBe("C");
+    expect(g.tabs.find((t) => t.id === "C")).toBe(activeBefore);
+  });
+
+  it("A8: activeTabId and its resolved tab object survive a reorder — a third row active", () => {
+    useUiStore.setState((s) => ({
+      terminals: { ...s.terminals, 1: { ...s.terminals[1], activeTabId: "D" } },
+    }));
+    const activeBefore = useUiStore.getState().terminals[1].tabs.find((t) => t.id === "D")!;
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    const g = useUiStore.getState().terminals[1];
+    expect(g.activeTabId).toBe("D");
+    expect(g.tabs.find((t) => t.id === "D")).toBe(activeBefore);
+  });
+
+  it("A9: reorder is a pure permutation — every tab and its panes array keep identity", () => {
+    const beforeById = new Map(useUiStore.getState().terminals[1].tabs.map((t) => [t.id, t]));
+    const idsAndPaneIdsBefore = () => {
+      const tabs = useUiStore.getState().terminals[1].tabs;
+      return {
+        tabIds: tabs.map((t) => t.id).sort(),
+        paneIds: tabs.flatMap((t) => t.panes.map((p) => p.id)).sort(),
+      };
+    };
+    const before = idsAndPaneIdsBefore();
+
+    useUiStore.getState().reorderTerminalTab(1, "B", "D", "after");
+
+    const afterTabs = useUiStore.getState().terminals[1].tabs;
+    for (const t of afterTabs) {
+      const prior = beforeById.get(t.id)!;
+      expect(t).toBe(prior);
+      expect(t.panes).toBe(prior.panes);
+    }
+    expect(idsAndPaneIdsBefore()).toEqual(before);
+  });
+
+  it("A10: reorder issues no terminal lifecycle IPC", () => {
+    const spawnSpy = vi.spyOn(ipc, "terminalSpawn");
+    const killSpy = vi.spyOn(ipc, "terminalKill").mockResolvedValue(undefined);
+    const resizeSpy = vi.spyOn(ipc, "terminalResize").mockResolvedValue(undefined);
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(resizeSpy).not.toHaveBeenCalled();
+  });
+
+  it("A11: activeGroupId and terminalViewGroupId are unchanged by a reorder", () => {
+    useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2 });
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    expect(useUiStore.getState().activeGroupId).toBe(1);
+    expect(useUiStore.getState().terminalViewGroupId).toBe(2);
+  });
+
+  it("A12: a real reorder persists through the existing report + localStorage write path", () => {
+    const spy = vi.spyOn(ipc, "terminalRegistryReport").mockResolvedValue(undefined);
+    localStorage.removeItem("gamut.terminals");
+
+    useUiStore.getState().reorderTerminalTab(1, "A", "C", "after");
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const raw = localStorage.getItem("gamut.terminals");
+    expect(raw).not.toBeNull();
+    expect(parseStoredTerminals(raw!).terminals[1].tabs.map((t) => t.id)).toEqual([
+      "B",
+      "C",
+      "A",
+      "D",
+    ]);
   });
 });

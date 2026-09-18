@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Group, Repo } from "@/lib/ipc";
 import { DEFAULTS, useSettings } from "@/lib/settings";
+import { DragGhost } from "@/lib/usePointerDnd";
 import { useUiStore } from "@/store/ui";
 
 // Every ipc entry point reachable from the mounted tree (Sidebar + its
@@ -100,13 +101,14 @@ const G2 = group(2, "Tools");
 const A = repo(1, "alpha", { group_ids: [] }); // default group
 const B = repo(2, "beta", { group_ids: [2] });
 
-function renderSidebar(repos: Repo[] = [A, B], groups: Group[] = [G1, G2]) {
+function renderSidebar(repos: Repo[] = [A, B], groups: Group[] = [G1, G2], withGhost = false) {
   mocks.listRepos.mockResolvedValue(repos);
   mocks.listGroups.mockResolvedValue(groups);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
       <Sidebar />
+      {withGhost && <DragGhost />}
     </QueryClientProvider>,
   );
 }
@@ -628,5 +630,385 @@ describe("Sidebar terminal rail", () => {
     await screen.findByTitle(A.path);
     const btn = screen.getByText("New terminal").closest("button")!;
     expect(btn.disabled).toBe(true);
+  });
+});
+
+describe("Sidebar terminal rail drag-to-reorder (#340)", () => {
+  // Group 1 (id 1) gets three terminals, group 2 (id 2) gets two — the sizes
+  // the contract's boundary/adjacency assertions need. Labels are distinct
+  // from any repo/group name in this file so text queries can't collide.
+  function tab(id: string, title: string) {
+    return {
+      id,
+      title,
+      panes: [{ id: `pane-${id}`, cwd: `/repos/${id}` }],
+      activePaneId: `pane-${id}`,
+    };
+  }
+
+  function seedRail() {
+    useUiStore.setState({
+      terminals: {
+        1: {
+          activeTabId: "t-a",
+          tabs: [tab("t-a", "term-a"), tab("t-b", "term-b"), tab("t-c", "term-c")],
+        },
+        2: {
+          activeTabId: "t-e",
+          tabs: [tab("t-e", "term-e"), tab("t-f", "term-f")],
+        },
+      },
+    });
+  }
+
+  // jsdom returns an all-zero rect for every element, so the drop target's
+  // hit-testing/edge math never engages without a stub. Recipe from
+  // src/lib/usePointerDnd.test.tsx.
+  function rect(left: number, top: number, right: number, bottom: number): DOMRect {
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  function win(type: string, x: number, y: number) {
+    act(() => {
+      window.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    });
+  }
+
+  // Locates a row by its close button's accessible name, which stays fixed
+  // to the tab's ORIGINAL label even while the row is mid-rename (unlike its
+  // visible text, which becomes an <input> and is unreachable by getByText).
+  function rowFor(label: string): HTMLElement {
+    return screen
+      .getByLabelText(`Close ${label} terminal`)
+      .closest('[class*="group/term"]') as HTMLElement;
+  }
+
+  // Stacks the given rows' stubbed rects 20px tall, top to bottom, in order.
+  function stubRects(labelsInOrder: string[]) {
+    labelsInOrder.forEach((label, i) => {
+      rowFor(label).getBoundingClientRect = () => rect(0, i * 20, 100, i * 20 + 20);
+    });
+  }
+
+  // Reads rendered order off the close buttons' accessible names — stable
+  // even mid-rename, unlike the visible label (which becomes an <input>).
+  function railOrder(): string[] {
+    return [...document.querySelectorAll('[aria-label^="Close "]')].map((el) =>
+      (el.getAttribute("aria-label") ?? "").replace(/^Close /, "").replace(/ terminal$/, ""),
+    );
+  }
+
+  afterEach(() => {
+    // A leaked drag session (a test that asserts mid-drag and never releases)
+    // must never bleed into the next test.
+    win("pointercancel", 0, 0);
+  });
+
+  it("A14: dropping on a row's lower half places the dragged row after it", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 35); // past the threshold, over term-b's lower half (rect 20-40)
+    win("pointerup", 5, 35);
+
+    expect(railOrder()).toEqual(["term-b", "term-a", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A15: dropping on a row's upper half places the dragged row before it", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-c"), { button: 0, clientX: 5, clientY: 45 });
+    win("pointermove", 5, 22); // past the threshold, over term-b's upper half (rect 20-40)
+    win("pointerup", 5, 22);
+
+    expect(railOrder()).toEqual(["term-a", "term-c", "term-b", "term-e", "term-f"]);
+  });
+
+  it("A16: a cross-group drop reorders neither group", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 65); // over term-e, a different group
+    win("pointerup", 5, 65);
+
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A17: exactly one row carries the drop-edge attribute, matching the pointer's half", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 35); // term-b's lower half → "after"
+
+    expect(rowFor("term-b").getAttribute("data-drop-edge")).toBe("after");
+    const flagged = [...document.querySelectorAll("[data-drop-edge]")].filter((el) =>
+      el.getAttribute("data-drop-edge"),
+    );
+    expect(flagged).toHaveLength(1);
+
+    win("pointerup", 5, 35);
+  });
+
+  it("A18: the source row shows no indicator during its own drag, and dropping on it reorders nothing", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 2 });
+    win("pointermove", 5, 15); // still inside term-a's own rect (0-20)
+
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+
+    win("pointerup", 5, 15);
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A19: the indicator shows mid-drag and clears on both a drop and a cancel", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 35);
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(1);
+    win("pointerup", 5, 35);
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+
+    // Re-stub: the rows just reordered, so the old rects no longer match the
+    // rendered order.
+    stubRects(["term-b", "term-a", "term-c", "term-e", "term-f"]);
+
+    // Same drag, ended by a cancel instead — indicator clears and nothing moves.
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 55);
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(1);
+    win("pointercancel", 5, 55);
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+    expect(railOrder()).toEqual(["term-b", "term-a", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A20: the rail's grouping invariant survives a reorder inside group 2", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-e"), { button: 0, clientX: 5, clientY: 65 });
+    win("pointermove", 5, 95); // term-f's lower half (rect 80-100)
+    win("pointerup", 5, 95);
+
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-f", "term-e"]);
+  });
+
+  it("A21: a one-terminal group can be pressed and dragged without error, reordering nothing", async () => {
+    useUiStore.setState({
+      terminals: {
+        1: { activeTabId: "t-solo", tabs: [tab("t-solo", "term-solo")] },
+        2: { activeTabId: "t-x", tabs: [tab("t-x", "term-x"), tab("t-y", "term-y")] },
+      },
+    });
+    renderSidebar();
+    await screen.findByText("term-solo");
+    stubRects(["term-solo", "term-x", "term-y"]);
+
+    // Drop on itself.
+    fireEvent.pointerDown(rowFor("term-solo"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 12);
+    win("pointerup", 5, 12);
+    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-solo"]);
+
+    // Release over empty rail space.
+    fireEvent.pointerDown(rowFor("term-solo"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 500);
+    win("pointerup", 5, 500);
+    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-solo"]);
+  });
+
+  it("A21: a two-terminal group swaps in both directions", async () => {
+    useUiStore.setState({
+      terminals: {
+        1: { activeTabId: "t-solo", tabs: [tab("t-solo", "term-solo")] },
+        2: { activeTabId: "t-x", tabs: [tab("t-x", "term-x"), tab("t-y", "term-y")] },
+      },
+    });
+    renderSidebar();
+    await screen.findByText("term-x");
+    stubRects(["term-solo", "term-x", "term-y"]);
+
+    fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 25 });
+    win("pointermove", 5, 55); // term-y's lower half (rect 40-60, midpoint 50)
+    win("pointerup", 5, 55);
+    expect(useUiStore.getState().terminals[2].tabs.map((t) => t.id)).toEqual(["t-y", "t-x"]);
+
+    stubRects(["term-solo", "term-y", "term-x"]);
+    fireEvent.pointerDown(rowFor("term-x"), { button: 0, clientX: 5, clientY: 45 });
+    win("pointermove", 5, 22); // term-y's upper half (rect 20-40)
+    win("pointerup", 5, 22);
+    expect(useUiStore.getState().terminals[2].tabs.map((t) => t.id)).toEqual(["t-x", "t-y"]);
+  });
+
+  it("A22: a below-threshold press still clicks; an above-threshold press does not", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    // 3px move — below the 4px threshold — still acts as a click.
+    fireEvent.pointerDown(rowFor("term-b"), { button: 0, clientX: 5, clientY: 22 });
+    win("pointermove", 5, 25);
+    win("pointerup", 5, 25);
+    fireEvent.click(rowFor("term-b"));
+    expect(useUiStore.getState().terminals[1].activeTabId).toBe("t-b");
+
+    useUiStore.setState((s) => ({
+      terminals: { ...s.terminals, 1: { ...s.terminals[1], activeTabId: "t-a" } },
+    }));
+
+    // 12px move — above the threshold — is a drag, and the resulting click
+    // must not also focus the row.
+    fireEvent.pointerDown(rowFor("term-c"), { button: 0, clientX: 5, clientY: 41 });
+    win("pointermove", 5, 53);
+    win("pointerup", 5, 53);
+    fireEvent.click(rowFor("term-c"));
+    expect(useUiStore.getState().terminals[1].activeTabId).toBe("t-a");
+  });
+
+  it("A23: pressing and dragging the close button still just closes the tab", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    const closeBtn = within(rowFor("term-a")).getByLabelText("Close term-a terminal");
+
+    fireEvent.pointerDown(closeBtn, { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 30);
+    win("pointerup", 5, 30);
+    fireEvent.click(closeBtn);
+
+    expect(useUiStore.getState().terminals[1].tabs.map((t) => t.id)).toEqual(["t-b", "t-c"]);
+  });
+
+  it("A24: a press-and-move on a row mid-rename starts no drag", async () => {
+    seedRail();
+    renderSidebar(undefined, undefined, true);
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.contextMenu(rowFor("term-a"));
+    fireEvent.click(screen.getByText("Rename terminal"));
+    expect(screen.getByLabelText("Rename terminal")).toBeTruthy();
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 35);
+    win("pointerup", 5, 35);
+
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+    // The drag ghost (mounted alongside Sidebar here) renders only while a
+    // drag is active — it must never appear for a disabled (renaming) row.
+    expect(
+      [...document.querySelectorAll("div")].some((el) => el.className.includes("z-[200]")),
+    ).toBe(false);
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A25: a right-click still opens the menu and rename still works after a completed drag", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 35);
+    win("pointerup", 5, 35);
+    expect(railOrder()).toEqual(["term-b", "term-a", "term-c", "term-e", "term-f"]);
+
+    fireEvent.contextMenu(rowFor("term-a"));
+    expect(screen.getByText("Rename terminal")).toBeTruthy();
+    fireEvent.click(screen.getByText("Rename terminal"));
+
+    const input = screen.getByLabelText("Rename terminal");
+    fireEvent.change(input, { target: { value: "renamed" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(useUiStore.getState().terminals[1].tabs.find((t) => t.id === "t-a")?.customTitle).toBe(
+      "renamed",
+    );
+  });
+
+  it("A26: a double-click does not drag, reorder, or enter rename mode", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+
+    // A real double-click is two press/release pairs at the same point, with
+    // no movement between them — below the 4px drag threshold each time.
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointerup", 5, 5);
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointerup", 5, 5);
+    fireEvent.doubleClick(rowFor("term-a"));
+
+    expect(screen.queryByLabelText("Rename terminal")).toBeNull();
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+  });
+
+  it("A27: releasing outside the rail reorders nothing and changes no focus", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    const before = useUiStore.getState().terminals[1].activeTabId;
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 5000); // well outside every stubbed row
+    win("pointerup", 5, 5000);
+
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    expect(useUiStore.getState().terminals[1].activeTabId).toBe(before);
+  });
+
+  it("A28: dropping on the '+ New terminal' button reorders and creates nothing", async () => {
+    seedRail();
+    renderSidebar();
+    await screen.findByText("term-a");
+    stubRects(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    // Stub the button's rect to actually sit below the last stubbed row
+    // (rect 80-100), so the release genuinely lands on it.
+    const newTermButton = screen.getByText("New terminal").closest("button") as HTMLElement;
+    newTermButton.getBoundingClientRect = () => rect(0, 100, 100, 120);
+    const newTermCount = useUiStore.getState().terminals[1].tabs.length;
+
+    fireEvent.pointerDown(rowFor("term-a"), { button: 0, clientX: 5, clientY: 5 });
+    win("pointermove", 5, 110); // over the "+ New terminal" button's stubbed rect
+    win("pointerup", 5, 110);
+
+    expect(railOrder()).toEqual(["term-a", "term-b", "term-c", "term-e", "term-f"]);
+    expect(useUiStore.getState().terminals[1].tabs.length).toBe(newTermCount);
+    expect(document.querySelectorAll("[data-drop-edge]")).toHaveLength(0);
   });
 });

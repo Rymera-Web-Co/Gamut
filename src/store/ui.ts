@@ -412,6 +412,18 @@ interface UiState {
   selectTerminalTab: (groupId: number, tabId: string) => void;
   /** Rename a tab; an empty/blank title reverts to the auto-derived default. */
   renameTerminalTab: (groupId: number, tabId: string, title: string) => void;
+  /**
+   * Reorder a tab within its group (sidebar terminal rail drag, #340). Moves
+   * `srcId` to just before/after `targetId`. Reorder only — never touches
+   * `activeTabId`, any `TermTab` object, or its panes/PTYs, so the active
+   * terminal and every running session are preserved.
+   */
+  reorderTerminalTab: (
+    groupId: number,
+    srcId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => void;
   setActivePane: (groupId: number, tabId: string, paneId: string) => void;
   /**
    * Reveal a terminal pane and put keyboard focus in it: open the panel, switch
@@ -697,6 +709,27 @@ export const useUiStore = create<UiState>((set, get) => ({
       const g = s.terminals[groupId];
       if (!g) return {};
       const tabs = g.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t));
+      return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
+    }),
+  reorderTerminalTab: (groupId, srcId, targetId, position) =>
+    set((s) => {
+      const g = s.terminals[groupId];
+      if (!g) return {};
+      if (srcId === targetId) return {};
+      const srcIdx = g.tabs.findIndex((t) => t.id === srcId);
+      if (srcIdx < 0) return {};
+      const src = g.tabs[srcIdx];
+      // Remove first, THEN find the target's index in what's left — indexing
+      // into the original array here would be off by one whenever the target
+      // sits after the source.
+      const rest = g.tabs.filter((t) => t.id !== srcId);
+      const targetIdx = rest.findIndex((t) => t.id === targetId);
+      if (targetIdx < 0) return {};
+      const insertAt = position === "before" ? targetIdx : targetIdx + 1;
+      // The computed slot is the source's own index: the order is unchanged, so
+      // don't hand the persistence subscriber a fresh `terminals` for nothing.
+      if (insertAt === srcIdx) return {};
+      const tabs = [...rest.slice(0, insertAt), src, ...rest.slice(insertAt)];
       return { terminals: { ...s.terminals, [groupId]: { ...g, tabs } } };
     }),
   focusTerminal: (groupId, tabId, paneId) => {

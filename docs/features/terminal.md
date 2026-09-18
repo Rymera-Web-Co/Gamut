@@ -42,9 +42,10 @@ or `tail -f` keeps going while the terminal is hidden.
   last tab of a group they step into the first tab of the next group (and make that group
   active), and the order wraps from the very last terminal back to the very first.
   `⌘/Ctrl+⌥+1`…`9` stays an index into the active group's own tab strip.
-- **Reorder** — drag a tab and drop it before/after another tab in the strip; an
-  insertion line shows where it'll land. Reordering stays within the group and
-  doesn't change which tab is active or disturb running panes.
+- **Reorder** — in the sidebar terminal rail, drag a terminal row and drop it
+  before/after another row in the same group; an insertion line shows where
+  it'll land. Reordering stays within the group and doesn't change which
+  terminal is active or disturb running panes.
 - **Split** the active tab to show panes side-by-side; close a split with its **×**
   (shown only when a tab has more than one pane). A tab's title shows a pane count when
   split (e.g. `repo ×2`).
