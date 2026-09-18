@@ -140,6 +140,7 @@ beforeEach(() => {
   useSettings.setState({ values: { ...DEFAULTS } });
   useUiStore.setState({
     activeGroupId: 1,
+    terminalViewGroupId: 1,
     activeRepoId: null,
     activeWorktreePath: null,
     terminalOpen: false,
@@ -531,15 +532,41 @@ describe("Sidebar terminal rail", () => {
     expect(screen.getByText("2 running")).toBeTruthy();
   });
 
-  it("clicking a terminal row focuses it (group + tab + panel)", async () => {
+  it("clicking a terminal row shows it without moving the active group (#339)", async () => {
+    seedTerminals();
+    renderSidebar();
+    fireEvent.click(await screen.findByText("beta shell"));
+
+    const s = useUiStore.getState();
+    // The terminal view crosses into group 2; the workspace stays on group 1,
+    // so the sidebar, repo list and main view do not jump.
+    expect(s.terminalViewGroupId).toBe(2);
+    expect(s.activeGroupId).toBe(1);
+    expect(s.terminalOpen).toBe(true);
+    expect(s.terminals[2].activeTabId).toBe("tab-2");
+  });
+
+  it("clicking a terminal row still switches group with terminalFollowGroup on", async () => {
+    useSettings.setState({ values: { ...DEFAULTS, terminalFollowGroup: true } });
     seedTerminals();
     renderSidebar();
     fireEvent.click(await screen.findByText("beta shell"));
 
     const s = useUiStore.getState();
     expect(s.activeGroupId).toBe(2);
+    expect(s.terminalViewGroupId).toBe(2);
     expect(s.terminalOpen).toBe(true);
     expect(s.terminals[2].activeTabId).toBe("tab-2");
+  });
+
+  it("highlights the focused row even when its group is not the active one (#339)", async () => {
+    seedTerminals();
+    useUiStore.setState({ activeGroupId: 1, terminalViewGroupId: 2, terminalOpen: true });
+    renderSidebar();
+
+    // Keyed off the active group, nothing in the whole rail would be marked.
+    expect((await screen.findByText("beta shell")).getAttribute("aria-current")).toBe("true");
+    expect(screen.getByText("alpha shell").getAttribute("aria-current")).toBeNull();
   });
 
   it("the hover close control kills every pane PTY and drops the tab (#280)", async () => {

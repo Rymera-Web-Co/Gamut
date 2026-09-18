@@ -52,7 +52,13 @@ export interface TerminalShortcutContext {
    * chord needs all of that, not just a tab selection (#328).
    */
   focusTerminal: (groupId: number, tabId: string, paneId: string) => void;
-  activeGroupId: number | null;
+  /**
+   * The group whose terminals are on screen — not necessarily the active group
+   * (#339). A rename rather than a second field on purpose: every chord here
+   * acts on the session the user is looking at, so a lingering `activeGroupId`
+   * could only ever target the wrong group's record.
+   */
+  viewGroupId: number | null;
   gt: GroupTerminals | undefined;
   activeTab: TermTab | undefined;
   /**
@@ -91,20 +97,33 @@ export function flattenTerminalTabs(
 }
 
 /**
- * The tab `dir` steps away from the active one in the ring, wrapping past both
- * ends — so the last tab of a group steps into the first tab of the next group,
- * and the very last tab wraps back to the very first. Null when the ring holds
- * fewer than two tabs, or the active tab is not in it (nothing to step from).
+ * The tab `dir` steps away from the current position in the ring, wrapping past
+ * both ends — so the last tab of a group steps into the first tab of the next
+ * group, and the very last tab wraps back to the very first.
+ *
+ * A position that is not in the ring enters it instead of no-opping (#339) —
+ * at the first tab going forward, the last tab going back, so the first press
+ * moves the way the user asked. The position now comes from the *viewed*
+ * group, which is null before the first focus and whose `activeTabId` is null
+ * for a group with no tabs — without this the chord would dead-end
+ * permanently. Null only when there is genuinely nothing to step to: an empty
+ * ring, or a single tab that is already the current position.
  */
 export function stepTerminalTab(
   ring: GroupTab[],
-  activeGroupId: number | null,
-  activeTabId: string | null | undefined,
+  fromGroupId: number | null,
+  fromTabId: string | null | undefined,
   dir: 1 | -1,
 ): GroupTab | null {
+  if (ring.length === 0) return null;
+  const i = ring.findIndex((e) => e.groupId === fromGroupId && e.tab.id === fromTabId);
+  // No current position — the viewed group has no terminals, or nothing has
+  // been focused yet (#339). Enter the ring from the end the step is heading
+  // away from, so the first press moves in the direction the user asked for
+  // instead of always walking forward. Without this the chord dead-ends: the
+  // old `null` return made Ctrl+Tab a permanent no-op in that state.
+  if (i < 0) return dir === 1 ? ring[0] : ring[ring.length - 1];
   if (ring.length < 2) return null;
-  const i = ring.findIndex((e) => e.groupId === activeGroupId && e.tab.id === activeTabId);
-  if (i < 0) return null;
   return ring[(i + dir + ring.length) % ring.length];
 }
 
@@ -118,8 +137,9 @@ export function stepTerminalTab(
  *   ⌘⌥1–9 jump to tab (9 = last)   ⌘D split right   ⌘⇧D split down
  *
  * The two next/prev bindings walk every terminal in every group (#328) and
- * switch group when they step out of the active one; ⌘⌥1–9 stays an index into
- * the active group's own tab strip.
+ * move the terminal view when they step out of the viewed one — the active
+ * group itself no longer follows (#339); ⌘⌥1–9 stays an index into the viewed
+ * group's own tab strip.
  *
  * Everything but ⌘T and ⌘W is scoped to the terminal pane (`hostRef`) having
  * focus, so it never steals keys from the editor (e.g. Monaco's own ⌘D). Those
@@ -171,14 +191,14 @@ export function useTerminalShortcuts(
       }
       // The rest act on the focused terminal pane only.
       const focused = hostRef.current?.contains(document.activeElement) ?? false;
-      if (!focused || s.activeGroupId == null) return;
+      if (!focused || s.viewGroupId == null) return;
       const tabs = s.gt?.tabs ?? [];
       // The next/prev-terminal step both bindings below share: one ring of
       // every terminal in every group (#328).
       const step = (dir: 1 | -1) =>
         stepTerminalTab(
           flattenTerminalTabs(s.groupOrder, s.terminals),
-          s.activeGroupId,
+          s.viewGroupId,
           s.gt?.activeTabId,
           dir,
         );
@@ -221,14 +241,14 @@ export function useTerminalShortcuts(
         if (next) s.focusTerminal(next.groupId, next.tab.id, next.tab.activePaneId);
         return;
       }
-      // ⌘⌥1–9 jumps by index inside the *active group's* tab strip — the one
-      // tab binding that deliberately stays group-scoped (#328).
+      // ⌘⌥1–9 jumps by index inside the *viewed group's* tab strip — the one
+      // tab binding that deliberately stays group-scoped (#328, #339).
       if (e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
         const n = Number(e.code.slice(5));
         const idx = n === 9 ? tabs.length - 1 : n - 1;
         if (tabs[idx]) {
           e.preventDefault();
-          s.selectTerminalTab(s.activeGroupId, tabs[idx].id);
+          s.selectTerminalTab(s.viewGroupId, tabs[idx].id);
         }
         return;
       }

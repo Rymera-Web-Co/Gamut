@@ -96,7 +96,12 @@ describe("filePathsForShell", () => {
 
 describe("sendToActiveTerminal", () => {
   beforeEach(() => {
-    useUiStore.setState({ activeGroupId: 1, terminals: {}, terminalOpen: false });
+    useUiStore.setState({
+      activeGroupId: 1,
+      terminalViewGroupId: 1,
+      terminals: {},
+      terminalOpen: false,
+    });
   });
 
   it("queues the text against the active pane and reveals it", () => {
@@ -137,5 +142,50 @@ describe("sendToActiveTerminal", () => {
     useUiStore.setState({ activeGroupId: null });
     sendToActiveTerminal("src/foo.ts");
     expect(useUiStore.getState().terminalOpen).toBe(false);
+  });
+
+  // #339 decoupled the terminal view from the active group, but this action is
+  // deliberately unchanged: the file it sends belongs to the ACTIVE group's
+  // repo, so the active group's terminal is the only coherent target. It ends
+  // in focusTerminal, so the view follows the command there — it never lands
+  // off screen.
+  it("keeps targeting the active group and pulls the view back to it", () => {
+    useUiStore.setState({
+      activeGroupId: 1,
+      terminalViewGroupId: 2,
+      terminals: {
+        1: {
+          activeTabId: "tab-1",
+          tabs: [
+            {
+              id: "tab-1",
+              title: "gamut",
+              panes: [{ id: "term-1", cwd: "/repo" }],
+              activePaneId: "term-1",
+            },
+          ],
+        },
+        2: {
+          activeTabId: "tab-2",
+          tabs: [
+            {
+              id: "tab-2",
+              title: "other",
+              panes: [{ id: "term-2", cwd: "/other" }],
+              activePaneId: "term-2",
+            },
+          ],
+        },
+      },
+    });
+
+    sendToActiveTerminal("src/foo.ts#L1");
+
+    expect(takePendingCommand("term-1")).toBe("src/foo.ts#L1");
+    expect(takePendingCommand("term-2")).toBeUndefined();
+    const s = useUiStore.getState();
+    expect(s.terminalViewGroupId).toBe(1);
+    expect(s.activeGroupId).toBe(1);
+    expect(s.terminalOpen).toBe(true);
   });
 });

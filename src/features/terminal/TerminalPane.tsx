@@ -29,6 +29,7 @@ const MIN_SHARE = 0.08;
 export function TerminalPane() {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
   const activeRepoId = useUiStore((s) => s.activeRepoId);
   const activeWorktreePath = useUiStore((s) => s.activeWorktreePath);
   const terminals = useUiStore((s) => s.terminals);
@@ -55,13 +56,20 @@ export function TerminalPane() {
 
   const resizeTerminalSplit = useUiStore((s) => s.resizeTerminalSplit);
 
-  const gt = activeGroupId != null ? terminals[activeGroupId] : undefined;
+  // The group whose terminals are on screen (#339). Usually the active group,
+  // but focusing a terminal from another group moves the view alone. The `??`
+  // covers the boot window before useActiveGroupFallback has picked a group.
+  // Everything that acts on the visible session reads this; only ⌘T's target
+  // (`defaultTarget`/`handleNewTab`) stays on the active group.
+  const viewGroupId = terminalViewGroupId ?? activeGroupId;
+
+  const gt = viewGroupId != null ? terminals[viewGroupId] : undefined;
   const activeTab = gt?.tabs.find((t) => t.id === gt.activeTabId);
   const activePanes = activeTab?.panes ?? [];
   // Stable dep so the layout effect re-runs on tab/grid changes — rows, and
   // the width/height weights a divider drag rebalances (#316). Weights are
   // rounded so float noise can't churn the key.
-  const paneKey = `${activeGroupId}|${activeTab?.id ?? ""}|${(activeTab?.rowSizes ?? [])
+  const paneKey = `${viewGroupId}|${activeTab?.id ?? ""}|${(activeTab?.rowSizes ?? [])
     .map((w) => w.toFixed(3))
     .join(":")}|${activePanes
     .map((p) => `${p.id}@${p.row ?? 0}x${(p.size ?? 1).toFixed(3)}`)
@@ -80,7 +88,7 @@ export function TerminalPane() {
     theme,
     visiblePaneId,
     terminalFocusNonce,
-    activeGroupId,
+    viewGroupId,
     markTermActivity,
     clearTermActivity,
     setActivePane,
@@ -113,6 +121,10 @@ export function TerminalPane() {
     return newTabDir === "group" ? (groupFolder ?? firstRepo) : (firstRepo ?? groupFolder);
   }
 
+  // ⌘T stays bound to the ACTIVE group — it opens a terminal for the workspace
+  // you are looking at. `addTerminalTab` pulls the terminal view to whichever
+  // group it reveals a tab in (#339), so the new tab is never opened out of
+  // sight when the view was on another group.
   function handleNewTab() {
     const target = defaultTarget();
     if (target && activeGroupId != null) {
@@ -121,23 +133,23 @@ export function TerminalPane() {
   }
 
   function handleSplit(splitDirection: SplitDirection) {
-    if (activeGroupId == null || !activeTab) return;
+    if (viewGroupId == null || !activeTab) return;
     const active =
       activeTab.panes.find((p) => p.id === activeTab.activePaneId) ?? activeTab.panes[0];
-    splitTerminal(activeGroupId, active.cwd, splitDirection);
+    splitTerminal(viewGroupId, active.cwd, splitDirection);
   }
 
   function handleCloseTab(tabId: string) {
-    if (activeGroupId == null) return;
+    if (viewGroupId == null) return;
     const tab = gt?.tabs.find((t) => t.id === tabId);
     tab?.panes.forEach((p) => killPane(p.id));
-    closeTerminalTab(activeGroupId, tabId);
+    closeTerminalTab(viewGroupId, tabId);
   }
 
   function handleClosePane(paneId: string) {
-    if (activeGroupId == null || !activeTab) return;
+    if (viewGroupId == null || !activeTab) return;
     killPane(paneId);
-    closeTerminalPane(activeGroupId, activeTab.id, paneId);
+    closeTerminalPane(viewGroupId, activeTab.id, paneId);
   }
 
   useTerminalShortcuts(hostRef, {
@@ -146,7 +158,7 @@ export function TerminalPane() {
     handleCloseTab,
     selectTerminalTab,
     focusTerminal,
-    activeGroupId,
+    viewGroupId,
     gt,
     activeTab,
     // ⌘W is app-wide, so it must know whether the terminal is actually on
@@ -205,8 +217,8 @@ export function TerminalPane() {
       commitRaf.current = 0;
       const pending = pendingCommit.current;
       pendingCommit.current = null;
-      if (pending && activeGroupId != null && activeTab) {
-        resizeTerminalSplit(activeGroupId, activeTab.id, pending);
+      if (pending && viewGroupId != null && activeTab) {
+        resizeTerminalSplit(viewGroupId, activeTab.id, pending);
       }
     });
   }
@@ -261,7 +273,7 @@ export function TerminalPane() {
 
   function onDividerMove(e: React.PointerEvent<HTMLElement>) {
     const d = dragRef.current;
-    if (!d || activeGroupId == null || !activeTab) return;
+    if (!d || viewGroupId == null || !activeTab) return;
     if (d.kind === "pane") {
       const [left, right] = resizePair(
         d.startLeft,
@@ -297,8 +309,8 @@ export function TerminalPane() {
     }
     const pending = pendingCommit.current;
     pendingCommit.current = null;
-    if (pending && activeGroupId != null && activeTab) {
-      resizeTerminalSplit(activeGroupId, activeTab.id, pending);
+    if (pending && viewGroupId != null && activeTab) {
+      resizeTerminalSplit(viewGroupId, activeTab.id, pending);
     }
     document.body.style.cursor = "";
     dragRef.current = null;
@@ -309,7 +321,7 @@ export function TerminalPane() {
   // same ARIA-separator contract the sidebar splitter implements.
   const NUDGE_PX = 100;
   function nudgePane(i: number, dir: -1 | 1 | 0) {
-    if (activeGroupId == null || !activeTab || i < 1) return;
+    if (viewGroupId == null || !activeTab || i < 1) return;
     const row = activePanes[i].row ?? 0;
     const rowTotal = activePanes
       .filter((p) => (p.row ?? 0) === row)
@@ -320,12 +332,12 @@ export function TerminalPane() {
       dir === 0
         ? [(a + b) / 2, (a + b) / 2]
         : resizePair(a, b, rowTotal, dir * NUDGE_PX, hostRef.current?.clientWidth || 1, MIN_SHARE);
-    resizeTerminalSplit(activeGroupId, activeTab.id, {
+    resizeTerminalSplit(viewGroupId, activeTab.id, {
       paneSizes: { [activePanes[i - 1].id]: left, [activePanes[i].id]: right },
     });
   }
   function nudgeRow(pos: number, dir: -1 | 1 | 0) {
-    if (activeGroupId == null || !activeTab || pos < 1) return;
+    if (viewGroupId == null || !activeTab || pos < 1) return;
     const rowCount = new Set(activePanes.map((p) => p.row ?? 0)).size;
     const rowSizes = Array.from({ length: rowCount }, (_, i) => activeTab.rowSizes?.[i] ?? 1);
     const total = rowSizes.reduce((a, b) => a + b, 0);
@@ -343,7 +355,7 @@ export function TerminalPane() {
           );
     rowSizes[pos - 1] = above;
     rowSizes[pos] = below;
-    resizeTerminalSplit(activeGroupId, activeTab.id, { rowSizes });
+    resizeTerminalSplit(viewGroupId, activeTab.id, { rowSizes });
   }
 
   // Horizontal (between-rows) divider positions: the top edge of each row

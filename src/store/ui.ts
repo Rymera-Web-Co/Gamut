@@ -274,6 +274,12 @@ interface UiState {
   // tabs/panes (in-memory, by group id).
   terminalOpen: boolean;
   terminals: Record<number, GroupTerminals>;
+  // Which group's terminals the terminal pane is showing (#339). Normally the
+  // active group, but focusing a terminal from another group moves this alone —
+  // the sidebar, repo list and main view stay where they are — unless the
+  // `terminalFollowGroup` setting is on. `null` until the first focus; readers
+  // fall back to `activeGroupId`. In-memory only, like `activeGroupId`.
+  terminalViewGroupId: number | null;
   // Per-group memory of the last-selected repo and view tab, keyed by group id.
   // Switching groups restores the entry for the group being entered (the repo
   // is re-validated against the group's actual membership by the
@@ -331,7 +337,15 @@ interface UiState {
   showView: (view: View) => void;
   setReviewMode: (mode: ReviewMode) => void;
   setActiveRepo: (id: number | null, worktreePath?: string | null) => void;
+  /**
+   * Select a group. An explicit group selection is a "take me to this group"
+   * intent, so it drags the terminal view along (#339) — that is what keeps the
+   * sidebar group click, ⌘1–9, the group-cycle chord and the external nav
+   * working exactly as before, with no change at any of those call sites.
+   */
   setActiveGroup: (id: number | null) => void;
+  /** Point the terminal pane at a group without touching the active group (#339). */
+  setTerminalViewGroup: (id: number | null) => void;
   setSelectedPr: (n: number | null) => void;
   setHistorySha: (sha: string | null) => void;
   setFilesPath: (path: string | null) => void;
@@ -426,12 +440,31 @@ const restoredTerminals = storedTerminals();
 // persisted `terminalOpen` would greet the user with an empty terminal.
 const hasRestoredTabs = Object.keys(restoredTerminals.terminals).length > 0;
 
+/**
+ * The `terminalViewGroupId` patch to apply after a close emptied a group's tab
+ * list. Closing the last tab of the group the pane is viewing — while that
+ * group is not the active one — would strand the pane on an empty group whose
+ * "New terminal" button targets a different group, with no row left in the
+ * sidebar rail to get back from. Snap the view to the active group instead
+ * (#339). Any other close leaves the view alone.
+ */
+function terminalViewSnapBack(
+  s: UiState,
+  groupId: number,
+  remainingTabs: TermTab[],
+): { terminalViewGroupId?: number | null } {
+  if (remainingTabs.length > 0) return {};
+  if (s.terminalViewGroupId !== groupId || s.activeGroupId === groupId) return {};
+  return { terminalViewGroupId: s.activeGroupId };
+}
+
 export const useUiStore = create<UiState>((set, get) => ({
   view: "files",
   reviewMode: "working",
   activeRepoId: null,
   activeWorktreePath: null,
   activeGroupId: null,
+  terminalViewGroupId: null,
   selectedPrNumber: null,
   repoSidebarHidden: storedRepoSidebarHidden(),
   pushConfirm: null,
@@ -467,7 +500,13 @@ export const useUiStore = create<UiState>((set, get) => ({
   // the content area never shows a repo outside the active group.
   setActiveGroup: (id) =>
     set((s) => {
-      if (id === s.activeGroupId) return {};
+      // The terminal view follows an explicit group selection even when the
+      // group is already active (#339): the user may be looking at another
+      // group's terminal, and a bare early return would strand the view there
+      // — clicking the active group in the sidebar would do nothing at all.
+      if (id === s.activeGroupId) {
+        return s.terminalViewGroupId === id ? {} : { terminalViewGroupId: id };
+      }
       const groupSelections =
         s.activeGroupId == null
           ? s.groupSelections
@@ -478,6 +517,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       const remembered = id != null ? groupSelections[id] : undefined;
       return {
         activeGroupId: id,
+        terminalViewGroupId: id,
         groupSelections,
         activeRepoId: remembered ? remembered.repoId : null,
         activeWorktreePath: null,
@@ -485,6 +525,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         selectedPrNumber: null,
       };
     }),
+  setTerminalViewGroup: (terminalViewGroupId) => set({ terminalViewGroupId }),
   setSelectedPr: (selectedPrNumber) => set({ selectedPrNumber }),
   setHistorySha: (historySha) => set({ historySha }),
   setFilesPath: (filesPath) => set({ filesPath }),
@@ -543,6 +584,14 @@ export const useUiStore = create<UiState>((set, get) => ({
       const g = s.terminals[groupId] ?? { tabs: [], activeTabId: null };
       return {
         nextTermId: n + 1,
+        // A revealed new tab must be the one on screen (#339). The view moves
+        // independently of the active group now, so without this every "New
+        // terminal" affordance that targets a group other than the viewed one
+        // — the rail's +, "Open terminal here" on a repo/worktree row, the
+        // file-tree folder menu — would spawn a live shell out of sight and
+        // look like it did nothing. A background tab keeps the view put: not
+        // stealing it is the whole point of that flag.
+        ...(background ? {} : { terminalViewGroupId: groupId }),
         terminals: {
           ...s.terminals,
           [groupId]: {
@@ -652,7 +701,12 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
   focusTerminal: (groupId, tabId, paneId) => {
     const ui = get();
-    ui.setActiveGroup(groupId);
+    // Revealing a terminal moves the terminal view alone (#339): the active
+    // group — and with it the sidebar, the repo list and the main view — stays
+    // put, so you can browse one group while working in another's terminal.
+    // `terminalFollowGroup` opts back into the old coupled behaviour.
+    if (useSettings.getState().values.terminalFollowGroup) ui.setActiveGroup(groupId);
+    ui.setTerminalViewGroup(groupId);
     ui.setTerminalOpen(true);
     ui.selectTerminalTab(groupId, tabId);
     ui.setActivePane(groupId, tabId, paneId);
@@ -671,7 +725,10 @@ export const useUiStore = create<UiState>((set, get) => ({
             ? tabs[Math.min(idx, tabs.length - 1)].id
             : null
           : g.activeTabId;
-      return { terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
+      return {
+        ...terminalViewSnapBack(s, groupId, tabs),
+        terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } },
+      };
     }),
   closeTerminalPane: (groupId, tabId, paneId) =>
     set((s) => {
@@ -693,7 +750,11 @@ export const useUiStore = create<UiState>((set, get) => ({
               ? tabs[Math.min(idx, tabs.length - 1)].id
               : null
             : g.activeTabId;
-        return { ...patch, terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } } };
+        return {
+          ...patch,
+          ...terminalViewSnapBack(s, groupId, tabs),
+          terminals: { ...s.terminals, [groupId]: { tabs, activeTabId } },
+        };
       }
       // If that was the row's last pane, the row collapses: rows below shift
       // up and its height weight is dropped, so numbering stays contiguous.

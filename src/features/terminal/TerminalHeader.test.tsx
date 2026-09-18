@@ -59,6 +59,7 @@ function repo(id: number, name: string, overrides: Partial<Repo> = {}): Repo {
 function seedTerminal(cwd = "/repos/alpha") {
   useUiStore.setState({
     activeGroupId: 2,
+    terminalViewGroupId: 2,
     terminalOpen: true,
     terminals: {
       2: {
@@ -82,6 +83,7 @@ beforeEach(() => {
   mocks.repos = [repo(1, "alpha", { group_ids: [2] })];
   useUiStore.setState({
     activeGroupId: 2,
+    terminalViewGroupId: 2,
     activeRepoId: null,
     activeWorktreePath: null,
     terminalOpen: true,
@@ -204,5 +206,70 @@ describe("TerminalHeader", () => {
 
     expect(useUiStore.getState().terminals[2].tabs[0].customTitle).toBeUndefined();
     expect(screen.getByText("alpha shell")).toBeTruthy();
+  });
+
+  // #339: the pane has no tab strip, so this breadcrumb is what tells the user
+  // which group the on-screen terminal belongs to. It must name the VIEWED
+  // group — the terminal can belong to a group that is not the active one.
+  describe("viewing a group that is not the active one (#339)", () => {
+    /** Group 1 active with its own session; group 2 viewed. */
+    function seedCrossGroup() {
+      seedTerminal();
+      useUiStore.setState({
+        activeGroupId: 1,
+        terminalViewGroupId: 2,
+        terminals: {
+          1: {
+            activeTabId: "tab-9",
+            tabs: [
+              {
+                id: "tab-9",
+                title: "default shell",
+                panes: [{ id: "term-9", cwd: "/repos/other" }],
+                activePaneId: "term-9",
+              },
+            ],
+          },
+          ...useUiStore.getState().terminals,
+        },
+      });
+    }
+
+    it("names the viewed group in the breadcrumb, not the active group", () => {
+      seedCrossGroup();
+      render(<TerminalHeader />);
+
+      expect(screen.getByText("Tools")).toBeTruthy();
+      expect(screen.queryByText("Default")).toBeNull();
+      // And the session it describes is the viewed group's, not group 1's.
+      expect(screen.getByText("alpha shell")).toBeTruthy();
+    });
+
+    it("Split acts on the viewed group's session and leaves the active group's alone", () => {
+      seedCrossGroup();
+      const before = useUiStore.getState().terminals[1];
+      render(<TerminalHeader />);
+
+      fireEvent.click(screen.getByLabelText("Split terminal right"));
+
+      const s = useUiStore.getState();
+      expect(s.terminals[2].tabs[0].panes).toHaveLength(2);
+      // Same object reference: group 1's record was not rewritten at all.
+      expect(s.terminals[1]).toBe(before);
+    });
+
+    it("renaming writes to the viewed group's tab", () => {
+      seedCrossGroup();
+      render(<TerminalHeader />);
+
+      fireEvent.click(screen.getByText("alpha shell"));
+      const input = screen.getByLabelText("Rename terminal");
+      fireEvent.change(input, { target: { value: "crawler" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      const s = useUiStore.getState();
+      expect(s.terminals[2].tabs[0].customTitle).toBe("crawler");
+      expect(s.terminals[1].tabs[0].customTitle).toBeUndefined();
+    });
   });
 });

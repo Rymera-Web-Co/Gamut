@@ -102,6 +102,7 @@ function activityLabel(kind: TermActivityKind): string {
  */
 function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const activeGroupId = useUiStore((s) => s.activeGroupId);
+  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
   const terminalOpen = useUiStore((s) => s.terminalOpen);
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
@@ -115,8 +116,12 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const groups = useGroups();
 
   const activity = tabActivityKind(tab, termActivity);
+  // Keyed off the VIEWED group, not the active one (#339): the focused terminal
+  // may belong to a group that is not active, and keying off `activeGroupId`
+  // would leave no row in the whole rail highlighted.
+  const viewGroupId = terminalViewGroupId ?? activeGroupId;
   const current =
-    terminalOpen && group.id === activeGroupId && terminals[group.id]?.activeTabId === tab.id;
+    terminalOpen && group.id === viewGroupId && terminals[group.id]?.activeTabId === tab.id;
   const cwd = tab.panes[0]?.cwd ?? "";
   // The registered repo this session is rooted in, when its cwd matches one.
   const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
