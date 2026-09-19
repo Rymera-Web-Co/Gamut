@@ -45,9 +45,10 @@ import {
   useRepos,
   useSetRepoGroups,
 } from "@/features/repos/api";
-import { activityColor, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
+import { activityColor, tabActivityKind, tabsActivityKind } from "@/features/terminal/activity";
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
+import { dropEdge } from "@/lib/dropEdge";
 import { GROUP_ICONS, groupColor, groupInitials } from "@/lib/groupIcons";
 import { groupToReveal, visibleRepos } from "@/lib/groupRepos";
 import {
@@ -59,6 +60,7 @@ import {
   type RepoStatus,
 } from "@/lib/ipc";
 import { pathBasename } from "@/lib/format";
+import { useDraggable, useDropTarget } from "@/lib/usePointerDnd";
 import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type TermActivityKind, type TermTab } from "@/store/ui";
@@ -100,15 +102,16 @@ function activityLabel(kind: TermActivityKind): string {
  * #280). Right-click opens a session menu (focus / rename / copy path / open
  * repo workspace / close); rename happens inline in the row.
  */
-function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
-  const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
+function TerminalRow({ group, tab }: { group: Group | undefined; tab: TermTab }) {
   const terminalOpen = useUiStore((s) => s.terminalOpen);
-  const terminals = useUiStore((s) => s.terminals);
+  // Narrow: the row reads only which tab is active, so a reorder, rename,
+  // resize or split elsewhere in the list must not re-render every row.
+  const activeTabId = useUiStore((s) => s.terminals.activeTabId);
   const termActivity = useUiStore((s) => s.termActivity);
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
+  const reorderTerminalTab = useUiStore((s) => s.reorderTerminalTab);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
@@ -116,12 +119,9 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   const groups = useGroups();
 
   const activity = tabActivityKind(tab, termActivity);
-  // Keyed off the VIEWED group, not the active one (#339): the focused terminal
-  // may belong to a group that is not active, and keying off `activeGroupId`
-  // would leave no row in the whole rail highlighted.
-  const viewGroupId = terminalViewGroupId ?? activeGroupId;
-  const current =
-    terminalOpen && group.id === viewGroupId && terminals[group.id]?.activeTabId === tab.id;
+  // The list is global, so the highlighted row is simply the active tab — no
+  // group has to match for a row to be the one on screen.
+  const current = terminalOpen && activeTabId === tab.id;
   const cwd = tab.panes[0]?.cwd ?? "";
   // The registered repo this session is rooted in, when its cwd matches one.
   const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
@@ -135,7 +135,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
   }, [editing]);
 
   function commitRename() {
-    renameTerminalTab(group.id, tab.id, draft);
+    renameTerminalTab(tab.id, draft);
     setEditing(false);
   }
 
@@ -143,8 +143,31 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
     tab.panes.forEach((pane) => {
       ipc.terminalKill(pane.id).catch(() => {});
     });
-    closeTerminalTab(group.id, tab.id);
+    closeTerminalTab(tab.id);
   }
+
+  // Drag to reorder the rail (#340). Any row can take any slot — the rail is
+  // one flat list, so a terminal from one group may sit between two of
+  // another's. `disabled` while renaming so a drag can't hijack the input's own
+  // pointer interactions.
+  const drag = useDraggable({ kind: "tab", id: tab.id }, termTabLabel(tab), {
+    disabled: editing,
+  });
+  // `accepts` rejects a self-drop, so the row being dragged never shows its own
+  // insertion indicator.
+  const { ref: dropRef, state: dropEdgeState } = useDropTarget<"before" | "after", HTMLDivElement>({
+    accepts: (d) => d.kind === "tab" && d.id !== tab.id,
+    compute: (_d, rect, _x, y) => dropEdge(rect, y),
+    onDrop: (d, rect, _x, y) => {
+      // Commit the edge the indicator last showed; a fast flick can cross the
+      // midpoint between the final move and the release, and the user should
+      // get the slot they saw. Fall back to the release point if the pointer
+      // reached this row only on the release itself.
+      if (d.kind === "tab") {
+        reorderTerminalTab(d.id, tab.id, dropEdgeState ?? dropEdge(rect, y));
+      }
+    },
+  });
 
   return (
     <>
@@ -153,21 +176,33 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
           ARIA. Mouse users click anywhere on the row; keyboard users get the
           focusable label button. */}
       <div
+        ref={dropRef}
+        {...drag}
         onClick={() => {
-          if (!editing) focusTerminal(group.id, tab.id, tab.activePaneId);
+          if (!editing) focusTerminal(tab.id, tab.activePaneId);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
           setMenuAt({ x: e.clientX, y: e.clientY });
         }}
+        data-drop-edge={dropEdgeState ?? undefined}
         className={cn(
-          "group/term flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
+          "group/term relative flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors",
           current
             ? "border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
             : "hover:bg-[var(--color-accent)]",
         )}
       >
+        {dropEdgeState && (
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-x-1 h-px bg-[var(--color-primary)]",
+              dropEdgeState === "before" ? "top-0" : "bottom-0",
+            )}
+          />
+        )}
         <span
           aria-hidden
           className={cn("size-[7px] shrink-0 rounded-full", !activity && "gamut-pulse")}
@@ -194,7 +229,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
               aria-current={current || undefined}
               onClick={(e) => {
                 e.stopPropagation();
-                focusTerminal(group.id, tab.id, tab.activePaneId);
+                focusTerminal(tab.id, tab.activePaneId);
               }}
               className={cn(
                 "block w-full min-w-0 truncate text-left text-[12.5px] leading-[17px]",
@@ -207,8 +242,8 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
             </button>
           )}
           <div className="truncate text-[11px] leading-[15px] text-[var(--color-muted-foreground)]">
-            {group.name}
-            {cwd ? ` · ${pathBasename(cwd)}` : ""}
+            {group?.name ?? ""}
+            {cwd ? `${group ? " · " : ""}${pathBasename(cwd)}` : ""}
           </div>
         </div>
         {activity && (
@@ -224,6 +259,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
         <button
           aria-label={`Close ${termTabLabel(tab)} terminal`}
           title="Close terminal"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             closeTab();
@@ -238,7 +274,7 @@ function TerminalRow({ group, tab }: { group: Group; tab: TermTab }) {
       <ContextMenu at={menuAt} onClose={() => setMenuAt(null)}>
         <ContextMenuItem
           onClick={() => {
-            focusTerminal(group.id, tab.id, tab.activePaneId);
+            focusTerminal(tab.id, tab.activePaneId);
             setMenuAt(null);
           }}
         >
@@ -701,10 +737,13 @@ export function Sidebar() {
     !!menuRepo && menuRepo.is_git_repo && !menuRepo.missing,
   );
 
-  // Flat terminal rail: every open tab across all groups, in group order.
-  const termEntries = list.flatMap((g) =>
-    (terminals[g.id]?.tabs ?? []).map((tab) => ({ group: g, tab })),
-  );
+  // The rail is the terminal list itself, in the order the user arranged it
+  // (#340) — not grouped, and not sorted. Every tab gets a row, including one
+  // whose group was just deleted: useActiveGroupFallback re-homes it, and
+  // dropping it here in the meantime would hide a live shell with no way to
+  // close it.
+  const groupById = new Map(list.map((g) => [g.id, g]));
+  const termEntries = terminals.tabs.map((tab) => ({ group: groupById.get(tab.groupId), tab }));
   // "Running" approximates the design's state column with what we can know:
   // a session counts until its shell exits (unseen-exit activity).
   const runningCount = termEntries.filter(
@@ -901,7 +940,7 @@ export function Sidebar() {
       </div>
       <div className="flex flex-col gap-px px-2">
         {termEntries.map(({ group, tab }) => (
-          <TerminalRow key={`${group.id}:${tab.id}`} group={group} tab={tab} />
+          <TerminalRow key={tab.id} group={group} tab={tab} />
         ))}
         <button
           disabled={!newTermTarget || activeGroupId == null}
@@ -939,8 +978,9 @@ export function Sidebar() {
           const reposIn = groupRepos(g);
           const fetchableIds = reposIn.filter((r) => !r.missing && r.is_git_repo).map((r) => r.id);
           const Icon = g.icon ? GROUP_ICONS[g.icon] : null;
-          const activity = groupActivityKind(terminals[g.id], termActivity);
-          const running = (terminals[g.id]?.tabs.length ?? 0) > 0;
+          const groupTabs = terminals.tabs.filter((t) => t.groupId === g.id);
+          const activity = tabsActivityKind(groupTabs, termActivity);
+          const running = groupTabs.length > 0;
           return (
             <div key={g.id} className="flex flex-col">
               {/* Plain div (see TerminalRow): the focusable expand/activate

@@ -16,11 +16,13 @@ vi.mock("@tauri-apps/api/event", () => ({
 const mocks = vi.hoisted(() => ({
   listRepos: vi.fn(),
   listGroups: vi.fn(),
+  terminalWrite: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     listRepos: mocks.listRepos,
     listGroups: mocks.listGroups,
+    terminalWrite: mocks.terminalWrite,
     // The store reports its terminal registry to the backend on every mutation.
     terminalRegistryReport: vi.fn(() => Promise.resolve()),
   },
@@ -72,54 +74,53 @@ beforeEach(() => {
   handlers.uiNav = null;
   mocks.listRepos.mockReset().mockResolvedValue([repo(1, [1]), repo(2, [2])]);
   mocks.listGroups.mockReset().mockResolvedValue([group(1, true), group(2)]);
+  mocks.terminalWrite.mockClear();
   localStorage.clear();
   useUiStore.setState({
     activeGroupId: 1,
-    terminalViewGroupId: 1,
     activeRepoId: null,
     terminalOpen: false,
     terminals: {
-      2: {
-        activeTabId: "tab-2",
-        tabs: [
-          {
-            id: "tab-2",
-            title: "worker",
-            panes: [{ id: "term-2", cwd: "/repos/r2" }],
-            activePaneId: "term-2",
-          },
-        ],
-      },
+      activeTabId: "tab-2",
+      tabs: [
+        {
+          id: "tab-2",
+          groupId: 2,
+          title: "worker",
+          panes: [{ id: "term-2", cwd: "/repos/r2" }],
+          activePaneId: "term-2",
+        },
+      ],
     },
   });
 });
 
-// #339: the `term` control command must leave the terminal view on the group it
-// actually opened (or reused) a tab in — otherwise the pane shows a different
-// group's session than the one the command just drove.
+// #339: the `term` control command must reveal the tab it actually opened (or
+// reused) — otherwise the pane shows a different session than the one the
+// command just drove.
 describe("useUiNav term (#339)", () => {
-  it("points the terminal view at the group it reused a tab in", async () => {
+  it("reveals the tab it reused", async () => {
     renderHook(() => useUiNav());
 
     await nav({ action: "term", repo_id: 2, title: "worker", reuse: true });
 
     const s = useUiStore.getState();
-    expect(s.terminalViewGroupId).toBe(2);
+    expect(s.activeGroupId).toBe(2);
     expect(s.terminalOpen).toBe(true);
-    expect(s.terminals[2].activeTabId).toBe("tab-2");
+    expect(s.terminals.activeTabId).toBe("tab-2");
   });
 
-  it("points the terminal view at the group it opened a new tab in", async () => {
+  it("reveals the group it opened a new tab in", async () => {
     renderHook(() => useUiNav());
 
     await nav({ action: "term", repo_id: 2, title: "fresh" });
 
     const s = useUiStore.getState();
-    expect(s.terminalViewGroupId).toBe(2);
-    expect(s.terminals[2].tabs.some((t) => t.title === "fresh")).toBe(true);
+    expect(s.activeGroupId).toBe(2);
+    expect(s.terminals.tabs.some((t) => t.title === "fresh")).toBe(true);
   });
 
-  it("a silent term leaves both the active group and the terminal view alone", async () => {
+  it("a silent term leaves the active group and the terminal panel alone", async () => {
     renderHook(() => useUiNav());
 
     await nav({ action: "term", repo_id: 2, title: "bg", silent: true });
@@ -127,7 +128,78 @@ describe("useUiNav term (#339)", () => {
     const s = useUiStore.getState();
     // Nothing is revealed, so nothing on screen may move either.
     expect(s.activeGroupId).toBe(1);
-    expect(s.terminalViewGroupId).toBe(1);
+    expect(s.terminals.activeTabId).toBe("tab-2");
     expect(s.terminalOpen).toBe(false);
+  });
+});
+
+// #340: the terminal list is one flat sequence, but a tab name is only unique
+// within a repo's own groups — two different repos can each hold a
+// `loop-worker` tab. `term-send` / `term-close` / `term-rename` must resolve
+// the tab that belongs to the ADDRESSED repo's group(s), not whichever
+// same-named tab happens to come first in the list.
+describe("useUiNav anti-collision across same-named tabs (#340)", () => {
+  function seedCollidingTabs() {
+    useUiStore.setState({
+      terminals: {
+        activeTabId: null,
+        tabs: [
+          {
+            id: "tab-g1",
+            groupId: 1,
+            title: "loop-worker",
+            panes: [{ id: "term-g1", cwd: "/repos/r1" }],
+            activePaneId: "term-g1",
+          },
+          {
+            id: "tab-g2",
+            groupId: 2,
+            title: "loop-worker",
+            panes: [{ id: "term-g2", cwd: "/repos/r2" }],
+            activePaneId: "term-g2",
+          },
+        ],
+      },
+    });
+  }
+
+  it("term-send resolves the group-2 tab for a repo that belongs to group 2", async () => {
+    seedCollidingTabs();
+    renderHook(() => useUiNav());
+
+    await nav({ action: "term-send", repo_id: 2, title: "loop-worker", text: "hello" });
+
+    expect(mocks.terminalWrite).toHaveBeenCalledWith("term-g2", expect.anything());
+    expect(mocks.terminalWrite).not.toHaveBeenCalledWith("term-g1", expect.anything());
+    expect(useUiStore.getState().terminals.activeTabId).toBe("tab-g2");
+  });
+
+  it("term-close resolves and closes the group-2 tab for a repo that belongs to group 2", async () => {
+    seedCollidingTabs();
+    renderHook(() => useUiNav());
+
+    await nav({ action: "term-close", repo_id: 2, title: "loop-worker" });
+
+    const tabs = useUiStore.getState().terminals.tabs;
+    expect(tabs.some((t) => t.id === "tab-g2")).toBe(false);
+    expect(tabs.some((t) => t.id === "tab-g1")).toBe(true);
+  });
+
+  it("term-rename resolves and renames the group-2 tab for a repo that belongs to group 2", async () => {
+    seedCollidingTabs();
+    renderHook(() => useUiNav());
+
+    await nav({
+      action: "term-rename",
+      repo_id: 2,
+      title: "loop-worker",
+      rename_to: "renamed",
+    });
+
+    const tabs = useUiStore.getState().terminals.tabs;
+    const g1 = tabs.find((t) => t.id === "tab-g1")!;
+    const g2 = tabs.find((t) => t.id === "tab-g2")!;
+    expect(g2.customTitle).toBe("renamed");
+    expect(g1.customTitle).toBeUndefined();
   });
 });

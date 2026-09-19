@@ -38,9 +38,8 @@ function StatusBar() {
     queryKey: ["db-health"],
     queryFn: ipc.dbHealth,
   });
-  const activeGroupId = useUiStore((s) => s.activeGroupId);
   const terminals = useUiStore((s) => s.terminals);
-  const groupTerms = activeGroupId != null ? (terminals[activeGroupId]?.tabs.length ?? 0) : 0;
+  const openTerms = terminals.tabs.length;
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t bg-[var(--color-sidebar)] px-3 text-[11px] text-[var(--color-muted-foreground)]">
@@ -56,9 +55,9 @@ function StatusBar() {
       ) : (
         <span>connecting…</span>
       )}
-      {groupTerms > 0 && (
+      {openTerms > 0 && (
         <span className="text-[var(--color-primary)]">
-          {groupTerms} terminal{groupTerms === 1 ? "" : "s"} in this group
+          {openTerms} terminal{openTerms === 1 ? "" : "s"} open
         </span>
       )}
       <span className="ml-auto hidden sm:inline">⌘K jump · ⌘` terminal · ⌘B sidebar</span>

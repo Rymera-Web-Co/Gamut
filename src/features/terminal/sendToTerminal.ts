@@ -57,25 +57,28 @@ export function filePathsForShell(paths: string[]): string {
 }
 
 /**
- * Insert `text` into the active group's active terminal as editable input — no
- * trailing carriage return, so it stages at the cursor and can be wrapped in a
- * command before the user hits Enter (issue #199).
+ * Insert `text` into the active terminal as editable input — no trailing
+ * carriage return, so it stages at the cursor and can be wrapped in a command
+ * before the user hits Enter (issue #199).
  *
- * Targets the active tab's active pane in the active group; if that group has no
- * terminal yet, one is opened first. The text is queued via the pending-command
- * store and the pane is revealed: the session manager drains the queue whether
- * the PTY is already live or spawns on reveal, so there's never a double write.
+ * Prefers a terminal belonging to the active group — the text is usually a path
+ * from the repo the user is browsing, and the terminal list spans every group
+ * now, so targeting the globally-active tab could stage that path in a shell
+ * rooted in a different repo. Falls back to the globally-active tab when the
+ * active group has no terminal; if none is open at all, one is opened in the
+ * active group first. The text is queued via the pending-command store and the
+ * pane is revealed: the session manager drains the queue whether the PTY is
+ * already live or spawns on reveal, so there's never a double write.
  */
 export function sendToActiveTerminal(text: string): void {
   const ui = useUiStore.getState();
-  const groupId = ui.activeGroupId;
-  if (groupId == null) {
-    toast.error("Open a group to send to its terminal");
-    return;
-  }
-
-  const group = ui.terminals[groupId];
-  const tab = group?.tabs.find((t) => t.id === group.activeTabId) ?? group?.tabs[0];
+  const { tabs, activeTabId } = ui.terminals;
+  const inGroup = tabs.filter((t) => t.groupId === ui.activeGroupId);
+  const tab =
+    inGroup.find((t) => t.id === activeTabId) ??
+    inGroup[0] ??
+    tabs.find((t) => t.id === activeTabId) ??
+    tabs[0];
 
   let tabId: string;
   let paneId: string;
@@ -83,15 +86,19 @@ export function sendToActiveTerminal(text: string): void {
     tabId = tab.id;
     paneId = tab.activePaneId;
   } else {
-    // No terminal in this group yet — open one (rooted at the group default) so
+    // No terminal open yet — open one (rooted at the active group's default) so
     // the action always has somewhere to land.
+    const groupId = ui.activeGroupId;
+    if (groupId == null) {
+      toast.error("Open a group to send to its terminal");
+      return;
+    }
     paneId = ui.addTerminalTab(groupId, "", "terminal");
-    const opened = useUiStore.getState().terminals[groupId];
-    const openedTab = opened?.tabs.find((t) => t.activePaneId === paneId);
+    const openedTab = useUiStore.getState().terminals.tabs.find((t) => t.activePaneId === paneId);
     if (!openedTab) return;
     tabId = openedTab.id;
   }
 
   setPendingCommand(paneId, text);
-  ui.focusTerminal(groupId, tabId, paneId);
+  ui.focusTerminal(tabId, paneId);
 }

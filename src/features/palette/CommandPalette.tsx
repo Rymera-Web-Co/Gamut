@@ -11,12 +11,18 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGroups, useRepos } from "@/features/repos/api";
-import { ActivityDot, groupActivityKind, tabActivityKind } from "@/features/terminal/activity";
+import { ActivityDot, tabActivityKind, tabsActivityKind } from "@/features/terminal/activity";
 import { groupToReveal } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
 import { parsePaletteOrder, useSettings, type PaletteCategory } from "@/lib/settings";
 import { cn } from "@/lib/utils";
-import { ACTIVITY_PRIORITY, type TermActivityKind, termTabLabel, useUiStore } from "@/store/ui";
+import {
+  ACTIVITY_PRIORITY,
+  type TermActivityKind,
+  type TermTab,
+  termTabLabel,
+  useUiStore,
+} from "@/store/ui";
 
 /** Max repo results shown for a non-empty query (and recents when empty). */
 const REPO_LIMIT = 8;
@@ -107,19 +113,18 @@ export function CommandPalette() {
     // like the matching Group/Terminal entry does (revealing clears activity).
     const runGroup = (id: number) => () => {
       setActiveGroup(id);
-      // Keep the terminal view only when the target group has sessions to show
-      // (same rule as the ⌘1–9 / ⌘↑↓ group jumps); otherwise show the
-      // workspace instead of an empty terminal.
-      const gt = useUiStore.getState().terminals[id];
-      if (!gt?.tabs.length) setTerminalOpen(false);
+      // A group jump is a workspace action and the terminal list is global, so
+      // staying full-screen in the terminal would show no sign of the jump —
+      // leave it for the group's workspace (same rule as the ⌘1–9 / ⌘↑↓ jumps).
+      setTerminalOpen(false);
       close();
     };
-    const runTerminal = (groupId: number, tabId: string, paneId: string) => () => {
+    const runTerminal = (tabId: string, paneId: string) => () => {
       // Reveal the tab and land keyboard focus inside its active pane — the same
       // state path the notification-click handler uses (#85). The dialog's
       // `onCloseAutoFocus` is prevented (below) so closing the palette doesn't
       // yank focus back out of the terminal.
-      focusTerminal(groupId, tabId, paneId);
+      focusTerminal(tabId, paneId);
       close();
     };
 
@@ -134,10 +139,17 @@ export function CommandPalette() {
       kind: "bell" | "exit";
     }
     const attention: Attn[] = [];
-    for (const [gid, gt] of Object.entries(terminals)) {
-      const groupId = Number(gid);
+    // Tabs bucketed by the group that owns them, so a group row can still
+    // report its own terminals' activity (the list itself is no longer grouped).
+    const tabsByGroup = new Map<number, TermTab[]>();
+    for (const tab of terminals.tabs) {
+      const bucket = tabsByGroup.get(tab.groupId);
+      if (bucket) bucket.push(tab);
+      else tabsByGroup.set(tab.groupId, [tab]);
+    }
+    for (const [groupId, groupTabs] of tabsByGroup) {
       const gname = groupName.get(groupId) ?? "";
-      const gkind = groupActivityKind(gt, termActivity);
+      const gkind = tabsActivityKind(groupTabs, termActivity);
       if (isAttention(gkind)) {
         attention.push({
           kind: gkind,
@@ -151,7 +163,7 @@ export function CommandPalette() {
           },
         });
       }
-      for (const tab of gt.tabs) {
+      for (const tab of groupTabs) {
         const tkind = tabActivityKind(tab, termActivity);
         if (!isAttention(tkind)) continue;
         attention.push({
@@ -163,7 +175,7 @@ export function CommandPalette() {
             label: termTabLabel(tab),
             sublabel: gname,
             activity: tkind,
-            run: runTerminal(groupId, tab.id, tab.activePaneId),
+            run: runTerminal(tab.id, tab.activePaneId),
           },
         });
       }
@@ -256,36 +268,26 @@ export function CommandPalette() {
 
     // Open terminal tabs across every group, labelled by their group. With a
     // query active, attention-flagged tabs are scored with a boost (see #84).
-    const matchedTerms = Object.entries(terminals)
-      .flatMap(([gid, gt]) => {
-        const groupId = Number(gid);
-        const gname = groupName.get(groupId) ?? "";
-        return gt.tabs.map((tab) => {
-          const label = termTabLabel(tab);
-          const base = rank(q, label, gname);
-          if (base === null) return null;
-          const kind = termAttn.get(`term:${groupId}:${tab.id}`);
-          return {
-            groupId,
-            tab,
-            label,
-            gname,
-            kind,
-            score: q && kind ? base - attentionBoost(kind) : base,
-          };
-        });
+    const matchedTerms = terminals.tabs
+      .map((tab) => {
+        const gname = groupName.get(tab.groupId) ?? "";
+        const label = termTabLabel(tab);
+        const base = rank(q, label, gname);
+        if (base === null) return null;
+        const kind = termAttn.get(`term:${tab.groupId}:${tab.id}`);
+        return { tab, label, gname, kind, score: q && kind ? base - attentionBoost(kind) : base };
       })
       .filter((m) => m !== null)
       .sort((a, b) => a.score - b.score || a.label.localeCompare(b.label));
-    for (const { groupId, tab, label, gname, kind } of matchedTerms) {
+    for (const { tab, label, gname, kind } of matchedTerms) {
       blocks.terminals.push({
-        key: `term:${groupId}:${tab.id}`,
+        key: `term:${tab.groupId}:${tab.id}`,
         category: "Terminals",
         icon: SquareTerminal,
         label,
         sublabel: gname,
         activity: q ? kind : undefined,
-        run: runTerminal(groupId, tab.id, tab.activePaneId),
+        run: runTerminal(tab.id, tab.activePaneId),
       });
     }
 

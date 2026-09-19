@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { setPendingCommand } from "@/features/terminal/pendingCommands";
 import { groupToReveal } from "@/lib/groupRepos";
 import { ipc } from "@/lib/ipc";
-import { useUiStore, type View } from "@/store/ui";
+import { useUiStore, type TermTab, type View } from "@/store/ui";
 
 /**
  * A UI-navigation command from the local control channel. The backend re-emits
@@ -50,11 +50,13 @@ function asView(v: string | undefined): View | null {
 
 /**
  * Open a terminal tab for a repo and (optionally) run a command in it — the
- * `term` control command. The integrated terminal is per-group, so we open it in
- * a group the repo is actually visible in and switch the view there; otherwise the
- * active-repo reconciler would revert the selection and the tab would be
- * stranded under a group that doesn't list the repo. The command is queued
- * against the new pane and typed in once its PTY spawns (see `pendingCommands`).
+ * `term` control command. The rail lists every terminal at once, but a tab still
+ * records the group it was opened in, so we open it under a group the repo is
+ * actually visible in; otherwise the active-repo reconciler would revert the
+ * selection and the tab would name a group that doesn't list the repo — and the
+ * `--name` reuse lookup, which is scoped per group, would miss it next time. The
+ * command is queued against the new pane and typed in once its PTY spawns (see
+ * `pendingCommands`).
  */
 async function openTerm(nav: UiNav): Promise<void> {
   const ui = useUiStore.getState();
@@ -101,14 +103,18 @@ async function openTerm(nav: UiNav): Promise<void> {
   // `--name` (reuse): if a terminal with this name already exists in the group,
   // run the command in it; otherwise fall through and open a new named tab.
   if (nav.reuse) {
-    const group = useUiStore.getState().terminals[groupId];
-    const existing = group?.tabs.find((t) => (t.customTitle ?? t.title) === name);
+    // Scoped to the group the tab would be opened in, not the whole list: two
+    // repos may each hold a terminal of the same name, and a global match would
+    // hand the command to whichever happened to be created first.
+    const existing = useUiStore
+      .getState()
+      .terminals.tabs.find((t) => t.groupId === groupId && (t.customTitle ?? t.title) === name);
     if (existing) {
       queue(existing.activePaneId);
       // Silent reuse drives the (possibly backgrounded) PTY without stealing
       // focus; otherwise reveal + focus the existing tab as before.
       if (silent) ui.requestBackgroundTerminal(existing.activePaneId);
-      else ui.focusTerminal(groupId, existing.id, existing.activePaneId);
+      else ui.focusTerminal(existing.id, existing.activePaneId);
       return;
     }
   }
@@ -141,6 +147,21 @@ async function resolveRepoGroupIds(repoId: number): Promise<number[]> {
 }
 
 /**
+ * The first terminal named `name` that belongs to one of `groupIds`, in the
+ * order the groups were given. The terminal list is one flat sequence (#340),
+ * but a name is only unique within a repo's groups — two repos can each hold a
+ * `loop-worker` tab — so every control command keeps matching within the groups
+ * `term` would have opened the tab in.
+ */
+function findTermByName(tabs: TermTab[], groupIds: number[], name: string): TermTab | undefined {
+  for (const gid of groupIds) {
+    const tab = tabs.find((t) => t.groupId === gid && (t.customTitle ?? t.title) === name);
+    if (tab) return tab;
+  }
+  return undefined;
+}
+
+/**
  * Close a terminal tab by name — the `term-close` control command. Searches the
  * groups the repo belongs to (where `term` would have opened it) and closes the
  * first tab whose name matches; the session manager reaps its PTY. No-op if
@@ -152,13 +173,8 @@ async function closeTerm(nav: UiNav): Promise<void> {
 
   const groupIds = await resolveRepoGroupIds(nav.repo_id);
   const ui = useUiStore.getState();
-  for (const gid of groupIds) {
-    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
-    if (tab) {
-      ui.closeTerminalTab(gid, tab.id);
-      return;
-    }
-  }
+  const tab = findTermByName(ui.terminals.tabs, groupIds, name);
+  if (tab) ui.closeTerminalTab(tab.id);
 }
 
 /**
@@ -175,13 +191,8 @@ async function renameTerm(nav: UiNav): Promise<void> {
 
   const groupIds = await resolveRepoGroupIds(nav.repo_id);
   const ui = useUiStore.getState();
-  for (const gid of groupIds) {
-    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
-    if (tab) {
-      ui.renameTerminalTab(gid, tab.id, next);
-      return;
-    }
-  }
+  const tab = findTermByName(ui.terminals.tabs, groupIds, name);
+  if (tab) ui.renameTerminalTab(tab.id, next);
 }
 
 /**
@@ -197,21 +208,18 @@ async function sendTerm(nav: UiNav): Promise<void> {
 
   const groupIds = await resolveRepoGroupIds(nav.repo_id);
   const ui = useUiStore.getState();
+  const tab = findTermByName(ui.terminals.tabs, groupIds, name);
+  if (!tab) return;
+
+  const paneId = tab.activePaneId;
+  // Reveal the tab so the human watches the session pick the answer up.
+  ui.focusTerminal(tab.id, paneId);
   const encoder = new TextEncoder();
-  for (const gid of groupIds) {
-    const tab = ui.terminals[gid]?.tabs.find((t) => (t.customTitle ?? t.title) === name);
-    if (tab) {
-      const paneId = tab.activePaneId;
-      // Reveal the tab so the human watches the session pick the answer up.
-      ui.focusTerminal(gid, tab.id, paneId);
-      ipc.terminalWrite(paneId, encoder.encode(nav.text)).catch(() => {});
-      // Submit with a separate CR after the text settles (paste-vs-keystroke).
-      setTimeout(() => {
-        void ipc.terminalWrite(paneId, encoder.encode("\r")).catch(() => {});
-      }, TERM_SEND_SUBMIT_DELAY_MS);
-      return;
-    }
-  }
+  ipc.terminalWrite(paneId, encoder.encode(nav.text)).catch(() => {});
+  // Submit with a separate CR after the text settles (paste-vs-keystroke).
+  setTimeout(() => {
+    void ipc.terminalWrite(paneId, encoder.encode("\r")).catch(() => {});
+  }, TERM_SEND_SUBMIT_DELAY_MS);
 }
 
 /**

@@ -12,31 +12,27 @@ import { useUiStore } from "@/store/ui";
  * `activeGroupId` null and every group-scoped surface (terminals, shortcuts,
  * CLI nav) pointing nowhere.
  *
- * The terminal view group is repaired the same way (#339). It moves
- * independently of the active group, so deleting the group it points at would
- * otherwise leave the terminal pane showing nothing at all.
+ * Terminals whose group was deleted are re-homed onto the same fallback group.
+ * The terminal list is global, so a deleted group no longer takes its terminals
+ * off screen with it: the tab would otherwise keep a live shell and stay
+ * reachable by the cycle chords while naming no group and offering no way back.
  */
 export function useActiveGroupFallback() {
   const groupsData = useGroups().data;
   const activeGroupId = useUiStore((s) => s.activeGroupId);
-  const terminalViewGroupId = useUiStore((s) => s.terminalViewGroupId);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
-  const setTerminalViewGroup = useUiStore((s) => s.setTerminalViewGroup);
+  const reparentOrphanTerminals = useUiStore((s) => s.reparentOrphanTerminals);
 
   useEffect(() => {
     if (!groupsData || groupsData.length === 0) return;
-    if (!groupsData.some((g) => g.id === activeGroupId)) {
-      const fallback = groupsData.find((g) => g.is_default) ?? groupsData[0];
-      // setActiveGroup drags the terminal view along, so this repairs both.
-      setActiveGroup(fallback?.id ?? null);
-      return;
+    const fallback = groupsData.find((g) => g.is_default) ?? groupsData[0];
+    if (fallback) {
+      reparentOrphanTerminals(
+        groupsData.map((g) => g.id),
+        fallback.id,
+      );
     }
-    // The active group is fine but the terminal view points at a group that is
-    // gone — send the pane back to the active group.
-    // (It cannot already equal `activeGroupId` here: that id is in `groupsData`
-    // and this one is not.)
-    if (terminalViewGroupId != null && !groupsData.some((g) => g.id === terminalViewGroupId)) {
-      setTerminalViewGroup(activeGroupId);
-    }
-  }, [groupsData, activeGroupId, terminalViewGroupId, setActiveGroup, setTerminalViewGroup]);
+    if (groupsData.some((g) => g.id === activeGroupId)) return;
+    setActiveGroup(fallback?.id ?? null);
+  }, [groupsData, activeGroupId, setActiveGroup, reparentOrphanTerminals]);
 }

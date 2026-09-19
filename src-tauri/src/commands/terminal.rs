@@ -339,7 +339,8 @@ pub fn terminal_spawn(
 /// the human-meaningful layout has to come from the webview, which owns it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalInfo {
-    /// The group the tab lives under (terminals are per-group).
+    /// The group the tab was opened in. The webview shows every terminal in one
+    /// flat list, so this identifies the tab's repo rather than its position.
     pub group_id: i64,
     pub tab_id: String,
     /// The tab's display label (custom name if set, else the default).

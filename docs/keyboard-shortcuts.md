@@ -54,9 +54,9 @@ See [Review](features/review.md).
 | --- | --- |
 | `⌘/Ctrl+T` | Open a new terminal tab (reveals the terminal if hidden) |
 | `⌘W` (macOS) / `Ctrl+⇧+W` | Close the active terminal tab. Off macOS the chord takes `⇧` so that plain `Ctrl+W` stays the shell's delete-previous-word. Does nothing while the terminal view is hidden. |
-| `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal — across **all** groups, switching group at a group boundary |
-| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous terminal — across **all** groups, switching group at a group boundary (Control on all platforms; only with ≥2 terminals) |
-| `⌘/Ctrl+⌥+1`…`9` | Jump to terminal tab N in the active group (`9` jumps to its last tab) |
+| `⌘/Ctrl+⇧+]` / `⌘/Ctrl+⇧+[` | Switch to the next / previous terminal, in the sidebar rail's order, wrapping at both ends |
+| `Ctrl+Tab` / `Ctrl+⇧+Tab` | Cycle to the next / previous terminal, in the sidebar rail's order (Control on all platforms; only with ≥2 terminals) |
+| `⌘/Ctrl+⌥+1`…`9` | Jump to the terminal at rail position N (`9` jumps to the last one) |
 | `⌘/Ctrl+D` | Split the active terminal tab (side-by-side) |
 
 See [Terminal](features/terminal.md).
