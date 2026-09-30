@@ -12,6 +12,7 @@ import { ipc } from "@/lib/ipc";
 import { isModalOpen } from "@/lib/dom";
 import { isDarkTheme, isHtmlPath, languageFor } from "@/lib/lang";
 import { GAMUT_DARK } from "@/lib/monacoTheme";
+import { markdownLinkBase } from "@/lib/openLocalPath";
 import { useEditorPrefs, useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { toast } from "@/store/toast";
@@ -584,7 +585,7 @@ export function FilesView() {
             </div>
           ) : isMarkdown && preview ? (
             <div className="h-full overflow-auto px-6 py-4">
-              <Markdown>{value}</Markdown>
+              <Markdown localLinks={markdownLinkBase(repo?.path, selectedPath)}>{value}</Markdown>
             </div>
           ) : isHtml && preview ? (
             // Keyed on the path so switching files gets a brand-new frame rather

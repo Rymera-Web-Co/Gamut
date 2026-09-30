@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import remarkGemoji from "remark-gemoji";
@@ -8,6 +8,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { ipc } from "@/lib/ipc";
+import { localLinkPath, openLocalPath } from "@/lib/openLocalPath";
 import { cn } from "@/lib/utils";
 
 type MdNode = {
@@ -35,6 +36,24 @@ const sanitizeSchema = {
     input: [...(defaultSchema.attributes?.input ?? []), "checked"],
   },
 };
+
+/**
+ * {@link sanitizeSchema} plus `file:` link hrefs, for local repo files only
+ * (#344). The default schema drops `file:` hrefs; a repo `.md` may link a local
+ * file that way. Remote GitHub content never gets this schema.
+ */
+const localSanitizeSchema = {
+  ...sanitizeSchema,
+  protocols: {
+    ...sanitizeSchema.protocols,
+    href: [...(sanitizeSchema.protocols?.href ?? []), "file"],
+  },
+};
+
+/** react-markdown's URL filter, plus `file:` URLs, for {@link localSanitizeSchema}. */
+function localUrlTransform(url: string): string {
+  return /^file:/i.test(url) ? url : defaultUrlTransform(url);
+}
 
 /**
  * remark plugin: turn `#123` references into links to `${base}/123`
@@ -242,6 +261,7 @@ export function Markdown({
   className,
   issueBaseUrl,
   hardBreaks,
+  localLinks,
 }: {
   children: string;
   /** When provided, task-list checkboxes become interactive. */
@@ -256,6 +276,16 @@ export function Markdown({
    * GFM soft-break reflow.
    */
   hardBreaks?: boolean;
+  /**
+   * Set for a local repo file's preview: links to local paths then open like
+   * terminal file links — an in-repo text file / image in the Files view,
+   * anything else revealed in the OS file manager (#344). Relative links
+   * resolve against `baseDir`, the absolute directory of the file being
+   * previewed. A bare Windows drive href (`C:\x`) still reads as a URL scheme
+   * and is dropped; `file:///C:/x` works. Leave unset for remote content, whose
+   * links all open in the browser.
+   */
+  localLinks?: { baseDir: string };
 }) {
   // Reset on every render; the `input` override increments it in document order
   // so each checkbox knows its ordinal among the task items.
@@ -307,9 +337,13 @@ export function Markdown({
         ))}
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
+        urlTransform={localLinks ? localUrlTransform : defaultUrlTransform}
         // Sanitize AFTER rehype-raw parses the raw HTML, so injected markup in
         // remote GitHub content can't reach the webview unsanitized (#137).
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+        rehypePlugins={[
+          rehypeRaw,
+          [rehypeSanitize, localLinks ? localSanitizeSchema : sanitizeSchema],
+        ]}
         components={{
           input(props) {
             if (props.type !== "checkbox") return <input {...props} />;
@@ -331,14 +365,22 @@ export function Markdown({
             }
             return <img src={src} alt={alt} {...props} />;
           },
-          // Open all links in the external browser, not the app webview.
+          // Open links outside the app webview: local file links (repo file
+          // previews only) through the local-path router, the rest in the
+          // external browser.
           a({ href, children }) {
             return (
               <a
                 href={href}
                 onClick={(e) => {
                   e.preventDefault();
-                  if (href) openUrl(href).catch(() => {});
+                  if (!href) return;
+                  const localPath = localLinks ? localLinkPath(href) : null;
+                  if (localLinks && localPath != null) {
+                    void openLocalPath(localPath, localLinks.baseDir);
+                    return;
+                  }
+                  openUrl(href).catch(() => {});
                 }}
               >
                 {children}
