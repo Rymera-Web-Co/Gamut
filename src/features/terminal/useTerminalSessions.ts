@@ -6,11 +6,11 @@ import { Terminal, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { getActiveDrag, subscribeDrag, subscribeDrop } from "@/lib/dnd";
-import { ipc, type ResolvedTermPath } from "@/lib/ipc";
-import { isImagePath } from "@/lib/images";
+import { ipc } from "@/lib/ipc";
+import { openLocalPath } from "@/lib/openLocalPath";
 import { isMac, isWindows } from "@/lib/shortcuts";
 import { useSettings } from "@/lib/settings";
 import type { Theme } from "@/lib/theme";
@@ -195,109 +195,14 @@ async function openTerminalLink(uri: string) {
 }
 
 /**
- * File types the in-app editor can't render usefully — opened with the OS
- * default app even when they live inside a tracked repo (#255). Images are
- * absent because the in-app viewer handles them.
- */
-const OPAQUE_EXTS = new Set([
-  "pdf",
-  "zip",
-  "gz",
-  "tgz",
-  "bz2",
-  "xz",
-  "7z",
-  "rar",
-  "tar",
-  "exe",
-  "dmg",
-  "pkg",
-  "app",
-  "deb",
-  "rpm",
-  "msi",
-  "bin",
-  "iso",
-  "so",
-  "dylib",
-  "dll",
-  "o",
-  "a",
-  "class",
-  "jar",
-  "war",
-  "wasm",
-  "mp3",
-  "wav",
-  "flac",
-  "aac",
-  "ogg",
-  "m4a",
-  "mp4",
-  "mov",
-  "avi",
-  "mkv",
-  "webm",
-  "m4v",
-  "woff",
-  "woff2",
-  "ttf",
-  "otf",
-  "eot",
-  "sqlite",
-  "db",
-]);
-
-/** Lowercased extension of a `/`-separated path, or "" when it has none. */
-function extOf(p: string): string {
-  const base = p.split("/").pop() ?? "";
-  const dot = base.lastIndexOf(".");
-  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
-}
-
-/** Whether an in-repo file should open in the in-app editor rather than the OS. */
-function opensInApp(relPath: string): boolean {
-  if (isImagePath(relPath)) return true; // in-app image viewer
-  return !OPAQUE_EXTS.has(extOf(relPath));
-}
-
-/**
  * Activate a clickable file path from terminal output (#255), mirroring
- * {@link openTerminalLink}. The backend resolves it (expanding `~`, resolving
- * relative paths against the pane's cwd, canonicalizing) to an absolute path and
- * the tracked repo containing it. An in-repo text file / image opens in the
- * in-app Files editor; anything else — an out-of-repo path, an in-repo binary,
- * or any directory — opens or reveals via the OS. A path that doesn't exist
- * resolves to `null`, so the click is a harmless no-op.
+ * {@link openTerminalLink}. Relative paths resolve against the pane's cwd; the
+ * shared router opens an in-repo text file / image in the Files editor and
+ * reveals anything else in the OS file manager (#344). A path that doesn't
+ * exist is a harmless no-op.
  */
-async function openTerminalPath(raw: string, cwd: string) {
-  const { path } = stripLineSuffix(raw);
-  let resolved: ResolvedTermPath | null;
-  try {
-    resolved = await ipc.resolveTerminalPath(path, cwd);
-  } catch {
-    return; // couldn't resolve — leave the click inert
-  }
-  if (!resolved) return;
-  const { abs_path, is_dir, repo_id, rel_path } = resolved;
-  if (!is_dir && repo_id != null && rel_path != null && opensInApp(rel_path)) {
-    // In-repo, editor-friendly: open in the Files view. `setActiveRepo` resets
-    // the open file, so `setFilesPath` (consumed after it) must run last — the
-    // same order the control-channel `open` deep-link uses.
-    const ui = useUiStore.getState();
-    ui.setActiveRepo(repo_id);
-    ui.showView("files");
-    ui.setFilesPath(rel_path);
-    return;
-  }
-  if (is_dir) {
-    // Directories reveal in the OS file manager. Expanding an in-repo directory
-    // in the Files tree is a follow-up — no deep-link exists for it yet (#255).
-    revealItemInDir(abs_path).catch(() => {});
-    return;
-  }
-  // Out-of-repo file, or an in-repo binary: hand to the OS default app.
-  openPath(abs_path).catch(() => {});
+function openTerminalPath(raw: string, cwd: string) {
+  return openLocalPath(stripLineSuffix(raw).path, cwd);
 }
 
 interface SessionsOptions {
