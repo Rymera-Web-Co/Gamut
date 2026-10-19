@@ -24,6 +24,26 @@ export function ActivityDot({ kind, className }: { kind: TermActivityKind; class
   );
 }
 
+/**
+ * A session's status dot: a bell/exit colour when one is pending, a pulsing
+ * dot while any pane is working, else a static dot (primary for unseen output).
+ */
+export function sessionDot(
+  activity: TermActivityKind | undefined,
+  busy: boolean,
+): { color: string; pulse: boolean } {
+  if (activity === "bell" || activity === "exit") {
+    return { color: activityColor(activity), pulse: false };
+  }
+  if (busy) return { color: "var(--color-primary)", pulse: true };
+  return { color: activity ? activityColor(activity) : "var(--color-faint)", pulse: false };
+}
+
+/** True when any of the tab's panes is producing output right now. */
+export function tabBusy(tab: TermTab, termBusy: Record<string, true>): boolean {
+  return tab.panes.some((p) => p.id in termBusy);
+}
+
 /** The most salient unseen-activity kind across a single tab's panes, if any. */
 export function tabActivityKind(
   tab: TermTab,

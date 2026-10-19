@@ -334,6 +334,9 @@ interface UiState {
   // emits output, rings the bell, or its process exits. Drives the activity
   // badges on inactive tabs/groups; cleared when the pane becomes visible.
   termActivity: Record<string, TermActivityKind>;
+  // Pane ids whose PTY wrote output recently (visible or not). Drives the
+  // pulsing "working" dot; set and cleared only on busy/idle transitions.
+  termBusy: Record<string, true>;
   // Monotonic counter for minting unique pane/tab ids.
   nextTermId: number;
   // One-shot navigation target: a commit to reveal in the History tab. The
@@ -481,6 +484,8 @@ interface UiState {
   markTermActivity: (paneId: string, kind: TermActivityKind) => void;
   /** Clear a pane's unseen-activity flag (on focus or when the pane is gone). */
   clearTermActivity: (paneId: string) => void;
+  /** Mark a pane as working (recent output) or idle. */
+  setTermBusy: (paneId: string, busy: boolean) => void;
 }
 
 // Hydrate the saved terminal layout synchronously so restored tabs are present
@@ -505,6 +510,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   terminals: restoredTerminals.terminals,
   groupSelections: {},
   termActivity: {},
+  termBusy: {},
   nextTermId: restoredTerminals.nextTermId,
   historySha: null,
   filesPath: null,
@@ -811,6 +817,14 @@ export const useUiStore = create<UiState>((set, get) => ({
       const { [paneId]: _gone, ...termActivity } = s.termActivity;
       void _gone;
       return { termActivity };
+    }),
+  setTermBusy: (paneId, busy) =>
+    set((s) => {
+      if (busy === paneId in s.termBusy) return {};
+      if (busy) return { termBusy: { ...s.termBusy, [paneId]: true } };
+      const { [paneId]: _gone, ...termBusy } = s.termBusy;
+      void _gone;
+      return { termBusy };
     }),
 }));
 

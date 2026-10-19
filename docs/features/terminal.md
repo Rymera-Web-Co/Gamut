@@ -101,6 +101,13 @@ process exit. It clears the moment the pane comes into view (its group and tab a
 the panel is open, and it's the focused pane). The pane you're currently viewing never
 badges itself.
 
+Each session in the sidebar terminal list, and the terminal header, also shows a status
+dot. The dot pulses while the session is working: its terminal printed output within the
+last two seconds. When the session is idle, the dot is grey and static. A pending bell or
+exit replaces the dot colour with amber or red. Output that arrives right after a keystroke
+is treated as echo, so typing does not make a session look busy. A silent command (for
+example `sleep 60`) shows as idle, because the dot follows output, not processes.
+
 ## Notifications
 
 On top of the visual dot, a background pane can also pull you back with a **sound** and an
@@ -131,7 +138,7 @@ backend. IPC commands: `terminalSpawn`, `terminalWrite`, `terminalResize`,
 `terminalKill`; the backend emits a `terminal-exit` event when a shell exits. PTYs are
 read on a dedicated thread and tracked in `AppState` (see
 [Architecture](../ARCHITECTURE.md)). Per-pane unseen-activity flags live in the UI store
-(`termActivity` in `src/store/ui.ts`) and drive the activity dots in the tab bar and
+(`termActivity` in `src/store/ui.ts`), and per-pane working state lives in `termBusy` and drive the activity dots in the tab bar and
 group rail (`src/features/terminal/activity.tsx`).
 
 The same bell/exit events drive notifications via `src/features/terminal/notify.ts`:

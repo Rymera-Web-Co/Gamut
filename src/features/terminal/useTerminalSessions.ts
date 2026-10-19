@@ -30,6 +30,11 @@ import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 import { isCloseTabChord, isTabCycleChord } from "./useTerminalShortcuts";
 
+/** Quiet time after the last output chunk before a pane reads as idle. */
+const BUSY_IDLE_MS = 2000;
+/** Output this soon after a keystroke is treated as echo, not work. */
+const ECHO_WINDOW_MS = 250;
+
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
   term: Terminal;
@@ -56,6 +61,24 @@ interface SessionEntry {
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
   lastCols?: number;
   lastRows?: number;
+  /** When the user last typed into this pane, to skip echo in busy tracking. */
+  lastInputAt?: number;
+  /** Fires the busy → idle transition after {@link BUSY_IDLE_MS} of quiet. */
+  busyTimer?: ReturnType<typeof setTimeout>;
+}
+
+/** Mark a pane as working on output, and idle again once it goes quiet. */
+function noteOutput(paneId: string, e: SessionEntry) {
+  if (e.lastInputAt && performance.now() - e.lastInputAt < ECHO_WINDOW_MS) return;
+  if (e.busyTimer === undefined) useUiStore.getState().setTermBusy(paneId, true);
+  clearTimeout(e.busyTimer);
+  e.busyTimer = setTimeout(() => stopBusy(paneId, e), BUSY_IDLE_MS);
+}
+
+function stopBusy(paneId: string, e: SessionEntry) {
+  clearTimeout(e.busyTimer);
+  e.busyTimer = undefined;
+  useUiStore.getState().setTermBusy(paneId, false);
 }
 
 /** Give up on the GPU renderer for a session after this many context losses. */
@@ -442,6 +465,7 @@ export function useTerminalSessions({
     // highlighter underlines both URLs and file paths.
     const linkHighlighter = attachLinkHighlighter(term, () => linkColor(themeRef.current));
     term.onData((data) => {
+      entry.lastInputAt = performance.now();
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
     });
     // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity,
@@ -497,6 +521,7 @@ export function useTerminalSessions({
       // is disposed and `e` is stale (#139).
       if (e.disposed) return;
       e.term.write(bytes);
+      noteOutput(pane.id, e);
       // Output to a pane the user isn't viewing is unseen activity.
       if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
     });
@@ -760,7 +785,10 @@ export function useTerminalSessions({
     const unlisten = listen<string>("terminal-exit", (ev) => {
       const key = ev.payload;
       const e = sessionsRef.current.get(key);
-      if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+      if (e) {
+        e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+        stopBusy(key, e);
+      }
       setDeadKeys((prev) => new Set(prev).add(key));
       if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
       if (shouldNotifyRef.current(key)) {
@@ -786,6 +814,7 @@ export function useTerminalSessions({
       // then detach the spawn channel so it stops firing entirely (#139).
       e.disposed = true;
       e.disposeChannel?.();
+      stopBusy(id, e);
       e.linkHighlighter.dispose();
       e.pathLinkProvider.dispose();
       e.term.dispose();
