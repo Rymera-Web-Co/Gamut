@@ -28,7 +28,6 @@ const splitButtonClass =
 export function TerminalHeader() {
   const terminals = useUiStore((s) => s.terminals);
   const termActivity = useUiStore((s) => s.termActivity);
-  const termBusy = useUiStore((s) => s.termBusy);
   const setTerminalOpen = useUiStore((s) => s.setTerminalOpen);
   const setActiveRepo = useUiStore((s) => s.setActiveRepo);
   const setActiveGroup = useUiStore((s) => s.setActiveGroup);
@@ -48,7 +47,8 @@ export function TerminalHeader() {
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
   const folder = cwd ? pathBasename(cwd) : undefined;
   const activity = tab ? tabActivityKind(tab, termActivity) : undefined;
-  const dot = sessionDot(activity, tab ? tabBusy(tab, termBusy) : false);
+  const busy = useUiStore((s) => (tab ? tabBusy(tab, s.termBusy) : false));
+  const dot = sessionDot(activity, busy);
   // The repo this session is rooted in, when its cwd is a registered repo (or
   // one of its worktrees isn't resolved here — plain path match only).
   const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;

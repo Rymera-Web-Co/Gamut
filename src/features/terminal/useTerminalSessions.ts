@@ -21,6 +21,7 @@ import {
   type TermPane,
   type TermTab,
 } from "@/store/ui";
+import { createBusyTracker, type BusyTracker } from "./busyTracker";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { PANE_DIVIDER, paneSlots } from "./paneLayout";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
@@ -29,11 +30,6 @@ import { setPendingCommand, takePendingCommand } from "./pendingCommands";
 import { filePathsForShell } from "./sendToTerminal";
 import { FONT_FAMILY, xtermContrast, xtermTheme } from "./terminalTheme";
 import { isCloseTabChord, isTabCycleChord } from "./useTerminalShortcuts";
-
-/** Quiet time after the last output chunk before a pane reads as idle. */
-const BUSY_IDLE_MS = 2000;
-/** Output this soon after a keystroke is treated as echo, not work. */
-const ECHO_WINDOW_MS = 250;
 
 /** One live xterm instance + the DOM node it's mounted in, kept across switches. */
 interface SessionEntry {
@@ -61,24 +57,8 @@ interface SessionEntry {
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
   lastCols?: number;
   lastRows?: number;
-  /** When the user last typed into this pane, to skip echo in busy tracking. */
-  lastInputAt?: number;
-  /** Fires the busy → idle transition after {@link BUSY_IDLE_MS} of quiet. */
-  busyTimer?: ReturnType<typeof setTimeout>;
-}
-
-/** Mark a pane as working on output, and idle again once it goes quiet. */
-function noteOutput(paneId: string, e: SessionEntry) {
-  if (e.lastInputAt && performance.now() - e.lastInputAt < ECHO_WINDOW_MS) return;
-  if (e.busyTimer === undefined) useUiStore.getState().setTermBusy(paneId, true);
-  clearTimeout(e.busyTimer);
-  e.busyTimer = setTimeout(() => stopBusy(paneId, e), BUSY_IDLE_MS);
-}
-
-function stopBusy(paneId: string, e: SessionEntry) {
-  clearTimeout(e.busyTimer);
-  e.busyTimer = undefined;
-  useUiStore.getState().setTermBusy(paneId, false);
+  /** Drives the pane's working/idle dot from its output. */
+  busy: BusyTracker;
 }
 
 /** Give up on the GPU renderer for a session after this many context losses. */
@@ -121,6 +101,7 @@ function resizeIfChanged(id: string, e: SessionEntry) {
   if (e.term.cols === e.lastCols && e.term.rows === e.lastRows) return;
   e.lastCols = e.term.cols;
   e.lastRows = e.term.rows;
+  e.busy.suppress();
   ipc.terminalResize(id, e.term.cols, e.term.rows).catch(() => {});
 }
 
@@ -465,7 +446,7 @@ export function useTerminalSessions({
     // highlighter underlines both URLs and file paths.
     const linkHighlighter = attachLinkHighlighter(term, () => linkColor(themeRef.current));
     term.onData((data) => {
-      entry.lastInputAt = performance.now();
+      entry.busy.suppress();
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
     });
     // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity,
@@ -491,6 +472,7 @@ export function useTerminalSessions({
       pathLinkProvider,
       spawned: false,
       disposed: false,
+      busy: createBusyTracker((busy) => useUiStore.getState().setTermBusy(pane.id, busy)),
     };
     // GPU renderer is opt-out: on some Linux/WebKitGTK + GPU-driver combos it
     // renders stale cells or lags, so users can fall back to the DOM renderer.
@@ -521,7 +503,7 @@ export function useTerminalSessions({
       // is disposed and `e` is stale (#139).
       if (e.disposed) return;
       e.term.write(bytes);
-      noteOutput(pane.id, e);
+      e.busy.output();
       // Output to a pane the user isn't viewing is unseen activity.
       if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
     });
@@ -787,7 +769,7 @@ export function useTerminalSessions({
       const e = sessionsRef.current.get(key);
       if (e) {
         e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
-        stopBusy(key, e);
+        e.busy.stop();
       }
       setDeadKeys((prev) => new Set(prev).add(key));
       if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
@@ -814,7 +796,7 @@ export function useTerminalSessions({
       // then detach the spawn channel so it stops firing entirely (#139).
       e.disposed = true;
       e.disposeChannel?.();
-      stopBusy(id, e);
+      e.busy.stop();
       e.linkHighlighter.dispose();
       e.pathLinkProvider.dispose();
       e.term.dispose();

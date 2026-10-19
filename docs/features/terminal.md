@@ -103,10 +103,15 @@ badges itself.
 
 Each session in the sidebar terminal list, and the terminal header, also shows a status
 dot. The dot pulses while the session is working: its terminal printed output within the
-last two seconds. When the session is idle, the dot is grey and static. A pending bell or
-exit replaces the dot colour with amber or red. Output that arrives right after a keystroke
-is treated as echo, so typing does not make a session look busy. A silent command (for
-example `sleep 60`) shows as idle, because the dot follows output, not processes.
+last two seconds. When the session is idle, the dot is static: grey when nothing is
+pending, blue when it has unseen output. A pending bell or exit replaces the dot colour with
+amber or red. Output that arrives right after a keystroke or a resize is treated as echo or
+a redraw, so typing and resizing do not make a session look busy.
+
+The dot follows output, not processes, so it has two limits:
+
+- A silent command (for example `sleep 60`) shows as idle.
+- A remote shell with echo slower than a quarter second can look busy while you type.
 
 ## Notifications
 
@@ -138,8 +143,9 @@ backend. IPC commands: `terminalSpawn`, `terminalWrite`, `terminalResize`,
 `terminalKill`; the backend emits a `terminal-exit` event when a shell exits. PTYs are
 read on a dedicated thread and tracked in `AppState` (see
 [Architecture](../ARCHITECTURE.md)). Per-pane unseen-activity flags live in the UI store
-(`termActivity` in `src/store/ui.ts`), and per-pane working state lives in `termBusy` and drive the activity dots in the tab bar and
-group rail (`src/features/terminal/activity.tsx`).
+(`termActivity` in `src/store/ui.ts`) and drive the activity dots in the tab bar and
+group rail (`src/features/terminal/activity.tsx`). Per-pane working state lives in
+`termBusy`, fed by the output timer in `src/features/terminal/busyTracker.ts`.
 
 The same bell/exit events drive notifications via `src/features/terminal/notify.ts`:
 built-in sounds are synthesized with the Web Audio API (no bundled assets), while a custom
