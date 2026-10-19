@@ -13,7 +13,7 @@ import { groupToReveal } from "@/lib/groupRepos";
 import { ipc, type Repo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { termTabLabel, useUiStore, type SplitDirection } from "@/store/ui";
-import { tabActivityKind, activityColor } from "./activity";
+import { sessionDot, tabActivityKind, tabBusy } from "./activity";
 
 // Shared by the two split buttons so they can only ever drift together.
 const splitButtonClass =
@@ -47,6 +47,8 @@ export function TerminalHeader() {
   const cwd = tab?.panes.find((p) => p.id === tab.activePaneId)?.cwd ?? tab?.panes[0]?.cwd;
   const folder = cwd ? pathBasename(cwd) : undefined;
   const activity = tab ? tabActivityKind(tab, termActivity) : undefined;
+  const busy = useUiStore((s) => (tab ? tabBusy(tab, s.termBusy) : false));
+  const dot = sessionDot(activity, busy);
   // The repo this session is rooted in, when its cwd is a registered repo (or
   // one of its worktrees isn't resolved here — plain path match only).
   const cwdRepo = cwd ? (repos.data ?? []).find((r) => r.path === cwd) : undefined;
@@ -106,8 +108,8 @@ export function TerminalHeader() {
       </button>
       <span
         aria-hidden
-        className={cn("size-2 shrink-0 rounded-full", !activity && "gamut-pulse")}
-        style={{ background: activity ? activityColor(activity) : "var(--color-primary)" }}
+        className={cn("size-2 shrink-0 rounded-full", dot.pulse && "gamut-pulse")}
+        style={{ background: dot.color }}
       />
       <div className="flex min-w-0 items-baseline gap-2 text-[13px]">
         {group && (

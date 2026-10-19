@@ -45,7 +45,13 @@ import {
   useRepos,
   useSetRepoGroups,
 } from "@/features/repos/api";
-import { activityColor, tabActivityKind, tabsActivityKind } from "@/features/terminal/activity";
+import {
+  activityColor,
+  sessionDot,
+  tabActivityKind,
+  tabBusy,
+  tabsActivityKind,
+} from "@/features/terminal/activity";
 import { canAutoPull } from "@/lib/autoPull";
 import { copy } from "@/lib/clipboard";
 import { dropEdge } from "@/lib/dropEdge";
@@ -108,6 +114,7 @@ function TerminalRow({ group, tab }: { group: Group | undefined; tab: TermTab })
   // resize or split elsewhere in the list must not re-render every row.
   const activeTabId = useUiStore((s) => s.terminals.activeTabId);
   const termActivity = useUiStore((s) => s.termActivity);
+  const busy = useUiStore((s) => tabBusy(tab, s.termBusy));
   const focusTerminal = useUiStore((s) => s.focusTerminal);
   const closeTerminalTab = useUiStore((s) => s.closeTerminalTab);
   const renameTerminalTab = useUiStore((s) => s.renameTerminalTab);
@@ -119,6 +126,7 @@ function TerminalRow({ group, tab }: { group: Group | undefined; tab: TermTab })
   const groups = useGroups();
 
   const activity = tabActivityKind(tab, termActivity);
+  const dot = sessionDot(activity, busy);
   // The list is global, so the highlighted row is simply the active tab — no
   // group has to match for a row to be the one on screen.
   const current = terminalOpen && activeTabId === tab.id;
@@ -205,8 +213,8 @@ function TerminalRow({ group, tab }: { group: Group | undefined; tab: TermTab })
         )}
         <span
           aria-hidden
-          className={cn("size-[7px] shrink-0 rounded-full", !activity && "gamut-pulse")}
-          style={{ background: activity ? activityColor(activity) : "var(--color-primary)" }}
+          className={cn("size-[7px] shrink-0 rounded-full", dot.pulse && "gamut-pulse")}
+          style={{ background: dot.color }}
         />
         <div className="min-w-0 flex-1">
           {editing ? (

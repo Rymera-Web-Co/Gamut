@@ -879,3 +879,18 @@ describe("reorderTerminalTab (#340)", () => {
     expect(s.terminals.tabs.find((t) => t.id === "C")!.groupId).toBe(2);
   });
 });
+
+describe("setTermBusy", () => {
+  beforeEach(() => useUiStore.setState({ termBusy: {} }));
+
+  it("marks and clears a pane, and skips no-op transitions", () => {
+    const { setTermBusy } = useUiStore.getState();
+    setTermBusy("p1", true);
+    const busy = useUiStore.getState().termBusy;
+    expect(busy).toEqual({ p1: true });
+    setTermBusy("p1", true);
+    expect(useUiStore.getState().termBusy).toBe(busy);
+    setTermBusy("p1", false);
+    expect(useUiStore.getState().termBusy).toEqual({});
+  });
+});

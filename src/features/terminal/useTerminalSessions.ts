@@ -21,6 +21,7 @@ import {
   type TermPane,
   type TermTab,
 } from "@/store/ui";
+import { createBusyTracker, type BusyTracker } from "./busyTracker";
 import { attachLinkHighlighter, linkColor, type LinkHighlighter } from "./linkHighlight";
 import { PANE_DIVIDER, paneSlots } from "./paneLayout";
 import { notifyTerminalEvent, type NotifyTarget } from "./notify";
@@ -56,6 +57,8 @@ interface SessionEntry {
   /** Last (cols, rows) sent to the backend, to skip redundant resize IPC (#142). */
   lastCols?: number;
   lastRows?: number;
+  /** Drives the pane's working/idle dot from its output. */
+  busy: BusyTracker;
 }
 
 /** Give up on the GPU renderer for a session after this many context losses. */
@@ -98,6 +101,7 @@ function resizeIfChanged(id: string, e: SessionEntry) {
   if (e.term.cols === e.lastCols && e.term.rows === e.lastRows) return;
   e.lastCols = e.term.cols;
   e.lastRows = e.term.rows;
+  e.busy.suppress();
   ipc.terminalResize(id, e.term.cols, e.term.rows).catch(() => {});
 }
 
@@ -442,6 +446,7 @@ export function useTerminalSessions({
     // highlighter underlines both URLs and file paths.
     const linkHighlighter = attachLinkHighlighter(term, () => linkColor(themeRef.current));
     term.onData((data) => {
+      entry.busy.suppress();
       ipc.terminalWrite(pane.id, encoder.encode(data)).catch(() => {});
     });
     // A hidden pane ringing the xterm bell (`\a`) counts as unseen activity,
@@ -467,6 +472,7 @@ export function useTerminalSessions({
       pathLinkProvider,
       spawned: false,
       disposed: false,
+      busy: createBusyTracker((busy) => useUiStore.getState().setTermBusy(pane.id, busy)),
     };
     // GPU renderer is opt-out: on some Linux/WebKitGTK + GPU-driver combos it
     // renders stale cells or lags, so users can fall back to the DOM renderer.
@@ -497,6 +503,7 @@ export function useTerminalSessions({
       // is disposed and `e` is stale (#139).
       if (e.disposed) return;
       e.term.write(bytes);
+      e.busy.output();
       // Output to a pane the user isn't viewing is unseen activity.
       if (pane.id !== visiblePaneRef.current) markTermActivity(pane.id, "output");
     });
@@ -760,7 +767,10 @@ export function useTerminalSessions({
     const unlisten = listen<string>("terminal-exit", (ev) => {
       const key = ev.payload;
       const e = sessionsRef.current.get(key);
-      if (e) e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+      if (e) {
+        e.term.write("\r\n\x1b[90m[process exited]\x1b[0m\r\n");
+        e.busy.stop();
+      }
       setDeadKeys((prev) => new Set(prev).add(key));
       if (key !== visiblePaneRef.current) markTermActivity(key, "exit");
       if (shouldNotifyRef.current(key)) {
@@ -786,6 +796,7 @@ export function useTerminalSessions({
       // then detach the spawn channel so it stops firing entirely (#139).
       e.disposed = true;
       e.disposeChannel?.();
+      e.busy.stop();
       e.linkHighlighter.dispose();
       e.pathLinkProvider.dispose();
       e.term.dispose();
