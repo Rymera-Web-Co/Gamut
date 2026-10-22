@@ -1,3 +1,6 @@
+// `pub` so `main.rs` can share its env marker names with the terminal scrub.
+#[cfg(target_os = "linux")]
+pub mod appimage_env;
 // `pub` so the `ide_probe` example can drive the server standalone for a live
 // handshake check against a real `claude`, without launching the GUI.
 pub mod claude_ide;

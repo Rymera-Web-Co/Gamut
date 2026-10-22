@@ -255,6 +255,10 @@ pub fn terminal_spawn(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(default_shell);
     let mut cmd = CommandBuilder::new(&shell);
+    // Don't hand the AppImage's private environment (PYTHONHOME, bundled lib and
+    // module paths, …) to the user's shell; it breaks host tools.
+    #[cfg(target_os = "linux")]
+    crate::appimage_env::scrub(&mut cmd);
     // Run as a login shell so the user's init files are sourced, matching
     // Terminal.app / iTerm2 / VS Code behaviour (see `apply_login_shell`).
     apply_login_shell(&mut cmd, &shell);

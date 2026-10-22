@@ -27,8 +27,10 @@ mod linux_webkit_workarounds {
     use std::path::Path;
     use std::process::Command;
 
-    /// Set after we re-exec, so the second launch doesn't loop forever.
-    const REEXEC_GUARD: &str = "GAMUT_WAYLAND_PRELOAD_DONE";
+    // `REEXEC_GUARD` is set after we re-exec, so the second launch doesn't loop
+    // forever. `SET_VARS_MARKER` records which vars we set, so the terminal can
+    // undo exactly those (see `gamut_lib::appimage_env`).
+    use gamut_lib::appimage_env::{REEXEC_GUARD, SET_VARS_MARKER};
 
     pub fn apply() {
         // AppImage-only. `APPIMAGE` is set by the AppImage runtime; an extracted
@@ -67,7 +69,7 @@ mod linux_webkit_workarounds {
 
         let ld_preload = match env::var("LD_PRELOAD") {
             Ok(existing) if !existing.is_empty() => format!("{host_lib}:{existing}"),
-            _ => host_lib,
+            _ => host_lib.clone(),
         };
 
         let exe = match env::current_exe() {
@@ -78,7 +80,8 @@ mod linux_webkit_workarounds {
         let err = Command::new(exe)
             .args(env::args_os().skip(1))
             .env("LD_PRELOAD", ld_preload)
-            .env(REEXEC_GUARD, "1")
+            // The value names the preloaded lib so terminals can drop just that entry.
+            .env(REEXEC_GUARD, &host_lib)
             .exec();
 
         // `exec` only returns on failure; fall through and let the app try to
@@ -113,6 +116,11 @@ mod linux_webkit_workarounds {
     fn set_if_unset(key: &str, value: &str) {
         if env::var_os(key).is_none() {
             env::set_var(key, value);
+            let marker = match env::var(SET_VARS_MARKER) {
+                Ok(existing) if !existing.is_empty() => format!("{existing},{key}"),
+                _ => key.to_string(),
+            };
+            env::set_var(SET_VARS_MARKER, marker);
         }
     }
 }
