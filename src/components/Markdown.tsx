@@ -5,8 +5,8 @@ import remarkBreaks from "remark-breaks";
 import remarkGemoji from "remark-gemoji";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { openExternal } from "@/lib/openExternal";
 import { ipc } from "@/lib/ipc";
 import { localLinkPath, openLocalPath } from "@/lib/openLocalPath";
 import { cn } from "@/lib/utils";
@@ -192,7 +192,7 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
         title={props.title}
         onClick={(e) => {
           e.preventDefault();
-          if (typeof src === "string") openUrl(src).catch(() => {});
+          if (typeof src === "string") openExternal(src);
         }}
       >
         {alt || "View image"}
@@ -380,7 +380,7 @@ export function Markdown({
                     void openLocalPath(localPath, localLinks.baseDir);
                     return;
                   }
-                  openUrl(href).catch(() => {});
+                  openExternal(href);
                 }}
               >
                 {children}

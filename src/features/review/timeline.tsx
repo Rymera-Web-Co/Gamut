@@ -1,5 +1,4 @@
 import { type ReactElement } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   CircleDot,
   Eye,
@@ -16,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { openExternal } from "@/lib/openExternal";
 import { isoToMillis, relativeTimeIso } from "@/lib/format";
 import type { TimelineEvent } from "@/lib/ipc";
 import { Commits } from "./Commits";
@@ -89,7 +89,7 @@ export function TimelineEventRow({ event }: { event: TimelineEvent }) {
         <>
           mentioned this in{" "}
           <button
-            onClick={() => event.ref_url && openUrl(event.ref_url).catch(() => {})}
+            onClick={() => event.ref_url && openExternal(event.ref_url)}
             className="text-left font-medium text-[var(--color-foreground)] hover:underline"
           >
             #{event.ref_number} {event.ref_title}
