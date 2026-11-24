@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Github, Loader2, LogOut, ExternalLink, Copy } from "lucide-react";
 
+import { openExternal } from "@/lib/openExternal";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,7 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
     mutationFn: ipc.githubDeviceStart,
     onSuccess: (d) => {
       setDevice(d);
-      openUrl(d.verification_uri_complete ?? d.verification_uri).catch(() => {});
+      openExternal(d.verification_uri_complete ?? d.verification_uri);
       poll.mutate(d);
     },
   });
@@ -60,7 +60,7 @@ function ConnectBody({ onDone }: { onDone: () => void }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => openUrl(device.verification_uri_complete ?? device.verification_uri)}
+          onClick={() => openExternal(device.verification_uri_complete ?? device.verification_uri)}
         >
           <ExternalLink /> Open GitHub
         </Button>
@@ -169,7 +169,7 @@ export function GitHubConnect() {
               variant="outline"
               size="sm"
               disabled={!login}
-              onClick={() => login && openUrl(`https://github.com/${login}`)}
+              onClick={() => login && openExternal(`https://github.com/${login}`)}
             >
               <ExternalLink /> View on GitHub
             </Button>

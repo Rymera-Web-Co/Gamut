@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
-import { toast } from "@/store/toast";
+import { openExternal } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { MSG_HTML, MSG_OPEN_EXTERNAL, MSG_READY, previewUrl } from "./previewProtocol";
 
@@ -140,7 +139,7 @@ function PreviewFrame({
         lastOpenRef.current = now;
         // Same path every other external link in the app takes: the user's real
         // browser, never an in-app popup.
-        openUrl(url).catch((e) => toast.error(`Couldn't open ${url} — ${String(e)}`));
+        openExternal(url);
       }
     }
 

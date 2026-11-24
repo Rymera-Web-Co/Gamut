@@ -1,5 +1,4 @@
 import { useState, type ReactElement } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, CircleDot, Loader2, RotateCw } from "lucide-react";
 
 import {
@@ -12,6 +11,7 @@ import {
 } from "./api";
 import { PeoplePicker } from "./PeoplePicker";
 import { Avatar, labelTextColor, ReviewerStatusIcon } from "./reviewShared";
+import { openExternal } from "@/lib/openExternal";
 import { toast } from "@/store/toast";
 import { cn } from "@/lib/utils";
 
@@ -292,7 +292,7 @@ export function PrDetailsCard({
                   <button
                     key={i.number}
                     title={i.url}
-                    onClick={() => openUrl(i.url).catch(() => {})}
+                    onClick={() => openExternal(i.url)}
                     className="flex items-center gap-2 text-left hover:underline"
                   >
                     <CircleDot

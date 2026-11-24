@@ -4,9 +4,9 @@
 // popover opened from a status icon in the merge bar (rather than stacked above
 // it) so it doesn't eat fixed, non-scrollable space; `mergeStatusSummary`
 // drives that icon.
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { CheckCircle2, XCircle, AlertTriangle, Clock, type LucideIcon } from "lucide-react";
 
+import { openExternal } from "@/lib/openExternal";
 import type { MergeInfo } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
@@ -227,7 +227,7 @@ export function MergeStatusBlock({ merge, className }: { merge: MergeInfo; class
           disabled={(merge.checks ?? []).every((c) => !c.url)}
           onClick={() => {
             const url = (merge.checks ?? []).find((c) => c.url)?.url;
-            if (url) openUrl(url).catch(() => {});
+            if (url) openExternal(url);
           }}
           className={cn(
             "block w-full text-left",

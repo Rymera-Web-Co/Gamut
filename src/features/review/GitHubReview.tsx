@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ExternalLink,
   GitBranch,
@@ -12,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import { openExternal } from "@/lib/openExternal";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
 import { copy } from "@/lib/clipboard";
@@ -636,7 +636,7 @@ export function GitHubReview({ repoId }: { repoId: number }) {
                       variant="outline"
                       className="rounded-l-none border-l-0 px-2"
                       title="Open this pull request in your browser"
-                      onClick={() => openUrl(selectedPr.url).catch(() => {})}
+                      onClick={() => openExternal(selectedPr.url)}
                     >
                       <ExternalLink />
                     </Button>

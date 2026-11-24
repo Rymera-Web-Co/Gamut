@@ -6,8 +6,8 @@ import { Terminal, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { openExternal } from "@/lib/openExternal";
 import { getActiveDrag, subscribeDrag, subscribeDrop } from "@/lib/dnd";
 import { ipc } from "@/lib/ipc";
 import { openLocalPath } from "@/lib/openLocalPath";
@@ -195,7 +195,7 @@ async function openTerminalLink(uri: string) {
   } catch {
     // Resolution failed (offline, no origin remote, etc.) — open externally.
   }
-  openUrl(uri).catch(() => {});
+  openExternal(uri);
 }
 
 /**

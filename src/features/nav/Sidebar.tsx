@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -27,6 +26,7 @@ import {
   ContextMenuItem,
   type ContextMenuPosition,
 } from "@/components/ui/context-menu";
+import { openExternal } from "@/lib/openExternal";
 import { GitHubConnect } from "@/features/github/GitHubConnect";
 import { BranchSwitcher } from "@/features/history/BranchSwitcher";
 import { SyncControls } from "@/features/sync/SyncControls";
@@ -1263,7 +1263,7 @@ export function Sidebar() {
             {remoteUrl && (
               <ContextMenuItem
                 onClick={() => {
-                  openUrl(remoteUrl).catch(() => {});
+                  openExternal(remoteUrl);
                   setMenu(null);
                 }}
               >

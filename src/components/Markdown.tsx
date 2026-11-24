@@ -5,8 +5,8 @@ import remarkBreaks from "remark-breaks";
 import remarkGemoji from "remark-gemoji";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { openExternal } from "@/lib/openExternal";
 import { ipc } from "@/lib/ipc";
 import { localLinkPath, openLocalPath } from "@/lib/openLocalPath";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,16 @@ const localSanitizeSchema = {
 /** react-markdown's URL filter, plus `file:` URLs, for {@link localSanitizeSchema}. */
 function localUrlTransform(url: string): string {
   return /^file:/i.test(url) ? url : defaultUrlTransform(url);
+}
+
+/**
+ * Scroll to an in-page anchor. The sanitizer prefixes ids with `user-content-`,
+ * so try the prefixed id when the raw one is absent.
+ */
+function scrollToFragment(id: string) {
+  const name = decodeURIComponent(id);
+  const el = document.getElementById(name) ?? document.getElementById(`user-content-${name}`);
+  el?.scrollIntoView({ block: "start" });
 }
 
 /**
@@ -192,7 +202,7 @@ function GitHubImage({ src, alt, ...props }: ComponentProps<"img">) {
         title={props.title}
         onClick={(e) => {
           e.preventDefault();
-          if (typeof src === "string") openUrl(src).catch(() => {});
+          if (typeof src === "string") openExternal(src);
         }}
       >
         {alt || "View image"}
@@ -375,12 +385,16 @@ export function Markdown({
                 onClick={(e) => {
                   e.preventDefault();
                   if (!href) return;
+                  if (href.startsWith("#")) {
+                    scrollToFragment(href.slice(1));
+                    return;
+                  }
                   const localPath = localLinks ? localLinkPath(href) : null;
                   if (localLinks && localPath != null) {
                     void openLocalPath(localPath, localLinks.baseDir);
                     return;
                   }
-                  openUrl(href).catch(() => {});
+                  openExternal(href);
                 }}
               >
                 {children}
