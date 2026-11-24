@@ -127,3 +127,19 @@ describe("Markdown links without localLinks", () => {
     expect(container.innerHTML).not.toContain("file:");
   });
 });
+
+describe("Markdown fragment links", () => {
+  it("scrolls in place and does not call the opener", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const { container } = render(<Markdown>{"[top](#intro)\n\n## Intro"}</Markdown>);
+    const target = document.createElement("div");
+    target.id = "user-content-intro";
+    container.appendChild(target);
+    const link = container.querySelector('a[href="#intro"]');
+    if (!link) throw new Error("no fragment link rendered");
+    fireEvent.click(link);
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+});

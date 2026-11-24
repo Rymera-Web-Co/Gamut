@@ -190,7 +190,7 @@ scripts — silently, and only in a shipped build, since `devCsp` allows inline 
 frame is sandboxed `allow-scripts` only (no `allow-same-origin`, no popup tokens), and the
 buffer reaches it over `postMessage`; both directions validate source identity plus a
 per-load token, and the external-link bridge additionally requires an `http(s)` URL before
-calling `openUrl`.
+calling `openExternal`.
 
 Repo-wide search lives in `src-tauri/src/commands/search.rs` (`search_repo`,
 `replace_in_files`), a ripgrep-style walk via the [`ignore`](https://docs.rs/ignore) crate

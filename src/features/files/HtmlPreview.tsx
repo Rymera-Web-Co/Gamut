@@ -139,7 +139,7 @@ function PreviewFrame({
         lastOpenRef.current = now;
         // Same path every other external link in the app takes: the user's real
         // browser, never an in-app popup.
-        void openExternal(url);
+        openExternal(url);
       }
     }
 

@@ -56,6 +56,16 @@ function localUrlTransform(url: string): string {
 }
 
 /**
+ * Scroll to an in-page anchor. The sanitizer prefixes ids with `user-content-`,
+ * so try the prefixed id when the raw one is absent.
+ */
+function scrollToFragment(id: string) {
+  const name = decodeURIComponent(id);
+  const el = document.getElementById(name) ?? document.getElementById(`user-content-${name}`);
+  el?.scrollIntoView({ block: "start" });
+}
+
+/**
  * remark plugin: turn `#123` references into links to `${base}/123`
  * (GitHub's /issues/N resolves to PRs too). Skips text inside code and
  * existing links.
@@ -375,6 +385,10 @@ export function Markdown({
                 onClick={(e) => {
                   e.preventDefault();
                   if (!href) return;
+                  if (href.startsWith("#")) {
+                    scrollToFragment(href.slice(1));
+                    return;
+                  }
                   const localPath = localLinks ? localLinkPath(href) : null;
                   if (localLinks && localPath != null) {
                     void openLocalPath(localPath, localLinks.baseDir);

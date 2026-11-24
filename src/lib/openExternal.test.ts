@@ -13,7 +13,6 @@ describe("openExternal", () => {
   beforeEach(() => {
     vi.mocked(openUrl).mockReset();
     vi.mocked(toast.error).mockReset();
-    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   it("opens the URL and shows no toast on success", async () => {
