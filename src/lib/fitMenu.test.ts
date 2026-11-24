@@ -18,7 +18,7 @@ describe("fitMenu", () => {
     expect(fitMenu({ x: 900, y: 100 }, 200, 300, vw, vh)).toEqual({ x: 700, y: 100 });
   });
 
-  it("pins to the top edge when the menu fits on neither side", () => {
+  it("pins to the bottom edge when the menu fits on neither side", () => {
     expect(fitMenu({ x: 100, y: 400 }, 200, 700, vw, vh)).toEqual({ x: 100, y: 96 });
   });
 

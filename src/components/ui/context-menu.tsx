@@ -22,14 +22,21 @@ export function ContextMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<ContextMenuPosition | null>(null);
 
-  // Measure before paint, then keep the whole menu inside the viewport.
+  // Measure before paint, then keep the whole menu inside the viewport. Fit it
+  // again when it resizes, e.g. when an item appears after an async load.
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!at || !el) {
       setPos(null);
       return;
     }
-    setPos(fitMenu(at, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
+    const fit = () =>
+      setPos(fitMenu(at, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [at]);
 
   useEffect(() => {
@@ -55,11 +62,12 @@ export function ContextMenu({
       <div
         role="menu"
         ref={menuRef}
-        className="absolute min-w-44 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-popover)] py-1 text-sm text-[var(--color-popover-foreground)] shadow-md"
+        className="absolute w-max min-w-44 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-popover)] py-1 text-sm text-[var(--color-popover-foreground)] shadow-md"
         style={{
           left: (pos ?? at).x,
           top: (pos ?? at).y,
           maxHeight: `calc(100vh - ${EDGE * 2}px)`,
+          maxWidth: `calc(100vw - ${EDGE * 2}px)`,
           visibility: pos ? undefined : "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
