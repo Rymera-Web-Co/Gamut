@@ -1,12 +1,9 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
+import { EDGE, fitMenu, type ContextMenuPosition } from "@/lib/fitMenu";
 import { cn } from "@/lib/utils";
 
-/** Viewport coordinates at which to open the menu, or null when closed. */
-export interface ContextMenuPosition {
-  x: number;
-  y: number;
-}
+export type { ContextMenuPosition };
 
 /**
  * A lightweight cursor-anchored context menu. Render it once and drive it with
@@ -22,6 +19,19 @@ export function ContextMenu({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<ContextMenuPosition | null>(null);
+
+  // Measure before paint, then keep the whole menu inside the viewport.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!at || !el) {
+      setPos(null);
+      return;
+    }
+    setPos(fitMenu(at, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
+  }, [at]);
+
   useEffect(() => {
     if (!at) return;
     function onKey(e: KeyboardEvent) {
@@ -44,8 +54,14 @@ export function ContextMenu({
     >
       <div
         role="menu"
-        className="absolute min-w-44 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-popover)] py-1 text-sm text-[var(--color-popover-foreground)] shadow-md"
-        style={{ left: at.x, top: at.y }}
+        ref={menuRef}
+        className="absolute min-w-44 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-popover)] py-1 text-sm text-[var(--color-popover-foreground)] shadow-md"
+        style={{
+          left: (pos ?? at).x,
+          top: (pos ?? at).y,
+          maxHeight: `calc(100vh - ${EDGE * 2}px)`,
+          visibility: pos ? undefined : "hidden",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
